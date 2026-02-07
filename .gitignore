@@ -23,3 +23,7 @@ PROJECT.md
 .DS_Store
 .pypi_cache.json
 .omc
+
+
+agent-logs/
+.idea/
