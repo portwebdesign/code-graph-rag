@@ -1,3 +1,9 @@
+from codebase_rag.data_models.types_defs import (
+    JavaAnnotationInfo,
+    JavaClassInfo,
+    JavaFieldInfo,
+    JavaMethodInfo,
+)
 from codebase_rag.parsers.java.utils import (
     build_qualified_name,
     extract_annotation_info,
@@ -12,12 +18,6 @@ from codebase_rag.parsers.java.utils import (
     is_main_method,
 )
 from codebase_rag.tests.conftest import create_mock_node
-from codebase_rag.types_defs import (
-    JavaAnnotationInfo,
-    JavaClassInfo,
-    JavaFieldInfo,
-    JavaMethodInfo,
-)
 
 
 class TestExtractJavaPackageName:

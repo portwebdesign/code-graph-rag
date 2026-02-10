@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 import pytest
 from loguru import logger
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 if TYPE_CHECKING:
@@ -187,7 +187,7 @@ def cleanup_qdrant_client() -> Generator[None, None, None]:
         from codebase_rag.utils.dependencies import has_qdrant_client
 
         if has_qdrant_client():
-            import codebase_rag.vector_store as vs
+            import codebase_rag.data_models.vector_store as vs
 
             if vs._CLIENT is not None:
                 try:

@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from codebase_rag import constants as cs
-from codebase_rag import exceptions as ex
+from codebase_rag.core import constants as cs
+from codebase_rag.infrastructure import exceptions as ex
 from codebase_rag.services.llm import (
     CypherGenerator,
     _clean_cypher_response,

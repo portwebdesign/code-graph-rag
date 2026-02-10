@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.constants import (
+from codebase_rag.core.constants import (
     _NODE_LABEL_UNIQUE_KEYS,
     KEY_NAME,
     KEY_PATH,
@@ -14,8 +14,8 @@ from codebase_rag.constants import (
     RelationshipType,
     UniqueKeyType,
 )
+from codebase_rag.data_models.types_defs import NodeType
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.types_defs import NodeType
 
 
 class TestNodeLabelCoverage:

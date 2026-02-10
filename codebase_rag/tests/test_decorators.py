@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from codebase_rag.decorators import (
+from codebase_rag.infrastructure.decorators import (
     async_timing_decorator,
     ensure_loaded,
     log_operation,

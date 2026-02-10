@@ -1,3 +1,19 @@
+"""
+This module defines the `JsTsIngestMixin`, a component responsible for handling
+the ingestion of JavaScript and TypeScript specific language constructs.
+
+As a mixin, it's designed to be used by `DefinitionProcessor`. It encapsulates
+the logic for parsing and ingesting features unique to the JS/TS ecosystem,
+which are not covered by the generic function and class ingestion logic.
+
+Key functionalities:
+-   Ingesting prototype-based inheritance relationships (`Child.prototype = Object.create(Parent.prototype)`).
+-   Ingesting methods assigned to an object's prototype (`MyClass.prototype.myMethod = ...`).
+-   Ingesting methods defined within object literals.
+-   Handling functions defined using arrow syntax and assigned to variables or properties.
+-   Processing CommonJS and ES6 module exports.
+"""
+
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -7,28 +23,34 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Query, QueryCursor
 
-from ... import constants as cs
-from ... import logs as lg
-from ...types_defs import (
+from codebase_rag.data_models.types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
     PropertyDict,
     SimpleNameLookup,
 )
+
+from ...core import constants as cs
+from ...core import logs as lg
 from ..utils import safe_decode_text, safe_decode_with_fallback
 from .module_system import JsTsModuleSystemMixin
 from .utils import get_js_ts_language_obj
 
 if TYPE_CHECKING:
-    from ...language_spec import LanguageSpec
+    from codebase_rag.data_models.types_defs import LanguageQueries
+    from codebase_rag.infrastructure.language_spec import LanguageSpec
+
     from ...services import IngestorProtocol
-    from ...types_defs import LanguageQueries
     from ..handlers import LanguageHandler
     from ..import_processor import ImportProcessor
 
 
 class JsTsIngestMixin(JsTsModuleSystemMixin):
+    """
+    A mixin for ingesting JavaScript and TypeScript specific language constructs.
+    """
+
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -40,7 +62,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     _handler: LanguageHandler
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None: ...
+    def _get_docstring(self, node: ASTNode) -> str | None:
+        """Abstract method to extract a docstring from a node."""
+        ...
 
     @abstractmethod
     def _build_nested_qualified_name(
@@ -50,7 +74,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         func_name: str,
         lang_config: LanguageSpec,
         skip_classes: bool = False,
-    ) -> str | None: ...
+    ) -> str | None:
+        """Abstract method to build a nested FQN."""
+        ...
 
     def _ingest_prototype_inheritance(
         self,
@@ -59,6 +85,15 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
+        """
+        Ingests prototype-based inheritance patterns.
+
+        Args:
+            root_node (ASTNode): The root node of the file's AST.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The language of the source file.
+            queries (dict): A dictionary of tree-sitter queries.
+        """
         if language not in cs.JS_TS_LANGUAGES:
             return
 
@@ -77,6 +112,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
+        """Ingests `Child.prototype = Object.create(Parent.prototype)` style inheritance."""
         lang_queries = queries[language]
 
         language_obj = lang_queries.get(cs.QUERY_LANGUAGE)
@@ -93,6 +129,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _process_prototype_inheritance_captures(
         self, language_obj, root_node, module_qn
     ):
+        """Processes the captures from the prototype inheritance query."""
         query = Query(language_obj, cs.JS_PROTOTYPE_INHERITANCE_QUERY)
         cursor = QueryCursor(query)
         captures = cursor.captures(root_node)
@@ -134,6 +171,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
+        """Ingests methods assigned to a constructor's prototype."""
         lang_queries = queries[language]
 
         language_obj = lang_queries.get(cs.QUERY_LANGUAGE)
@@ -146,6 +184,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             logger.debug(lg.JS_PROTOTYPE_METHODS_FAILED.format(error=e))
 
     def _process_prototype_method_captures(self, language_obj, root_node, module_qn):
+        """Processes captures from the prototype method assignment query."""
         method_query = Query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(root_node)
@@ -202,6 +241,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
+        """Ingests methods defined within object literals."""
         language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
             return
@@ -223,6 +263,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         module_qn: str,
         lang_config,
     ) -> None:
+        """Processes the results of a query for object literal methods."""
         try:
             query = Query(language_obj, query_text)
             cursor = QueryCursor(query)
@@ -259,6 +300,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         module_qn: str,
         lang_config,
     ) -> None:
+        """Processes and ingests a single method found in an object literal."""
         if not method_name_node.text or not method_func_node:
             return
 
@@ -287,6 +329,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         method_name: str,
         lang_config,
     ) -> str:
+        """Resolves the FQN for a method in an object literal."""
         if lang_config:
             method_qn = self._build_object_method_qualified_name(
                 method_name_node, method_func_node, module_qn, method_name, lang_config
@@ -306,6 +349,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         method_func_node: ASTNode,
         module_qn: str,
     ) -> None:
+        """Registers an object method in the graph and registries."""
         method_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: method_qn,
             cs.KEY_NAME: method_name,
@@ -336,6 +380,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
+        """Ingests functions defined using arrow syntax and assigned to variables/properties."""
         if language not in cs.JS_TS_LANGUAGES:
             return
 
@@ -362,6 +407,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         module_qn: str,
         lang_config,
     ) -> None:
+        """Processes the results of a query for arrow functions."""
         try:
             query = Query(lang_query, query_text)
             cursor = QueryCursor(query)
@@ -399,6 +445,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         module_qn: str,
         lang_config,
     ) -> None:
+        """Processes arrow functions assigned directly as object properties."""
         for method_name, arrow_function in zip(method_names, arrow_functions):
             if not method_name.text or not arrow_function:
                 continue
@@ -423,6 +470,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_name: str,
         lang_config,
     ) -> str:
+        """Resolves the FQN for a direct arrow function assignment."""
         if lang_config:
             function_qn = self._build_object_arrow_qualified_name(
                 method_name_node, module_qn, function_name, lang_config
@@ -438,6 +486,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
+        """Builds the FQN for an arrow function in an object literal."""
         skip_types = (
             cs.TS_OBJECT,
             cs.TS_VARIABLE_DECLARATOR,
@@ -458,6 +507,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config,
         log_message: str,
     ) -> None:
+        """Processes functions assigned to a member expression (e.g., `obj.prop = ...`)."""
         for member_expr, function_node in zip(member_exprs, function_nodes):
             if not member_expr.text or not function_node:
                 continue
@@ -483,6 +533,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_name: str,
         lang_config,
     ) -> str:
+        """Resolves the FQN for a function assigned to a member expression."""
         if lang_config:
             function_qn = self._build_assignment_arrow_function_qualified_name(
                 member_expr, function_node, module_qn, function_name, lang_config
@@ -498,6 +549,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_node: ASTNode,
         log_message: str,
     ) -> None:
+        """Registers an arrow function in the graph and registries."""
         function_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: function_qn,
             cs.KEY_NAME: function_name,
@@ -514,6 +566,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         self.simple_name_lookup[function_name].add(function_qn)
 
     def _is_static_method_in_class(self, method_node: ASTNode) -> bool:
+        """Checks if a method definition is static."""
         if method_node.type == cs.TS_METHOD_DEFINITION:
             parent = method_node.parent
             if parent and parent.type == cs.TS_CLASS_BODY:
@@ -523,6 +576,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         return False
 
     def _is_method_in_class(self, method_node: ASTNode) -> bool:
+        """Checks if a method is defined within a class body."""
         current = method_node.parent
         while current:
             if current.type == cs.TS_CLASS_BODY:
@@ -531,9 +585,11 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         return False
 
     def _is_export_inside_function(self, node: ASTNode) -> bool:
+        """Checks if an export statement is nested within a function."""
         return self._handler.is_export_inside_function(node)
 
     def _find_object_name_for_method(self, method_name_node: ASTNode) -> str | None:
+        """Finds the name of the object to which a method is being assigned."""
         current = method_name_node.parent
         while current:
             if current.type == cs.TS_VARIABLE_DECLARATOR:
@@ -554,11 +610,11 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _build_object_method_qualified_name(
         self,
         method_name_node: ASTNode,
-        _method_func_node: ASTNode,
         module_qn: str,
         method_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
+        """Builds the FQN for a method defined in an object literal."""
         skip_types = (
             cs.TS_OBJECT,
             cs.TS_VARIABLE_DECLARATOR,
@@ -579,6 +635,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         function_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
+        """Builds the FQN for a function assigned to a member expression."""
         current = member_expr.parent
         if current and current.type == cs.TS_ASSIGNMENT_EXPRESSION:
             current = current.parent
@@ -595,6 +652,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config: LanguageSpec,
         skip_types: tuple[str, ...],
     ) -> list[str]:
+        """Collects ancestor names for building a nested JS/TS FQN."""
         path_parts: list[str] = []
         current = start_node
 
@@ -614,6 +672,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _js_extract_ancestor_name(
         self, node: ASTNode, lang_config: LanguageSpec
     ) -> str | None:
+        """Extracts the name from a JS/TS ancestor node."""
         naming_types = (
             *lang_config.function_node_types,
             *lang_config.class_node_types,
@@ -628,6 +687,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     def _js_format_qualified_name(
         self, module_qn: str, path_parts: list[str], final_name: str
     ) -> str:
+        """Formats a JS/TS FQN from its parts."""
         if path_parts:
             return f"{module_qn}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(path_parts)}{cs.SEPARATOR_DOT}{final_name}"
         return f"{module_qn}{cs.SEPARATOR_DOT}{final_name}"

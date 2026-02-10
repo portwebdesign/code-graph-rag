@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.constants import Provider
+from codebase_rag.core.constants import Provider
 from codebase_rag.tools.document_analyzer import (
     DocumentAnalyzer,
     create_document_analyzer_tool,

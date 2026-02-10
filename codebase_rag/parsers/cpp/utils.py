@@ -1,10 +1,33 @@
+"""
+This module provides utility functions specifically for parsing C++ source code.
+
+It contains helpers for handling the complexities of C++ syntax, such as:
+-   Converting operator symbols (e.g., `+`, `<<`) to their function-like names
+    (e.g., `operator_plus`).
+-   Building fully qualified names (FQNs) for C++ entities, considering namespaces
+    and module structures.
+-   Detecting if a C++ entity is exported from a module.
+-   Extracting names from various declaration types, including functions, methods,
+    operators, and destructors.
+-   Identifying and parsing out-of-class method definitions.
+"""
+
 from tree_sitter import Node
 
-from ... import constants as cs
+from ...core import constants as cs
 from ..utils import safe_decode_text, safe_decode_with_fallback
 
 
 def convert_operator_symbol_to_name(symbol: str) -> str:
+    """
+    Converts a C++ operator symbol to a standardized function-like name.
+
+    Args:
+        symbol (str): The operator symbol (e.g., '==', '[]').
+
+    Returns:
+        str: The standardized name (e.g., 'operator_equal', 'operator_subscript').
+    """
     return cs.CPP_OPERATOR_SYMBOL_MAP.get(
         symbol,
         f"{cs.OPERATOR_PREFIX}{cs.CHAR_UNDERSCORE}{symbol.replace(cs.CHAR_SPACE, cs.CHAR_UNDERSCORE)}",
@@ -12,6 +35,17 @@ def convert_operator_symbol_to_name(symbol: str) -> str:
 
 
 def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
+    """
+    Builds the fully qualified name for a C++ entity.
+
+    Args:
+        node (Node): The AST node of the entity.
+        module_qn (str): The FQN of the containing module.
+        name (str): The simple name of the entity.
+
+    Returns:
+        str: The constructed fully qualified name.
+    """
     module_parts = module_qn.split(cs.SEPARATOR_DOT)
 
     is_module_file = len(module_parts) >= 3 and (
@@ -58,6 +92,15 @@ def build_qualified_name(node: Node, module_qn: str, name: str) -> str:
 
 
 def is_exported(node: Node) -> bool:
+    """
+    Checks if a C++ node is preceded by the `export` keyword.
+
+    Args:
+        node (Node): The AST node to check.
+
+    Returns:
+        bool: True if the node is exported, False otherwise.
+    """
     current = node
     while current and current.parent:
         parent = current.parent
@@ -93,6 +136,16 @@ def is_exported(node: Node) -> bool:
 
 
 def extract_exported_class_name(class_node: Node) -> str | None:
+    """
+    Extracts the name of a class from a node that represents an exported class.
+
+    Args:
+        class_node (Node): The AST node (often a `function_definition` due to
+                           tree-sitter parsing quirks with `export class`).
+
+    Returns:
+        str | None: The name of the exported class, or None if not found.
+    """
     return next(
         (
             safe_decode_text(child)
@@ -104,6 +157,15 @@ def extract_exported_class_name(class_node: Node) -> str | None:
 
 
 def extract_operator_name(operator_node: Node) -> str:
+    """
+    Extracts the name of a C++ operator from its AST node.
+
+    Args:
+        operator_node (Node): The `operator_name` AST node.
+
+    Returns:
+        str: The standardized name of the operator.
+    """
     if not operator_node.text:
         return cs.CPP_FALLBACK_OPERATOR
 
@@ -117,6 +179,15 @@ def extract_operator_name(operator_node: Node) -> str:
 
 
 def extract_destructor_name(destructor_node: Node) -> str:
+    """
+    Extracts the name of a C++ destructor from its AST node.
+
+    Args:
+        destructor_node (Node): The `destructor_name` AST node.
+
+    Returns:
+        str: The name of the destructor (e.g., '~MyClass').
+    """
     for child in destructor_node.children:
         if child.type == cs.CppNodeType.IDENTIFIER and child.text:
             class_name = safe_decode_text(child)
@@ -125,6 +196,8 @@ def extract_destructor_name(destructor_node: Node) -> str:
 
 
 def _extract_name_from_function_definition(func_node: Node) -> str | None:
+    """Extracts a function name from a `function_definition` node."""
+
     def find_function_declarator(node: Node) -> str | None:
         if node.type == cs.CppNodeType.FUNCTION_DECLARATOR:
             return extract_function_name(node)
@@ -144,6 +217,7 @@ def _extract_name_from_function_definition(func_node: Node) -> str | None:
 
 
 def _extract_name_from_declaration(func_node: Node) -> str | None:
+    """Extracts a function name from a `declaration` node."""
     return next(
         (
             extract_function_name(child)
@@ -155,6 +229,7 @@ def _extract_name_from_declaration(func_node: Node) -> str | None:
 
 
 def _extract_name_from_field_declaration(func_node: Node) -> str | None:
+    """Extracts a function name from a `field_declaration` node."""
     has_function_declarator = any(
         child.type == cs.CppNodeType.FUNCTION_DECLARATOR for child in func_node.children
     )
@@ -181,6 +256,7 @@ def _extract_name_from_field_declaration(func_node: Node) -> str | None:
 
 
 def _extract_name_from_function_declarator(func_node: Node) -> str | None:
+    """Extracts a name from a `function_declarator` node."""
     for child in func_node.children:
         if (
             child.type
@@ -201,6 +277,7 @@ def _extract_name_from_function_declarator(func_node: Node) -> str | None:
 
 
 def _find_rightmost_name(node: Node) -> str | None:
+    """Finds the rightmost name in a potentially nested `qualified_identifier`."""
     # (H) Handle out-of-class method definitions like Calculator::add
     # (H) or deeply nested like Outer::Inner::MyClass::method
     last_name = None
@@ -219,6 +296,7 @@ def _find_rightmost_name(node: Node) -> str | None:
 
 
 def _extract_name_from_template_declaration(func_node: Node) -> str | None:
+    """Extracts a function name from within a `template_declaration`."""
     return next(
         (
             extract_function_name(child)
@@ -235,6 +313,15 @@ def _extract_name_from_template_declaration(func_node: Node) -> str | None:
 
 
 def extract_function_name(func_node: Node) -> str | None:
+    """
+    Extracts the name of a C++ function from its AST node, dispatching to helpers.
+
+    Args:
+        func_node (Node): The AST node of the function-like entity.
+
+    Returns:
+        str | None: The extracted name, or None if not found.
+    """
     match func_node.type:
         case (
             cs.CppNodeType.FUNCTION_DEFINITION
@@ -260,6 +347,7 @@ def extract_function_name(func_node: Node) -> str | None:
 
 
 def _get_inner_function_node(node: Node) -> Node:
+    """Gets the inner `function_definition` from a `template_declaration`."""
     if node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
         for child in node.children:
             if child.type == cs.CppNodeType.FUNCTION_DEFINITION:
@@ -268,6 +356,7 @@ def _get_inner_function_node(node: Node) -> Node:
 
 
 def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
+    """Finds a `qualified_identifier` within a function's declarator."""
     inner_node = _get_inner_function_node(func_node)
 
     declarator = inner_node.child_by_field_name(cs.FIELD_DECLARATOR)
@@ -282,6 +371,15 @@ def _find_qualified_identifier_in_declarator(func_node: Node) -> Node | None:
 
 
 def is_out_of_class_method_definition(func_node: Node) -> bool:
+    """
+    Checks if a function definition is an out-of-class method definition.
+
+    Args:
+        func_node (Node): The function definition AST node.
+
+    Returns:
+        bool: True if it is an out-of-class definition, False otherwise.
+    """
     if func_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
         inner = _get_inner_function_node(func_node)
         if inner.type != cs.CppNodeType.FUNCTION_DEFINITION:
@@ -296,6 +394,7 @@ def is_out_of_class_method_definition(func_node: Node) -> bool:
 
 
 def _extract_class_name_from_template_type(template_type_node: Node) -> str | None:
+    """Extracts a class name from a `template_type` node."""
     for child in template_type_node.children:
         if child.type == cs.TS_TYPE_IDENTIFIER and child.text:
             return safe_decode_text(child)
@@ -303,6 +402,15 @@ def _extract_class_name_from_template_type(template_type_node: Node) -> str | No
 
 
 def extract_class_name_from_out_of_class_method(func_node: Node) -> str | None:
+    """
+    Extracts the class name from an out-of-class method definition.
+
+    Args:
+        func_node (Node): The function definition AST node.
+
+    Returns:
+        str | None: The qualified class name (e.g., 'MyNamespace::MyClass'), or None.
+    """
     qualified_id = _find_qualified_identifier_in_declarator(func_node)
     if not qualified_id:
         return None
@@ -330,6 +438,7 @@ def extract_class_name_from_out_of_class_method(func_node: Node) -> str | None:
 
 
 def _collect_all_names_from_qualified_id(node: Node) -> list[str]:
+    """Recursively collects all name parts from a nested `qualified_identifier`."""
     names: list[str] = []
     for child in node.children:
         if child.type in (
@@ -347,6 +456,15 @@ def _collect_all_names_from_qualified_id(node: Node) -> list[str]:
 def extract_class_name_from_out_of_class_method_qualified(
     qualified_id: Node,
 ) -> str | None:
+    """
+    Extracts the class name from a qualified identifier, excluding the final method name.
+
+    Args:
+        qualified_id (Node): The `qualified_identifier` AST node.
+
+    Returns:
+        str | None: The class name part of the qualified identifier.
+    """
     names = _collect_all_names_from_qualified_id(qualified_id)
     if len(names) >= 2:
         return cs.SEPARATOR_DOUBLE_COLON.join(names[:-1])

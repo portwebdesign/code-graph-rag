@@ -8,11 +8,10 @@ from loguru import logger
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-from codebase_rag import cli_help as ch
-from codebase_rag import logs
-from codebase_rag import tool_errors as te
-from codebase_rag.config import settings
-from codebase_rag.constants import (
+from codebase_rag.core import cli_help as ch
+from codebase_rag.core import logs
+from codebase_rag.core.config import settings
+from codebase_rag.core.constants import (
     CYPHER_DELETE_CALLS,
     CYPHER_DELETE_MODULE,
     IGNORE_PATTERNS,
@@ -24,9 +23,10 @@ from codebase_rag.constants import (
     EventType,
     SupportedLanguage,
 )
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.language_spec import get_language_spec
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure import tool_errors as te
+from codebase_rag.infrastructure.language_spec import get_language_spec
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
 

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from codebase_rag.cypher_queries import (
+from codebase_rag.graph_db.cypher_queries import (
     CYPHER_DELETE_ALL,
     CYPHER_EXPORT_NODES,
     CYPHER_EXPORT_RELATIONSHIPS,

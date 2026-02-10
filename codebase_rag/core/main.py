@@ -1,3 +1,26 @@
+"""
+This module serves as the main entry point and orchestrator for the codebase-rag
+application's interactive modes, such as the chat and optimization loops.
+
+It handles the initialization of services, creation of tools, setup of the main
+agent, and management of the user interaction loop. It integrates various
+components like configuration, logging, UI rendering (with Rich and prompt-toolkit),
+and asynchronous task management.
+
+Key functionalities include:
+-   Setting up the application context and session logging.
+-   Initializing and connecting to the Memgraph database.
+-   Creating and configuring the LLM agent and its tools (e.g., for file reading,
+    code retrieval, shell commands).
+-   Running the main interactive loops for chat and optimization, handling user
+    input, agent responses, and tool calls.
+-   Managing user approvals for sensitive operations like file edits and shell
+    commands.
+-   Handling graceful cancellation of long-running agent tasks.
+-   Providing utility functions for UI rendering, such as styled text, tables,
+    and diffs.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -26,29 +49,12 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from . import constants as cs
-from . import exceptions as ex
-from . import logs as ls
-from .config import ModelConfig, load_cgrignore_patterns, settings
-from .models import AppContext
-from .prompts import OPTIMIZATION_PROMPT, OPTIMIZATION_PROMPT_WITH_REFERENCE
-from .providers.base import get_provider_from_config
-from .services import QueryProtocol
-from .services.graph_service import MemgraphIngestor
-from .services.llm import CypherGenerator, create_rag_orchestrator
-from .tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
-from .tools.codebase_query import create_query_tool
-from .tools.directory_lister import DirectoryLister, create_directory_lister_tool
-from .tools.document_analyzer import DocumentAnalyzer, create_document_analyzer_tool
-from .tools.file_editor import FileEditor, create_file_editor_tool
-from .tools.file_reader import FileReader, create_file_reader_tool
-from .tools.file_writer import FileWriter, create_file_writer_tool
-from .tools.semantic_search import (
-    create_get_function_source_tool,
-    create_semantic_search_tool,
+from codebase_rag.ai.prompts import (
+    OPTIMIZATION_PROMPT,
+    OPTIMIZATION_PROMPT_WITH_REFERENCE,
 )
-from .tools.shell_command import ShellCommander, create_shell_command_tool
-from .types_defs import (
+from codebase_rag.data_models.models import AppContext
+from codebase_rag.data_models.types_defs import (
     CHAT_LOOP_UI,
     OPTIMIZATION_LOOP_UI,
     ORANGE_STYLE,
@@ -62,6 +68,33 @@ from .types_defs import (
     ShellCommandArgs,
     ToolArgs,
 )
+from codebase_rag.providers.base import get_provider_from_config
+from codebase_rag.services import QueryProtocol
+from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
+from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from codebase_rag.tools.codebase_query import create_query_tool
+from codebase_rag.tools.directory_lister import (
+    DirectoryLister,
+    create_directory_lister_tool,
+)
+from codebase_rag.tools.document_analyzer import (
+    DocumentAnalyzer,
+    create_document_analyzer_tool,
+)
+from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
+from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
+from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+from codebase_rag.tools.semantic_search import (
+    create_get_function_source_tool,
+    create_semantic_search_tool,
+)
+from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
+
+from ..infrastructure import exceptions as ex
+from . import constants as cs
+from . import logs as ls
+from .config import ModelConfig, load_cgrignore_patterns, settings
 
 if TYPE_CHECKING:
     from prompt_toolkit.key_binding import KeyPressEvent
@@ -73,12 +106,30 @@ if TYPE_CHECKING:
 def style(
     text: str, color: cs.Color, modifier: cs.StyleModifier = cs.StyleModifier.BOLD
 ) -> str:
+    """Applies Rich styling to a text string.
+
+    Args:
+        text (str): The text to style.
+        color (cs.Color): The color to apply.
+        modifier (cs.StyleModifier): The style modifier (e.g., 'bold', 'dim').
+
+    Returns:
+        str: The Rich-formatted string.
+    """
     if modifier == cs.StyleModifier.NONE:
         return f"[{color}]{text}[/{color}]"
     return f"[{modifier} {color}]{text}[/{modifier} {color}]"
 
 
 def dim(text: str) -> str:
+    """Applies a 'dim' style to the text.
+
+    Args:
+        text (str): The text to dim.
+
+    Returns:
+        str: The dimmed, Rich-formatted string.
+    """
     return f"[{cs.StyleModifier.DIM}]{text}[/{cs.StyleModifier.DIM}]"
 
 
@@ -86,6 +137,15 @@ app_context = AppContext()
 
 
 def init_session_log(project_root: Path) -> Path:
+    """
+    Initializes a log file for the current interactive session.
+
+    Args:
+        project_root (Path): The root directory of the project.
+
+    Returns:
+        Path: The path to the created log file.
+    """
     log_dir = project_root / cs.TMP_DIR
     log_dir.mkdir(exist_ok=True)
     app_context.session.log_file = (
@@ -97,12 +157,23 @@ def init_session_log(project_root: Path) -> Path:
 
 
 def log_session_event(event: str) -> None:
+    """Writes an event to the session log file.
+
+    Args:
+        event (str): The event string to log.
+    """
     if app_context.session.log_file:
         with open(app_context.session.log_file, "a") as f:
             f.write(f"{event}\n")
 
 
 def get_session_context() -> str:
+    """
+    Retrieves the content of the session log to be used as context for the LLM.
+
+    Returns:
+        str: The formatted session context string, or an empty string if not available.
+    """
     if app_context.session.log_file and app_context.session.log_file.exists():
         content = app_context.session.log_file.read_text(encoding="utf-8")
         return f"{cs.SESSION_CONTEXT_START}{content}{cs.SESSION_CONTEXT_END}"
@@ -110,6 +181,13 @@ def get_session_context() -> str:
 
 
 def _print_unified_diff(target: str, replacement: str, path: str) -> None:
+    """Prints a unified diff of changes to the console.
+
+    Args:
+        target (str): The original text.
+        replacement (str): The new text.
+        path (str): The file path to display in the header.
+    """
     separator = dim(cs.HORIZONTAL_SEPARATOR)
     app_context.console.print(f"\n{cs.UI_DIFF_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
@@ -148,6 +226,12 @@ def _print_unified_diff(target: str, replacement: str, path: str) -> None:
 
 
 def _print_new_file_content(path: str, content: str) -> None:
+    """Prints the content of a new file to be created.
+
+    Args:
+        path (str): The path of the new file.
+        content (str): The content to be written to the file.
+    """
     separator = dim(cs.HORIZONTAL_SEPARATOR)
     app_context.console.print(f"\n{cs.UI_NEW_FILE_HEADER.format(path=path)}")
     app_context.console.print(separator)
@@ -163,6 +247,16 @@ def _print_new_file_content(path: str, content: str) -> None:
 def _to_tool_args(
     tool_name: str, raw_args: RawToolArgs, tool_names: ConfirmationToolNames
 ) -> ToolArgs:
+    """Converts raw tool arguments into a specific TypedDict for the tool.
+
+    Args:
+        tool_name (str): The name of the tool being called.
+        raw_args (RawToolArgs): The raw arguments from the LLM.
+        tool_names (ConfirmationToolNames): Standardized names for confirmation tools.
+
+    Returns:
+        ToolArgs: The strongly-typed arguments for the specific tool.
+    """
     match tool_name:
         case tool_names.replace_code:
             return ReplaceCodeArgs(
@@ -187,6 +281,14 @@ def _display_tool_call_diff(
     tool_names: ConfirmationToolNames,
     file_path: str | None = None,
 ) -> None:
+    """Displays the proposed changes for a tool call that requires confirmation.
+
+    Args:
+        tool_name (str): The name of the tool.
+        tool_args (ToolArgs): The arguments for the tool.
+        tool_names (ConfirmationToolNames): Standardized names for confirmation tools.
+        file_path (str | None): An optional fallback file path.
+    """
     match tool_name:
         case tool_names.replace_code:
             target = str(tool_args.get(cs.ARG_TARGET_CODE, ""))
@@ -222,6 +324,20 @@ def _process_tool_approvals(
     denial_default: str,
     tool_names: ConfirmationToolNames,
 ) -> DeferredToolResults:
+    """
+    Handles the user approval workflow for deferred tool calls.
+
+    It displays the proposed changes and prompts the user for confirmation.
+
+    Args:
+        requests (DeferredToolRequests): The tool requests requiring approval.
+        approval_prompt (str): The message to show when asking for approval.
+        denial_default (str): The default message to use if the user denies without feedback.
+        tool_names (ConfirmationToolNames): Standardized names for confirmation tools.
+
+    Returns:
+        DeferredToolResults: The results of the approval process.
+    """
     deferred_results = DeferredToolResults()
 
     for call in requests.approvals:
@@ -250,6 +366,14 @@ def _process_tool_approvals(
 
 
 def _setup_common_initialization(repo_path: str) -> Path:
+    """Performs common setup tasks like logger and temp directory initialization.
+
+    Args:
+        repo_path (str): The path to the repository.
+
+    Returns:
+        Path: The resolved absolute path to the project root.
+    """
     logger.remove()
     logger.add(sys.stdout, format=cs.LOG_FORMAT)
 
@@ -270,6 +394,16 @@ def _create_configuration_table(
     title: str = cs.DEFAULT_TABLE_TITLE,
     language: str | None = None,
 ) -> Table:
+    """Creates a Rich table to display the current application configuration.
+
+    Args:
+        repo_path (str): The path to the target repository.
+        title (str): The title for the table.
+        language (str | None): The target programming language, if applicable.
+
+    Returns:
+        Table: The configured Rich Table object.
+    """
     table = Table(title=style(title, cs.Color.GREEN))
     table.add_column(cs.TABLE_COL_CONFIGURATION, style=cs.Color.CYAN)
     table.add_column(cs.TABLE_COL_VALUE, style=cs.Color.MAGENTA)
@@ -323,6 +457,17 @@ async def run_optimization_loop(
     tool_names: ConfirmationToolNames,
     reference_document: str | None = None,
 ) -> None:
+    """
+    Runs the interactive loop specifically for the code optimization task.
+
+    Args:
+        rag_agent (Agent): The configured agent.
+        message_history (list[ModelMessage]): The list of messages in the current conversation.
+        project_root (Path): The root path of the project being optimized.
+        language (str): The programming language of the project.
+        tool_names (ConfirmationToolNames): Standardized names for confirmation tools.
+        reference_document (str | None): An optional path to a document with optimization guidelines.
+    """
     app_context.console.print(cs.UI_OPTIMIZATION_START.format(language=language))
     document_info = (
         cs.UI_REFERENCE_DOC_INFO.format(reference_document=reference_document)
@@ -358,6 +503,16 @@ async def run_optimization_loop(
 async def run_with_cancellation[T](
     coro: Coroutine[None, None, T], timeout: float | None = None
 ) -> T | CancelledResult:
+    """
+    Runs a coroutine with support for cancellation via KeyboardInterrupt or timeout.
+
+    Args:
+        coro (Coroutine): The coroutine to run.
+        timeout (float | None): An optional timeout in seconds.
+
+    Returns:
+        T | CancelledResult: The result of the coroutine, or a `CancelledResult` if it was cancelled.
+    """
     task = asyncio.create_task(coro)
 
     try:
@@ -393,6 +548,20 @@ async def _run_agent_response_loop(
     tool_names: ConfirmationToolNames,
     model_override: Model | None = None,
 ) -> None:
+    """
+    Manages the agent's response generation, including tool calls and approvals.
+
+    This loop continues until the agent produces a final text response instead of
+    requesting another tool call.
+
+    Args:
+        rag_agent (Agent): The configured agent.
+        message_history (list[ModelMessage]): The current conversation history.
+        question_with_context (str): The user's question, potentially with session context.
+        config (AgentLoopUI): The UI configuration for the current loop.
+        tool_names (ConfirmationToolNames): Standardized names for confirmation tools.
+        model_override (Model | None): An optional override for the LLM.
+    """
     deferred_results: DeferredToolResults | None = None
 
     while True:
@@ -439,6 +608,14 @@ async def _run_agent_response_loop(
 
 
 def _find_image_paths(question: str) -> list[Path]:
+    """Finds potential image file paths within a user's question string.
+
+    Args:
+        question (str): The user's input string.
+
+    Returns:
+        list[Path]: A list of `Path` objects for found image files.
+    """
     try:
         if os.name == "nt":
             # (H) On Windows, shlex.split with posix=False to preserve backslashes
@@ -463,6 +640,14 @@ def _find_image_paths(question: str) -> list[Path]:
 
 
 def _get_path_variants(path_str: str) -> tuple[str, ...]:
+    """Generates different quoted and escaped variants of a path string.
+
+    Args:
+        path_str (str): The path string.
+
+    Returns:
+        tuple[str, ...]: A tuple of path variants.
+    """
     return (
         path_str.replace(" ", r"\ "),
         f"'{path_str}'",
@@ -472,6 +657,16 @@ def _get_path_variants(path_str: str) -> tuple[str, ...]:
 
 
 def _replace_path_in_question(question: str, old_path: str, new_path: str) -> str:
+    """Replaces a path in the user's question with a new path.
+
+    Args:
+        question (str): The original question string.
+        old_path (str): The path string to replace.
+        new_path (str): The new path string.
+
+    Returns:
+        str: The updated question string.
+    """
     for variant in _get_path_variants(old_path):
         if variant in question:
             return question.replace(variant, new_path)
@@ -480,6 +675,19 @@ def _replace_path_in_question(question: str, old_path: str, new_path: str) -> st
 
 
 def _handle_chat_images(question: str, project_root: Path) -> str:
+    """
+    Handles image paths found in a user's question for multimodal chat.
+
+    It copies the images to a temporary directory within the project and updates
+    the paths in the question to point to the new locations.
+
+    Args:
+        question (str): The user's input string.
+        project_root (Path): The root of the current project.
+
+    Returns:
+        str: The question with image paths updated to temporary locations.
+    """
     image_files = _find_image_paths(question)
     if not image_files:
         return question
@@ -508,6 +716,15 @@ def _handle_chat_images(question: str, project_root: Path) -> str:
 
 
 def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
+    """
+    Prompts the user for multiline input using prompt-toolkit.
+
+    Args:
+        prompt_text (str): The text to display for the prompt.
+
+    Returns:
+        str: The user's input, stripped of leading/trailing whitespace.
+    """
     bindings = KeyBindings()
 
     @bindings.add(cs.KeyBinding.CTRL_J)
@@ -548,6 +765,16 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
 def _create_model_from_string(
     model_string: str, current_override_config: ModelConfig | None = None
 ) -> tuple[Model, str, ModelConfig]:
+    """Creates a Pydantic-AI Model object from a 'provider:model_id' string.
+
+    Args:
+        model_string (str): The model identifier string (e.g., 'ollama:llama3').
+        current_override_config (ModelConfig | None): The current override config, if any.
+
+    Returns:
+        tuple[Model, str, ModelConfig]: A tuple of the new model instance, its
+                                        canonical string, and its configuration.
+    """
     base_config = current_override_config or settings.active_orchestrator_config
 
     if cs.CHAR_COLON not in model_string:
@@ -583,6 +810,18 @@ def _handle_model_command(
     current_model_string: str | None,
     current_config: ModelConfig | None,
 ) -> tuple[Model | None, str | None, ModelConfig | None]:
+    """Handles the '/model' command to view or switch the LLM at runtime.
+
+    Args:
+        command (str): The full command string from the user.
+        current_model (Model | None): The current overridden model instance.
+        current_model_string (str | None): The string identifier for the current override.
+        current_config (ModelConfig | None): The config for the current override.
+
+    Returns:
+        tuple[Model | None, str | None, ModelConfig | None]: The updated model,
+            string, and config.
+    """
     parts = command.strip().split(maxsplit=1)
     arg = parts[1].strip() if len(parts) > 1 else None
 
@@ -623,6 +862,17 @@ async def _run_interactive_loop(
     tool_names: ConfirmationToolNames,
     initial_question: str | None = None,
 ) -> None:
+    """The main interactive REPL for chatting with the agent.
+
+    Args:
+        rag_agent (Agent): The configured agent.
+        message_history (list[ModelMessage]): The current conversation history.
+        project_root (Path): The root of the current project.
+        config (AgentLoopUI): The UI configuration for the loop.
+        input_prompt (str): The text to display when asking for user input.
+        tool_names (ConfirmationToolNames): Standardized names for confirmation tools.
+        initial_question (str | None): An optional initial question to start the loop with.
+    """
     init_session_log(project_root)
     question = initial_question or ""
     model_override: Model | None = None
@@ -697,6 +947,15 @@ async def run_chat_loop(
     project_root: Path,
     tool_names: ConfirmationToolNames,
 ) -> None:
+    """
+    Initializes and runs the general-purpose chat loop.
+
+    Args:
+        rag_agent (Agent): The configured agent.
+        message_history (list[ModelMessage]): The list of messages in the current conversation.
+        project_root (Path): The root path of the project.
+        tool_names (ConfirmationToolNames): Standardized names for confirmation tools.
+    """
     await _run_interactive_loop(
         rag_agent,
         message_history,
@@ -708,6 +967,12 @@ async def run_chat_loop(
 
 
 def _update_single_model_setting(role: cs.ModelRole, model_string: str) -> None:
+    """Updates the configuration for a single model role.
+
+    Args:
+        role (cs.ModelRole): The role to update (e.g., ORCHESTRATOR).
+        model_string (str): The model identifier string (e.g., 'ollama:llama3').
+    """
     provider, model = settings.parse_model_string(model_string)
 
     match role:
@@ -731,6 +996,13 @@ def update_model_settings(
     orchestrator: str | None,
     cypher: str | None,
 ) -> None:
+    """
+    Updates the application's model settings based on CLI arguments.
+
+    Args:
+        orchestrator (str | None): The model string for the orchestrator.
+        cypher (str | None): The model string for the Cypher generator.
+    """
     if orchestrator:
         _update_single_model_setting(cs.ModelRole.ORCHESTRATOR, orchestrator)
     if cypher:
@@ -738,6 +1010,15 @@ def update_model_settings(
 
 
 def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphData:
+    """Exports the graph to a JSON file.
+
+    Args:
+        ingestor (MemgraphIngestor): The ingestor connected to the database.
+        output_path (Path): The path to write the JSON file to.
+
+    Returns:
+        GraphData: The exported graph data.
+    """
     graph_data: GraphData = ingestor.export_graph_to_dict()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -748,6 +1029,15 @@ def _write_graph_json(ingestor: MemgraphIngestor, output_path: Path) -> GraphDat
 
 
 def connect_memgraph(batch_size: int) -> MemgraphIngestor:
+    """
+    Establishes a connection to the Memgraph database.
+
+    Args:
+        batch_size (int): The batch size for database ingestion.
+
+    Returns:
+        MemgraphIngestor: An initialized ingestor instance.
+    """
     return MemgraphIngestor(
         host=settings.MEMGRAPH_HOST,
         port=settings.MEMGRAPH_PORT,
@@ -756,6 +1046,16 @@ def connect_memgraph(batch_size: int) -> MemgraphIngestor:
 
 
 def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
+    """
+    Exports the entire graph from Memgraph to a specified JSON file.
+
+    Args:
+        ingestor (MemgraphIngestor): The Memgraph ingestor instance.
+        output (str): The path to the output JSON file.
+
+    Returns:
+        bool: True if the export was successful, False otherwise.
+    """
     output_path = Path(output)
 
     try:
@@ -779,6 +1079,15 @@ def export_graph_to_file(ingestor: MemgraphIngestor, output: str) -> bool:
 
 
 def detect_excludable_directories(repo_path: Path) -> set[str]:
+    """
+    Scans the repository to detect common directories that are often excluded.
+
+    Args:
+        repo_path (Path): The root path of the repository to scan.
+
+    Returns:
+        set[str]: A set of relative paths of directories to consider for exclusion.
+    """
     detected: set[str] = set()
     queue: deque[tuple[Path, int]] = deque([(repo_path, 0)])
     while queue:
@@ -800,6 +1109,14 @@ def detect_excludable_directories(repo_path: Path) -> set[str]:
 
 
 def _get_grouping_key(path: str) -> str:
+    """Determines the grouping key for a path based on common excludable patterns.
+
+    Args:
+        path (str): The path to group.
+
+    Returns:
+        str: The determined group key.
+    """
     parts = Path(path).parts
     if not parts:
         return cs.INTERACTIVE_DEFAULT_GROUP
@@ -810,6 +1127,14 @@ def _get_grouping_key(path: str) -> str:
 
 
 def _group_paths_by_pattern(paths: set[str]) -> dict[str, list[str]]:
+    """Groups a set of paths by their determined grouping key.
+
+    Args:
+        paths (set[str]): A set of paths to group.
+
+    Returns:
+        dict[str, list[str]]: A dictionary mapping group keys to lists of paths.
+    """
     groups: dict[str, list[str]] = {}
     for path in paths:
         key = _get_grouping_key(path)
@@ -822,6 +1147,14 @@ def _group_paths_by_pattern(paths: set[str]) -> dict[str, list[str]]:
 
 
 def _format_nested_count(count: int) -> str:
+    """Formats the count of nested paths for the interactive UI.
+
+    Args:
+        count (int): The number of nested paths.
+
+    Returns:
+        str: A formatted string (e.g., "1 dir", "5 dirs").
+    """
     template = (
         cs.INTERACTIVE_NESTED_SINGULAR if count == 1 else cs.INTERACTIVE_NESTED_PLURAL
     )
@@ -829,6 +1162,14 @@ def _format_nested_count(count: int) -> str:
 
 
 def _display_grouped_table(groups: dict[str, list[str]]) -> list[str]:
+    """Displays the top-level groups of excludable directories.
+
+    Args:
+        groups (dict[str, list[str]]): The grouped directories.
+
+    Returns:
+        list[str]: A sorted list of the group root names.
+    """
     sorted_roots = sorted(groups.keys())
     table = Table(title=style(cs.INTERACTIVE_TITLE_GROUPED, cs.Color.CYAN))
     table.add_column(cs.INTERACTIVE_COL_NUM, style=cs.Color.YELLOW, width=4)
@@ -849,6 +1190,12 @@ def _display_grouped_table(groups: dict[str, list[str]]) -> list[str]:
 
 
 def _display_nested_table(pattern: str, paths: list[str]) -> None:
+    """Displays the nested paths within a selected group.
+
+    Args:
+        pattern (str): The name of the parent group.
+        paths (list[str]): The list of nested paths to display.
+    """
     title = cs.INTERACTIVE_TITLE_NESTED.format(pattern=pattern)
     table = Table(title=style(title, cs.Color.CYAN))
     table.add_column(cs.INTERACTIVE_COL_NUM, style=cs.Color.YELLOW, width=4)
@@ -868,6 +1215,15 @@ def _display_nested_table(pattern: str, paths: list[str]) -> None:
 
 
 def _prompt_nested_selection(pattern: str, paths: list[str]) -> set[str]:
+    """Prompts the user to select which nested paths to keep (i.e., not exclude).
+
+    Args:
+        pattern (str): The name of the parent group.
+        paths (list[str]): The list of nested paths to choose from.
+
+    Returns:
+        set[str]: A set of paths the user chose to keep.
+    """
     _display_nested_table(pattern, paths)
 
     response = Prompt.ask(
@@ -901,6 +1257,17 @@ def prompt_for_unignored_directories(
     repo_path: Path,
     cli_excludes: list[str] | None = None,
 ) -> frozenset[str]:
+    """
+    Interactively prompts the user to select which commonly excluded directories
+    they wish to include in the analysis.
+
+    Args:
+        repo_path (Path): The root path of the repository.
+        cli_excludes (list[str] | None): A list of exclusion patterns provided via the CLI.
+
+    Returns:
+        frozenset[str]: A frozenset of paths that the user has chosen to *unignore* (include).
+    """
     detected = detect_excludable_directories(repo_path)
     cgrignore = load_cgrignore_patterns(repo_path)
     cli_patterns = frozenset(cli_excludes) if cli_excludes else frozenset()
@@ -959,6 +1326,15 @@ def prompt_for_unignored_directories(
 
 
 def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
+    """Validates the configuration for a given model provider.
+
+    Args:
+        role (cs.ModelRole): The role of the model (e.g., Orchestrator).
+        config (ModelConfig): The configuration for the model.
+
+    Raises:
+        ValueError: If the configuration is invalid.
+    """
     from .providers.base import get_provider_from_config
 
     try:
@@ -971,6 +1347,16 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
 def _initialize_services_and_agent(
     repo_path: str, ingestor: QueryProtocol
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames]:
+    """
+    Initializes all services, tools, and the main agent for an interactive session.
+
+    Args:
+        repo_path (str): The path to the target repository.
+        ingestor (QueryProtocol): The database ingestor/query service.
+
+    Returns:
+        tuple: A tuple containing the initialized agent and the names of confirmation tools.
+    """
     _validate_provider_config(
         cs.ModelRole.ORCHESTRATOR, settings.active_orchestrator_config
     )
@@ -1022,6 +1408,13 @@ def _initialize_services_and_agent(
 
 
 async def main_async(repo_path: str, batch_size: int) -> None:
+    """
+    The main asynchronous entry point for the interactive chat mode.
+
+    Args:
+        repo_path (str): The path to the target repository.
+        batch_size (int): The batch size for database ingestion.
+    """
     project_root = _setup_common_initialization(repo_path)
 
     table = _create_configuration_table(repo_path)
@@ -1048,6 +1441,17 @@ async def main_optimize_async(
     cypher: str | None = None,
     batch_size: int | None = None,
 ) -> None:
+    """
+    The main asynchronous entry point for the code optimization mode.
+
+    Args:
+        language (str): The programming language of the codebase.
+        target_repo_path (str): The path to the target repository.
+        reference_document (str | None): Optional path to a reference document for guidance.
+        orchestrator (str | None): Optional override for the orchestrator model.
+        cypher (str | None): Optional override for the Cypher generation model.
+        batch_size (int | None): Optional override for the database batch size.
+    """
     project_root = _setup_common_initialization(target_repo_path)
 
     update_model_settings(orchestrator, cypher)

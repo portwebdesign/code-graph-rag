@@ -27,7 +27,7 @@ def test_help_command_works() -> None:
 
 def test_import_cli_module() -> None:
     try:
-        from codebase_rag import cli
+        from codebase_rag.core import cli
 
         assert hasattr(cli, "app"), "CLI module missing app attribute"
     except ImportError as e:

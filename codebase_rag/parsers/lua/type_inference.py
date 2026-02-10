@@ -1,12 +1,33 @@
+"""
+This module defines the `LuaTypeInferenceEngine`, a class responsible for
+inferring variable types in Lua source code.
+
+Lua is a dynamically typed language, making type inference challenging. This
+engine focuses on a common pattern: inferring the type of a variable based on
+the return value of a method call, particularly for object construction patterns
+like `local my_obj = MyClass:new()`.
+
+Key functionalities:
+-   Building a map of local variables to their inferred types within a given scope.
+-   Processing variable declarations and assignments.
+-   Inferring a variable's type by analyzing the method call on the right-hand
+    side of an assignment.
+-   Resolving class names using the import map and function registry.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ... import constants as cs
-from ... import logs as ls
-from ...types_defs import FunctionRegistryTrieProtocol, TreeSitterNodeProtocol
+from codebase_rag.data_models.types_defs import (
+    FunctionRegistryTrieProtocol,
+    TreeSitterNodeProtocol,
+)
+
+from ...core import constants as cs
+from ...core import logs as ls
 from ..utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -14,12 +35,24 @@ if TYPE_CHECKING:
 
 
 class LuaTypeInferenceEngine:
+    """
+    A type inference engine specifically for Lua code.
+    """
+
     def __init__(
         self,
         import_processor: ImportProcessor,
         function_registry: FunctionRegistryTrieProtocol,
         project_name: str,
     ):
+        """
+        Initializes the LuaTypeInferenceEngine.
+
+        Args:
+            import_processor (ImportProcessor): The shared import processor.
+            function_registry (FunctionRegistryTrieProtocol): The shared function registry.
+            project_name (str): The name of the project.
+        """
         self.import_processor = import_processor
         self.function_registry = function_registry
         self.project_name = project_name
@@ -27,6 +60,16 @@ class LuaTypeInferenceEngine:
     def build_local_variable_type_map(
         self, caller_node: TreeSitterNodeProtocol, module_qn: str
     ) -> dict[str, str]:
+        """
+        Builds a map of local variable names to their inferred types for a given scope.
+
+        Args:
+            caller_node (TreeSitterNodeProtocol): The AST node representing the scope.
+            module_qn (str): The qualified name of the module.
+
+        Returns:
+            dict[str, str]: A dictionary mapping variable names to their inferred type FQNs.
+        """
         local_var_types: dict[str, str] = {}
         stack: list[TreeSitterNodeProtocol] = [caller_node]
 
@@ -45,6 +88,7 @@ class LuaTypeInferenceEngine:
         module_qn: str,
         local_var_types: dict[str, str],
     ) -> None:
+        """Processes a `variable_declaration` node to infer types."""
         assignment = next(
             (c for c in decl_node.children if c.type == cs.TS_LUA_ASSIGNMENT_STATEMENT),
             None,
@@ -67,6 +111,7 @@ class LuaTypeInferenceEngine:
                 )
 
     def _extract_var_names(self, assignment: TreeSitterNodeProtocol) -> list[str]:
+        """Extracts variable names from the left-hand side of an assignment."""
         names: list[str] = []
         for child in assignment.children:
             if child.type != cs.TS_LUA_VARIABLE_LIST:
@@ -80,6 +125,7 @@ class LuaTypeInferenceEngine:
     def _extract_function_calls(
         self, assignment: TreeSitterNodeProtocol
     ) -> list[TreeSitterNodeProtocol]:
+        """Extracts function call nodes from the right-hand side of an assignment."""
         calls: list[TreeSitterNodeProtocol] = []
         for child in assignment.children:
             if child.type != cs.TS_LUA_EXPRESSION_LIST:
@@ -92,6 +138,16 @@ class LuaTypeInferenceEngine:
     def _infer_lua_variable_type_from_value(
         self, value_node: TreeSitterNodeProtocol, module_qn: str
     ) -> str | None:
+        """
+        Infers a variable's type from the value it's assigned, focusing on method calls.
+
+        Args:
+            value_node (TreeSitterNodeProtocol): The expression node on the right side.
+            module_qn (str): The FQN of the current module.
+
+        Returns:
+            str | None: The inferred type FQN, or None.
+        """
         if value_node.type == cs.TS_LUA_FUNCTION_CALL:
             for child in value_node.children:
                 if child.type == cs.TS_LUA_METHOD_INDEX_EXPRESSION:
@@ -121,6 +177,16 @@ class LuaTypeInferenceEngine:
         return None
 
     def _resolve_lua_class_name(self, class_name: str, module_qn: str) -> str | None:
+        """
+        Resolves a Lua class name (often a table) to its likely FQN.
+
+        Args:
+            class_name (str): The simple name of the class/table.
+            module_qn (str): The FQN of the current module.
+
+        Returns:
+            str | None: The resolved FQN, or None.
+        """
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]
             if class_name in import_map:

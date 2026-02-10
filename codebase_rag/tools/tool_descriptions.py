@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from codebase_rag.constants import MCPToolName
+from codebase_rag.core.constants import MCPToolName
 
 
 class AgenticToolName(StrEnum):

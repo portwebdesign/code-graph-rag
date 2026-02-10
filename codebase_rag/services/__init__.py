@@ -1,6 +1,6 @@
 from typing import Protocol, runtime_checkable
 
-from ..types_defs import PropertyDict, PropertyValue, ResultRow
+from codebase_rag.data_models.types_defs import PropertyDict, PropertyValue, ResultRow
 
 
 @runtime_checkable

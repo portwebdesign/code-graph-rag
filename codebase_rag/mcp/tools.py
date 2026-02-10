@@ -3,25 +3,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from codebase_rag import constants as cs
-from codebase_rag import logs as lg
-from codebase_rag import tool_errors as te
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.models import ToolMetadata
-from codebase_rag.parser_loader import load_parsers
-from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator
-from codebase_rag.tools import tool_descriptions as td
-from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
-from codebase_rag.tools.codebase_query import create_query_tool
-from codebase_rag.tools.directory_lister import (
-    DirectoryLister,
-    create_directory_lister_tool,
-)
-from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
-from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
-from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
-from codebase_rag.types_defs import (
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as lg
+from codebase_rag.data_models.models import ToolMetadata
+from codebase_rag.data_models.types_defs import (
     CodeSnippetResultDict,
     DeleteProjectErrorResult,
     DeleteProjectResult,
@@ -35,6 +20,21 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
 )
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure import tool_errors as te
+from codebase_rag.infrastructure.parser_loader import load_parsers
+from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.tools import tool_descriptions as td
+from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from codebase_rag.tools.codebase_query import create_query_tool
+from codebase_rag.tools.directory_lister import (
+    DirectoryLister,
+    create_directory_lister_tool,
+)
+from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
+from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
+from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
 
 
 class MCPToolsRegistry:

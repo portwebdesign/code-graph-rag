@@ -30,14 +30,14 @@ def mock_unixcoder() -> MagicMock:
 @pytest.fixture
 def reset_model_cache() -> Generator[None, None, None]:
     if _has_semantic_deps():
-        from codebase_rag.embedder import (
+        from codebase_rag.ai.embedder import (
             get_model,  # ty: ignore[possibly-missing-import]
         )
 
         get_model.cache_clear()
     yield
     if _has_semantic_deps():
-        from codebase_rag.embedder import (
+        from codebase_rag.ai.embedder import (
             get_model,  # ty: ignore[possibly-missing-import]
         )
 
@@ -54,7 +54,7 @@ def test_embed_code_returns_768_dimensional_vector(
     mock_unixcoder.return_value = (torch.zeros(1, 5, 768), mock_embedding)
 
     with patch("codebase_rag.embedder.get_model", return_value=mock_unixcoder):
-        from codebase_rag.embedder import embed_code
+        from codebase_rag.ai.embedder import embed_code
 
         result = embed_code("def hello(): pass")
 
@@ -72,7 +72,7 @@ def test_embed_code_calls_tokenize(
     mock_unixcoder.return_value = (torch.zeros(1, 5, 768), mock_embedding)
 
     with patch("codebase_rag.embedder.get_model", return_value=mock_unixcoder):
-        from codebase_rag.embedder import embed_code
+        from codebase_rag.ai.embedder import embed_code
 
         embed_code("def test(): return 42", max_length=256)
 
@@ -91,7 +91,7 @@ def test_embed_code_uses_default_max_length(
     mock_unixcoder.return_value = (torch.zeros(1, 5, 768), mock_embedding)
 
     with patch("codebase_rag.embedder.get_model", return_value=mock_unixcoder):
-        from codebase_rag.embedder import embed_code
+        from codebase_rag.ai.embedder import embed_code
 
         embed_code("x = 1")
 
@@ -100,7 +100,9 @@ def test_embed_code_uses_default_max_length(
 
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 def test_get_model_is_cached(reset_model_cache: None) -> None:
-    from codebase_rag.embedder import get_model  # ty: ignore[possibly-missing-import]
+    from codebase_rag.ai.embedder import (
+        get_model,  # ty: ignore[possibly-missing-import]
+    )
 
     with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:
         mock_instance = MagicMock()
@@ -117,7 +119,9 @@ def test_get_model_is_cached(reset_model_cache: None) -> None:
 
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 def test_get_model_uses_cuda_when_available(reset_model_cache: None) -> None:
-    from codebase_rag.embedder import get_model  # ty: ignore[possibly-missing-import]
+    from codebase_rag.ai.embedder import (
+        get_model,  # ty: ignore[possibly-missing-import]
+    )
 
     with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:
         mock_instance = MagicMock()
@@ -133,7 +137,9 @@ def test_get_model_uses_cuda_when_available(reset_model_cache: None) -> None:
 
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 def test_get_model_does_not_use_cuda_when_unavailable(reset_model_cache: None) -> None:
-    from codebase_rag.embedder import get_model  # ty: ignore[possibly-missing-import]
+    from codebase_rag.ai.embedder import (
+        get_model,  # ty: ignore[possibly-missing-import]
+    )
 
     with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:
         mock_instance = MagicMock()
@@ -149,7 +155,7 @@ def test_get_model_does_not_use_cuda_when_unavailable(reset_model_cache: None) -
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 @pytest.mark.slow
 def test_embed_code_integration(reset_model_cache: None) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.ai.embedder import embed_code
 
     code = "def add(a, b): return a + b"
     result = embed_code(code)
@@ -162,7 +168,7 @@ def test_embed_code_integration(reset_model_cache: None) -> None:
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 @pytest.mark.slow
 def test_similar_code_has_similar_embeddings(reset_model_cache: None) -> None:
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.ai.embedder import embed_code
 
     code1 = "def add(a, b): return a + b"
     code2 = "def sum(x, y): return x + y"
@@ -188,7 +194,7 @@ def test_embed_code_raises_without_dependencies() -> None:
     if _has_semantic_deps():
         pytest.skip("Dependencies are installed")
 
-    from codebase_rag.embedder import embed_code
+    from codebase_rag.ai.embedder import embed_code
 
     with pytest.raises(RuntimeError, match="Semantic search requires"):
         embed_code("x = 1")

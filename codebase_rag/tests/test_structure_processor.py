@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.constants import SupportedLanguage
-from codebase_rag.models import LanguageSpec
+from codebase_rag.core.constants import SupportedLanguage
+from codebase_rag.data_models.models import LanguageSpec
 from codebase_rag.parsers.structure_processor import StructureProcessor
 
 

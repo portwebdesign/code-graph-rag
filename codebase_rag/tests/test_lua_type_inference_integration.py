@@ -2,11 +2,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag import constants as cs
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.core import constants as cs
+from codebase_rag.data_models.types_defs import NodeType
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.lua.type_inference import LuaTypeInferenceEngine
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture(scope="module")

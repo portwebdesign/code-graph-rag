@@ -1,3 +1,22 @@
+"""
+This module defines the `FileEditor` class and a factory function for creating
+a `pydantic-ai` tool that allows an LLM agent to modify files.
+
+The primary tool, `replace_code_surgically`, is designed for targeted, precise
+changes. It finds a specific block of code (`target_code`) within a file and
+replaces it with a new block (`replacement_code`). This is safer than overwriting
+the entire file and is the preferred method for agentic edits.
+
+The class also includes helper methods for parsing ASTs to find specific
+functions, which can be used to generate the `target_code` for replacement.
+
+Key functionalities:
+-   Safely replacing a specific block of code within a file.
+-   Path validation to ensure edits are within the project root.
+-   Using `diff-match-patch` for robust patching.
+-   Helper methods to find function source code by name and line number.
+"""
+
 from __future__ import annotations
 
 import difflib
@@ -8,25 +27,48 @@ from loguru import logger
 from pydantic_ai import Tool
 from tree_sitter import Node, Parser
 
-from .. import constants as cs
-from .. import logs as ls
-from .. import tool_errors as te
-from ..decorators import validate_project_path
-from ..language_spec import get_language_for_extension, get_language_spec
-from ..parser_loader import load_parsers
-from ..schemas import EditResult
-from ..types_defs import FunctionMatch
+from codebase_rag.data_models.schemas import EditResult
+from codebase_rag.data_models.types_defs import FunctionMatch
+from codebase_rag.infrastructure.decorators import validate_project_path
+from codebase_rag.infrastructure.language_spec import (
+    get_language_for_extension,
+    get_language_spec,
+)
+from codebase_rag.infrastructure.parser_loader import load_parsers
+
+from ..core import constants as cs
+from ..core import logs as ls
+from ..infrastructure import tool_errors as te
 from . import tool_descriptions as td
 
 
 class FileEditor:
+    """
+    A tool for performing safe, targeted edits on files within the project.
+    """
+
     def __init__(self, project_root: str = ".") -> None:
+        """
+        Initializes the FileEditor.
+
+        Args:
+            project_root (str): The absolute path to the root of the project.
+        """
         self.project_root = Path(project_root).resolve()
         self.dmp = diff_match_patch.diff_match_patch()
         self.parsers, _ = load_parsers()
         logger.info(ls.FILE_EDITOR_INIT.format(root=self.project_root))
 
     def _get_real_extension(self, file_path_obj: Path) -> str:
+        """
+        Gets the real file extension, handling temporary file names.
+
+        Args:
+            file_path_obj (Path): The Path object of the file.
+
+        Returns:
+            str: The determined file extension.
+        """
         extension = file_path_obj.suffix
         if extension == cs.TMP_EXTENSION:
             base_name = file_path_obj.stem
@@ -35,6 +77,15 @@ class FileEditor:
         return extension
 
     def get_parser(self, file_path: str) -> Parser | None:
+        """
+        Gets the appropriate tree-sitter parser for a given file path.
+
+        Args:
+            file_path (str): The path to the file.
+
+        Returns:
+            Parser | None: The parser if a language is found, otherwise None.
+        """
         file_path_obj = Path(file_path)
         extension = self._get_real_extension(file_path_obj)
 
@@ -42,6 +93,15 @@ class FileEditor:
         return self.parsers.get(lang_name) if lang_name else None
 
     def get_ast(self, file_path: str) -> Node | None:
+        """
+        Generates an Abstract Syntax Tree (AST) for a given file.
+
+        Args:
+            file_path (str): The path to the file.
+
+        Returns:
+            Node | None: The root node of the AST, or None if parsing fails.
+        """
         parser = self.get_parser(file_path)
         if not parser:
             logger.warning(ls.EDITOR_NO_PARSER.format(path=file_path))
@@ -56,6 +116,19 @@ class FileEditor:
     def get_function_source_code(
         self, file_path: str, function_name: str, line_number: int | None = None
     ) -> str | None:
+        """
+        Extracts the full source code of a function/method from a file.
+
+        Args:
+            file_path (str): The path to the source file.
+            function_name (str): The name of the function to find. Can be a simple
+                                 or qualified name (e.g., 'MyClass.my_method').
+            line_number (int | None): An optional line number to disambiguate
+                                      functions with the same name.
+
+        Returns:
+            str | None: The source code of the function, or None if not found.
+        """
         root_node = self.get_ast(file_path)
         if not root_node:
             return None
@@ -161,6 +234,18 @@ class FileEditor:
         new_code: str,
         line_number: int | None = None,
     ) -> str | None:
+        """
+        Generates a unified diff for a proposed change to a function.
+
+        Args:
+            file_path (str): The path to the source file.
+            function_name (str): The name of the function to be changed.
+            new_code (str): The proposed new code for the function.
+            line_number (int | None): An optional line number to disambiguate.
+
+        Returns:
+            str | None: The unified diff text, or None if the original code can't be found.
+        """
         original_code = self.get_function_source_code(
             file_path, function_name, line_number
         )
@@ -179,6 +264,16 @@ class FileEditor:
         return "".join(diff)
 
     def apply_patch_to_file(self, file_path: str, patch_text: str) -> bool:
+        """
+        Applies a patch generated by `diff-match-patch` to a file.
+
+        Args:
+            file_path (str): The path to the file to patch.
+            patch_text (str): The patch text.
+
+        Returns:
+            bool: True if the patch was applied successfully, False otherwise.
+        """
         try:
             with open(file_path, encoding=cs.ENCODING_UTF8) as f:
                 original_content = f.read()
@@ -204,6 +299,17 @@ class FileEditor:
     def replace_code_block(
         self, file_path: str, target_block: str, replacement_block: str
     ) -> bool:
+        """
+        Replaces the first occurrence of a target code block in a file.
+
+        Args:
+            file_path (str): The path to the file to edit.
+            target_block (str): The exact block of code to find and replace.
+            replacement_block (str): The new code to insert.
+
+        Returns:
+            bool: True if the replacement was successful, False otherwise.
+        """
         logger.info(ls.TOOL_FILE_EDIT_SURGICAL.format(path=file_path))
         try:
             full_path = (self.project_root / file_path).resolve()
@@ -253,11 +359,31 @@ class FileEditor:
             return False
 
     async def edit_file(self, file_path: str, new_content: str) -> EditResult:
+        """
+        Overwrites an entire file with new content. (Less preferred than surgical replacement).
+
+        Args:
+            file_path (str): The path to the file to overwrite.
+            new_content (str): The new content for the file.
+
+        Returns:
+            EditResult: An object indicating the success or failure of the operation.
+        """
         logger.info(ls.TOOL_FILE_EDIT.format(path=file_path))
         return await self._edit_validated(file_path, new_content)
 
     @validate_project_path(EditResult, path_arg_name="file_path")
     async def _edit_validated(self, file_path: Path, new_content: str) -> EditResult:
+        """
+        Internal method to perform the file write after path validation.
+
+        Args:
+            file_path (Path): The validated, absolute path to the file.
+            new_content (str): The new content for the file.
+
+        Returns:
+            EditResult: An object indicating the success or failure.
+        """
         try:
             if not file_path.is_file():
                 error_msg = te.FILE_NOT_FOUND_OR_DIR.format(path=file_path)
@@ -277,9 +403,33 @@ class FileEditor:
 
 
 def create_file_editor_tool(file_editor: FileEditor) -> Tool:
+    """
+    Factory function to create a `pydantic-ai` Tool for surgical code replacement.
+
+    Args:
+        file_editor (FileEditor): An instance of the FileEditor class.
+
+    Returns:
+        Tool: An initialized `pydantic-ai` Tool.
+    """
+
     async def replace_code_surgically(
         file_path: str, target_code: str, replacement_code: str
     ) -> str:
+        """
+        Replaces a specific block of code in a file with new code.
+
+        This is the preferred method for making changes as it is more precise
+        and less prone to error than overwriting an entire file.
+
+        Args:
+            file_path (str): The path to the file to be edited.
+            target_code (str): The exact, multi-line block of code to be replaced.
+            replacement_code (str): The new code to be inserted.
+
+        Returns:
+            str: A message indicating whether the replacement was successful.
+        """
         success = file_editor.replace_code_block(
             file_path, target_code, replacement_code
         )

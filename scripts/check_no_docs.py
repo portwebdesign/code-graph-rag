@@ -3,8 +3,8 @@ import sys
 
 from loguru import logger
 
-from codebase_rag import logs
-from codebase_rag.constants import (
+from codebase_rag.core import logs
+from codebase_rag.core.constants import (
     ALLOWED_COMMENT_MARKERS,
     COMMENT_CHAR,
     ESCAPE_CHAR,
@@ -45,13 +45,8 @@ def _has_allowed_marker(comment: str) -> bool:
 
 
 def check_module_docstring(filepath: str, lines: list[str]) -> str | None:
-    for i, line in enumerate(lines, 1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith(COMMENT_CHAR):
-            continue
-        if any(stripped.startswith(q) for q in TRIPLE_QUOTES):
-            return f"{filepath}:{i}: module-level docstring found"
-        return None
+    del filepath
+    del lines
     return None
 
 

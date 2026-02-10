@@ -1,3 +1,17 @@
+"""
+This module defines custom exception classes and centralized error message
+constants for the application.
+
+By consolidating error messages and custom exceptions, it promotes consistency
+and simplifies error handling and debugging across different modules.
+
+The contents include:
+-   Error message strings for various components like LLM providers, configuration,
+    graph loading, and parsers.
+-   Custom exception classes, such as `LLMGenerationError`, for more specific
+    error handling.
+"""
+
 # (H) Provider validation errors
 GOOGLE_GLA_NO_KEY = (
     "Gemini GLA provider requires api_key. "
@@ -56,4 +70,6 @@ DOC_UNSUPPORTED_PROVIDER = "DocumentAnalyzer does not support the 'local' LLM pr
 
 # (H) Exception classes
 class LLMGenerationError(Exception):
+    """Raised when an LLM fails to generate a valid or expected response."""
+
     pass

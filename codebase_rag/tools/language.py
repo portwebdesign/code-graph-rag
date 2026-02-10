@@ -1,3 +1,22 @@
+"""
+This module provides the command-line interface (CLI) for managing language
+grammars used by the application.
+
+It allows users to add new languages, list currently configured languages,
+remove languages, and clean up any orphaned git submodules. The `add` command
+automates the process of adding a new tree-sitter grammar as a git submodule,
+detecting its node types, and updating the application's configuration.
+
+Key functionalities:
+-   Adding a new language grammar from a Git URL.
+-   Automatically detecting language name, file extensions, and node types.
+-   Interactively prompting the user to confirm or override auto-detected settings.
+-   Dynamically updating the `language_spec.py` configuration file.
+-   Listing all configured languages in a rich table format.
+-   Removing a language and its associated git submodule.
+-   Cleaning up unused grammar submodules.
+"""
+
 from __future__ import annotations
 
 import json
@@ -15,17 +34,21 @@ from loguru import logger
 from rich.console import Console
 from rich.table import Table
 
-from .. import cli_help as ch
-from .. import constants as cs
-from ..language_spec import LANGUAGE_SPECS, LanguageSpec
+from codebase_rag.core import cli_help as ch
+from codebase_rag.core import constants as cs
+from codebase_rag.infrastructure.language_spec import LANGUAGE_SPECS, LanguageSpec
 
 
 class LanguageInfo(NamedTuple):
+    """Holds basic information about a language grammar."""
+
     name: str
     extensions: list[str]
 
 
 class NodeCategories(NamedTuple):
+    """Holds categorized tree-sitter node types."""
+
     functions: list[str]
     classes: list[str]
     modules: list[str]
@@ -34,11 +57,23 @@ class NodeCategories(NamedTuple):
 
 @dataclass
 class SubmoduleResult:
+    """The result of a git submodule operation."""
+
     success: bool
     grammar_path: str
 
 
 def _add_git_submodule(grammar_url: str, grammar_path: str) -> SubmoduleResult | None:
+    """
+    Adds a git submodule for a tree-sitter grammar.
+
+    Args:
+        grammar_url (str): The URL of the git repository.
+        grammar_path (str): The local path to add the submodule to.
+
+    Returns:
+        SubmoduleResult | None: A result object if successful, otherwise None.
+    """
     try:
         click.echo(f"Adding submodule: {grammar_url}")
         subprocess.run(
@@ -56,6 +91,7 @@ def _add_git_submodule(grammar_url: str, grammar_path: str) -> SubmoduleResult |
 def _handle_submodule_error(
     error: subprocess.CalledProcessError, grammar_url: str, grammar_path: str
 ) -> SubmoduleResult | None:
+    """Handles errors that occur during `git submodule add`."""
     error_output = error.stderr or str(error)
 
     if "already exists in the index" in error_output:
@@ -75,6 +111,7 @@ def _handle_submodule_error(
 def _reinstall_existing_submodule(
     grammar_url: str, grammar_path: str
 ) -> SubmoduleResult | None:
+    """Handles the case where a submodule already exists by reinstalling it."""
     click.secho(
         f"Warning: {cs.LANG_MSG_SUBMODULE_EXISTS.format(path=grammar_path)}",
         fg=cs.Color.YELLOW,
@@ -114,6 +151,7 @@ def _reinstall_existing_submodule(
 def _handle_reinstall_failure(
     error: subprocess.CalledProcessError | OSError, grammar_path: str
 ) -> None:
+    """Handles errors that occur during submodule reinstallation."""
     error_msg = error.stderr if hasattr(error, "stderr") else str(error)
     logger.error(cs.LANG_ERR_REINSTALL_FAILED.format(error=error_msg))
     click.secho(
@@ -129,6 +167,7 @@ def _handle_reinstall_failure(
 def _parse_tree_sitter_json(
     json_path: str, grammar_dir_name: str, language_name: str | None
 ) -> LanguageInfo | None:
+    """Parses a `tree-sitter.json` file to extract language name and file types."""
     if not os.path.exists(json_path):
         return None
 
@@ -153,6 +192,7 @@ def _parse_tree_sitter_json(
 
 
 def _prompt_for_language_info(language_name: str | None) -> LanguageInfo:
+    """Prompts the user for language name and extensions if they can't be auto-detected."""
     if not language_name:
         language_name = click.prompt(cs.LANG_PROMPT_COMMON_NAME)
     extensions = [
@@ -162,6 +202,7 @@ def _prompt_for_language_info(language_name: str | None) -> LanguageInfo:
 
 
 def _extract_semantic_categories(node_types_json: list[dict]) -> dict[str, list[str]]:
+    """Extracts semantic categories (supertpes) from the `node-types.json` file."""
     categories: dict[str, list[str]] = {}
 
     for node in node_types_json:
@@ -180,6 +221,7 @@ def _extract_semantic_categories(node_types_json: list[dict]) -> dict[str, list[
 def _categorize_node_types(
     semantic_categories: dict[str, list[str]], node_types: list[dict]
 ) -> NodeCategories:
+    """Categorizes node types into functions, classes, etc., based on keywords."""
     functions: list[str] = []
     classes: list[str] = []
     modules: list[str] = []
@@ -219,6 +261,7 @@ def _categorize_node_types(
 
 
 def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
+    """Parses a `node-types.json` file to auto-detect node categories."""
     try:
         with open(node_types_path, encoding="utf-8") as f:
             node_types = json.load(f)
@@ -271,6 +314,7 @@ def _parse_node_types_file(node_types_path: str) -> NodeCategories | None:
 
 
 def _prompt_for_node_categories() -> NodeCategories:
+    """Prompts the user to manually enter node categories if auto-detection fails."""
     click.echo(cs.LANG_MSG_AVAILABLE_NODES)
     click.echo(cs.LANG_MSG_FUNCTIONS.format(nodes=list(cs.LANG_DEFAULT_FUNCTION_NODES)))
     click.echo(cs.LANG_MSG_CLASSES.format(nodes=list(cs.LANG_DEFAULT_CLASS_NODES)))
@@ -295,6 +339,7 @@ def _prompt_for_node_categories() -> NodeCategories:
 
 
 def _find_node_types_path(grammar_path: str, language_name: str) -> str | None:
+    """Finds the `node-types.json` file in common locations within a grammar repo."""
     possible_paths = [
         os.path.join(grammar_path, cs.LANG_SRC_DIR, cs.LANG_NODE_TYPES_JSON),
         os.path.join(
@@ -312,6 +357,16 @@ def _find_node_types_path(grammar_path: str, language_name: str) -> str | None:
 
 
 def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
+    """
+    Updates the `language_spec.py` file with a new or updated language specification.
+
+    Args:
+        language_name (str): The name of the language to add/update.
+        spec (LanguageSpec): The language specification object.
+
+    Returns:
+        bool: True if the update was successful, False otherwise.
+    """
     config_entry = f"""    "{language_name}": LanguageSpec(
         language="{spec.language}",
         file_extensions={spec.file_extensions},
@@ -332,6 +387,7 @@ def _update_config_file(language_name: str, spec: LanguageSpec) -> bool:
 
 
 def _write_language_config(config_entry: str, language_name: str) -> bool:
+    """Writes the new language configuration to the `language_spec.py` file."""
     config_content = pathlib.Path(cs.LANG_CONFIG_FILE).read_text(encoding="utf-8")
     closing_brace_pos = config_content.rfind("}")
 
@@ -355,6 +411,7 @@ def _write_language_config(config_entry: str, language_name: str) -> bool:
 
 
 def _show_review_hints() -> None:
+    """Displays hints to the user to review the auto-generated configuration."""
     click.echo()
     click.echo(
         click.style(
@@ -375,6 +432,7 @@ def _show_review_hints() -> None:
 
 @click.group(help=ch.CMD_LANGUAGE_GROUP)
 def cli() -> None:
+    """Main group for the 'language' CLI command."""
     pass
 
 
@@ -387,6 +445,13 @@ def cli() -> None:
 def add_grammar(
     language_name: str | None = None, grammar_url: str | None = None
 ) -> None:
+    """
+    CLI command to add a new language grammar.
+
+    Args:
+        language_name (str | None): The name of the language.
+        grammar_url (str | None): The URL to the grammar's git repository.
+    """
     if not language_name and not grammar_url:
         language_name = click.prompt(cs.LANG_PROMPT_LANGUAGE_NAME)
 
@@ -464,6 +529,7 @@ def add_grammar(
 
 @cli.command(help=ch.CMD_LANGUAGE_LIST)
 def list_languages() -> None:
+    """CLI command to list all configured languages."""
     console = Console()
 
     table = Table(
@@ -504,6 +570,13 @@ def list_languages() -> None:
 @click.argument("language_name")
 @click.option("--keep-submodule", is_flag=True, help=ch.HELP_KEEP_SUBMODULE)
 def remove_language(language_name: str, keep_submodule: bool = False) -> None:
+    """
+    CLI command to remove a language configuration and its associated submodule.
+
+    Args:
+        language_name (str): The name of the language to remove.
+        keep_submodule (bool): If True, does not remove the git submodule.
+    """
     if language_name not in LANGUAGE_SPECS:
         available_langs = ", ".join(LANGUAGE_SPECS.keys())
         click.echo(f"Error: {cs.LANG_MSG_LANG_NOT_FOUND.format(name=language_name)}")
@@ -573,6 +646,9 @@ def remove_language(language_name: str, keep_submodule: bool = False) -> None:
 
 @cli.command(help=ch.CMD_LANGUAGE_CLEANUP)
 def cleanup_orphaned_modules() -> None:
+    """
+    CLI command to find and remove orphaned git submodules in the grammars directory.
+    """
     modules_dir = f".git/modules/{cs.LANG_GRAMMARS_DIR}"
     if not os.path.exists(modules_dir):
         click.echo(f"Info: {cs.LANG_MSG_NO_MODULES_DIR}")

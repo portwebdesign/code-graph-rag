@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from codebase_rag.config import AppConfig
+from codebase_rag.core.config import AppConfig
 
 
 class TestProviderConfiguration:

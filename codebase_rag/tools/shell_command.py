@@ -1,3 +1,22 @@
+"""
+This module defines the `ShellCommander` class and a factory function for
+creating a `pydantic-ai` tool that allows an LLM agent to execute shell commands.
+
+Security is a primary concern. The tool implements a multi-layered defense:
+-   **Allowlist**: Only commands from a predefined safe list can be executed.
+-   **Blocklist**: A list of inherently dangerous commands are always blocked.
+-   **Pattern Matching**: Regular expressions are used to detect dangerous
+    command patterns, such as `rm -rf /`, subshell execution, and remote
+    script execution via `curl` or `wget`.
+-   **Approval Mechanism**: Commands that are not read-only or are potentially
+    destructive (like `git push` or `rm`) require user approval before execution.
+-   **Path Validation**: `rm` commands are checked to ensure they do not target
+    system directories or paths outside the project root.
+
+The module also parses complex commands involving pipes (`|`) and logical
+operators (`&&`, `||`) into groups for sequential execution.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,12 +31,13 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import ApprovalRequired, RunContext, Tool
 
-from .. import constants as cs
-from .. import logs as ls
-from .. import tool_errors as te
-from ..config import settings
-from ..decorators import async_timing_decorator
-from ..schemas import ShellCommandResult
+from codebase_rag.core.config import settings
+from codebase_rag.data_models.schemas import ShellCommandResult
+from codebase_rag.infrastructure.decorators import async_timing_decorator
+
+from ..core import constants as cs
+from ..core import logs as ls
+from ..infrastructure import tool_errors as te
 from . import tool_descriptions as td
 
 PIPELINE_PATTERNS_COMPILED = tuple(
@@ -31,6 +51,7 @@ SEGMENT_PATTERNS_COMPILED = tuple(
 
 
 def _is_outside_single_quotes(command: str, pos: int) -> bool:
+    """Checks if a position in a command string is outside of single quotes."""
     in_single = False
     i = 0
     while i < pos:
@@ -45,6 +66,15 @@ def _is_outside_single_quotes(command: str, pos: int) -> bool:
 
 
 def _has_subshell(command: str) -> str | None:
+    """
+    Checks if a command string contains subshell execution patterns.
+
+    Args:
+        command (str): The command string to check.
+
+    Returns:
+        str | None: The detected subshell pattern, or None if not found.
+    """
     for pattern in cs.SHELL_SUBSHELL_PATTERNS:
         start = 0
         while True:
@@ -58,12 +88,33 @@ def _has_subshell(command: str) -> str | None:
 
 
 class CommandGroup:
+    """Represents a group of commands linked by a logical operator."""
+
     def __init__(self, commands: list[str], operator: str | None = None):
+        """
+        Initializes a CommandGroup.
+
+        Args:
+            commands (list[str]): A list of command segments in the group.
+            operator (str | None): The logical operator (`&&`, `||`, `;`) that
+                                   precedes this group.
+        """
         self.commands = commands
         self.operator = operator
 
 
 def _parse_command(command: str) -> list[CommandGroup]:
+    """
+    Parses a complex shell command string into a list of `CommandGroup` objects.
+
+    Handles pipes (`|`), logical AND (`&&`), logical OR (`||`), and semicolons.
+
+    Args:
+        command (str): The full command string.
+
+    Returns:
+        list[CommandGroup]: A list of command groups to be executed.
+    """
     groups: list[CommandGroup] = []
     current_pipeline: list[str] = []
     current_segment: list[str] = []
@@ -125,10 +176,12 @@ def _parse_command(command: str) -> list[CommandGroup]:
 
 
 def _is_blocked_command(cmd: str) -> bool:
+    """Checks if a command is in the absolute blocklist."""
     return cmd in cs.SHELL_DANGEROUS_COMMANDS
 
 
 def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
+    """Checks if an `rm` command uses dangerous flags like `-rf`."""
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False
     flags = "".join(part for part in cmd_parts[1:] if part.startswith("-"))
@@ -136,6 +189,7 @@ def _is_dangerous_rm(cmd_parts: list[str]) -> bool:
 
 
 def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[bool, str]:
+    """Checks if an `rm` command targets a dangerous or out-of-project path."""
     if not cmd_parts or cmd_parts[0] != cs.SHELL_CMD_RM:
         return False, ""
     path_args = [p for p in cmd_parts[1:] if not p.startswith("-")]
@@ -163,6 +217,7 @@ def _is_dangerous_rm_path(cmd_parts: list[str], project_root: Path) -> tuple[boo
 
 
 def _check_pipeline_patterns(full_command: str) -> str | None:
+    """Checks the full command pipeline against a list of dangerous patterns."""
     for pattern, reason in PIPELINE_PATTERNS_COMPILED:
         if pattern.search(full_command):
             return reason
@@ -170,6 +225,7 @@ def _check_pipeline_patterns(full_command: str) -> str | None:
 
 
 def _check_segment_patterns(segment: str) -> str | None:
+    """Checks a single command segment against a list of dangerous patterns."""
     for pattern, reason in SEGMENT_PATTERNS_COMPILED:
         if pattern.search(segment):
             return reason
@@ -177,6 +233,7 @@ def _check_segment_patterns(segment: str) -> str | None:
 
 
 def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool, str]:
+    """Determines if a command is dangerous based on multiple checks."""
     if not cmd_parts:
         return False, ""
 
@@ -195,6 +252,7 @@ def _is_dangerous_command(cmd_parts: list[str], full_segment: str) -> tuple[bool
 
 
 def _validate_segment(segment: str, available_commands: str) -> str | None:
+    """Validates a single command segment for safety."""
     try:
         cmd_parts = shlex.split(segment)
     except ValueError:
@@ -219,10 +277,22 @@ def _validate_segment(segment: str, available_commands: str) -> str | None:
 
 
 def _has_redirect_operators(parts: list[str]) -> bool:
+    """Checks if a list of command parts contains redirection operators."""
     return any(p in cs.SHELL_REDIRECT_OPERATORS for p in parts)
 
 
 def _requires_approval(command: str) -> bool:
+    """
+    Determines if a command requires user approval before execution.
+
+    Approval is required for non-read-only commands or commands with redirection.
+
+    Args:
+        command (str): The full command string.
+
+    Returns:
+        bool: True if the command requires approval, False otherwise.
+    """
     if not command.strip():
         return True
 
@@ -263,12 +333,24 @@ def _requires_approval(command: str) -> bool:
 
 
 class ShellCommander:
+    """
+    A tool for safely executing shell commands within the project root.
+    """
+
     def __init__(self, project_root: str = ".", timeout: int = 30):
+        """
+        Initializes the ShellCommander.
+
+        Args:
+            project_root (str): The absolute path to the root of the project.
+            timeout (int): The timeout in seconds for command execution.
+        """
         self.project_root = Path(project_root).resolve()
         self.timeout = timeout
         logger.info(ls.SHELL_COMMANDER_INIT.format(root=self.project_root))
 
     async def _execute_pipeline(self, segments: list[str]) -> tuple[int, bytes, bytes]:
+        """Executes a pipeline of commands (e.g., `cmd1 | cmd2`)."""
         start_time = time.monotonic()
         input_data: bytes | None = None
         all_stderr: list[bytes] = []
@@ -323,6 +405,15 @@ class ShellCommander:
 
     @async_timing_decorator
     async def execute(self, command: str) -> ShellCommandResult:
+        """
+        Validates and executes a shell command.
+
+        Args:
+            command (str): The command string to execute.
+
+        Returns:
+            ShellCommandResult: An object containing the return code, stdout, and stderr.
+        """
         logger.info(ls.TOOL_SHELL_EXEC.format(cmd=command))
         try:
             if subshell_pattern := _has_subshell(command):
@@ -434,9 +525,33 @@ class ShellCommander:
 
 
 def create_shell_command_tool(shell_commander: ShellCommander) -> Tool:
+    """
+    Factory function to create a `pydantic-ai` Tool for executing shell commands.
+
+    Args:
+        shell_commander (ShellCommander): An instance of the ShellCommander class.
+
+    Returns:
+        Tool: An initialized `pydantic-ai` Tool.
+    """
+
     async def run_shell_command(
         ctx: RunContext[None], command: str
     ) -> ShellCommandResult:
+        """
+        Executes a shell command within the project's root directory.
+
+        This tool has a strict allowlist and security checks. Commands that are
+        not read-only will require user approval.
+
+        Args:
+            ctx (RunContext): The Pydantic-AI run context, used for approvals.
+            command (str): The shell command to execute.
+
+        Returns:
+            ShellCommandResult: An object containing the command's return code,
+                                stdout, and stderr.
+        """
         if _requires_approval(command) and not ctx.tool_call_approved:
             raise ApprovalRequired(metadata={"command": command})
 

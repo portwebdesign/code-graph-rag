@@ -1,8 +1,26 @@
+"""
+This module defines a comprehensive set of constants used throughout the application.
+
+By centralizing these values, it ensures consistency, simplifies maintenance, and
+improves readability. The constants include:
+-   Enumerations (`StrEnum`) for controlled sets of values like model roles, providers,
+    colors, and node/relationship labels.
+-   Named tuples for simple, structured data.
+-   File extensions and package indicators for various programming languages.
+-   Keys for dictionary access and JSON serialization.
+-   UI strings, log message templates, and error messages.
+-   Configuration for `tree-sitter` parsers, including node types and field names.
+-   Default values and settings for various components.
+-   Security-related constants, such as allowlists and blocklists for shell commands.
+"""
+
 from enum import StrEnum
 from typing import NamedTuple
 
 
 class PyInstallerPackage(NamedTuple):
+    """Defines a package and its configuration for PyInstaller bundling."""
+
     name: str
     collect_all: bool = False
     collect_data: bool = False
@@ -10,11 +28,15 @@ class PyInstallerPackage(NamedTuple):
 
 
 class ModelRole(StrEnum):
+    """Enumerates the roles a language model can serve in the application."""
+
     ORCHESTRATOR = "orchestrator"
     CYPHER = "cypher"
 
 
 class Provider(StrEnum):
+    """Enumerates the supported Large Language Model (LLM) providers."""
+
     OLLAMA = "ollama"
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
@@ -26,6 +48,8 @@ class Provider(StrEnum):
 
 
 class Color(StrEnum):
+    """Enumerates colors for Rich library styling."""
+
     GREEN = "green"
     YELLOW = "yellow"
     CYAN = "cyan"
@@ -35,18 +59,24 @@ class Color(StrEnum):
 
 
 class KeyBinding(StrEnum):
+    """Enumerates key bindings for prompt-toolkit."""
+
     CTRL_J = "c-j"
     ENTER = "enter"
     CTRL_C = "c-c"
 
 
 class StyleModifier(StrEnum):
+    """Enumerates style modifiers for Rich library styling."""
+
     BOLD = "bold"
     DIM = "dim"
     NONE = ""
 
 
 class FileAction(StrEnum):
+    """Enumerates actions that can be performed on a file."""
+
     READ = "read"
     EDIT = "edit"
 
@@ -136,6 +166,8 @@ HELP_ARG = "help"
 
 
 class GoogleProviderType(StrEnum):
+    """Enumerates the types of Google provider integrations."""
+
     GLA = "gla"
     VERTEX = "vertex"
 
@@ -151,6 +183,7 @@ HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
 
+# (H) Keys for dictionary access and JSON serialization
 KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
 KEY_NODE_ID = "node_id"
@@ -243,6 +276,7 @@ CLI_MSG_AUTO_EXCLUDE = (
     "Use --interactive-setup to customize."
 )
 
+# (H) UI strings for interactive sessions
 UI_DIFF_FILE_HEADER = "[bold cyan]File: {path}[/bold cyan]"
 UI_NEW_FILE_HEADER = "[bold cyan]New file: {path}[/bold cyan]"
 UI_SHELL_COMMAND_HEADER = "[bold cyan]Shell command:[/bold cyan]"
@@ -298,11 +332,11 @@ SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
 
 # (H) Path navigation
-PATH_CURRENT_DIR = "."
-PATH_PARENT_DIR = ".."
+PATH_CURRENT_DIR = ".."
+PATH_PARENT_DIR = "../.."
 GLOB_ALL = "*"
-PATH_RELATIVE_PREFIX = "./"
-PATH_PARENT_PREFIX = "../"
+PATH_RELATIVE_PREFIX = "../"
+PATH_PARENT_PREFIX = "../../"
 CPP_IMPORT_PARTITION_PREFIX = "import :"
 CPP_PARTITION_PREFIX = "partition_"
 
@@ -313,12 +347,16 @@ TRIE_INTERNAL_PREFIX = "__"
 
 
 class UniqueKeyType(StrEnum):
+    """Enumerates the property keys used as unique identifiers for node labels."""
+
     NAME = KEY_NAME
     PATH = KEY_PATH
     QUALIFIED_NAME = KEY_QUALIFIED_NAME
 
 
 class NodeLabel(StrEnum):
+    """Enumerates the labels for nodes in the knowledge graph."""
+
     PROJECT = "Project"
     PACKAGE = "Package"
     FOLDER = "Folder"
@@ -363,6 +401,8 @@ if _missing_keys:
 
 
 class RelationshipType(StrEnum):
+    """Enumerates the types of relationships in the knowledge graph."""
+
     CONTAINS_PACKAGE = "CONTAINS_PACKAGE"
     CONTAINS_FOLDER = "CONTAINS_FOLDER"
     CONTAINS_FILE = "CONTAINS_FILE"
@@ -429,6 +469,8 @@ RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
 
 
 class SupportedLanguage(StrEnum):
+    """Enumerates the programming languages supported by the parser."""
+
     PYTHON = "python"
     JS = "javascript"
     TS = "typescript"
@@ -443,11 +485,15 @@ class SupportedLanguage(StrEnum):
 
 
 class LanguageStatus(StrEnum):
+    """Enumerates the support status of a language."""
+
     FULL = "Fully Supported"
     DEV = "In Development"
 
 
 class LanguageMetadata(NamedTuple):
+    """Metadata about a supported language's feature coverage."""
+
     status: LanguageStatus
     additional_features: str
     display_name: str
@@ -646,6 +692,8 @@ DIFF_FALLBACK_PATH = "file"
 
 
 class DiffMarker:
+    """Markers used in unified diff output."""
+
     ADD = "+"
     DEL = "-"
     HUNK = "@"
@@ -727,6 +775,8 @@ LANG_ATTR_TYPESCRIPT = "language_typescript"
 
 
 class TreeSitterModule(StrEnum):
+    """Enumerates the module names for pre-packaged tree-sitter grammars."""
+
     PYTHON = "tree_sitter_python"
     JS = "tree_sitter_javascript"
     TS = "tree_sitter_typescript"
@@ -838,6 +888,8 @@ PAYLOAD_QUALIFIED_NAME = "qualified_name"
 
 
 class EventType(StrEnum):
+    """Enumerates event types for the file watcher."""
+
     MODIFIED = "modified"
     CREATED = "created"
 
@@ -857,6 +909,8 @@ LOG_LEVEL_INFO = "INFO"
 
 
 class Architecture(StrEnum):
+    """Enumerates system architectures for binary building."""
+
     X86_64 = "x86_64"
     AARCH64 = "aarch64"
     ARM64 = "arm64"
@@ -942,6 +996,8 @@ ML_DEPENDENCIES = (MODULE_TORCH, MODULE_TRANSFORMERS)
 
 
 class UniXcoderMode(StrEnum):
+    """Modes for UniXcoder tokenization, controlling special token insertion."""
+
     ENCODER_ONLY = "<encoder-only>"
     DECODER_ONLY = "<decoder-only>"
     ENCODER_DECODER = "<encoder-decoder>"
@@ -1431,6 +1487,8 @@ LANG_GITMODULES_REGEX = r"path = (grammars/tree-sitter-[^\\n]+)"
 
 
 class CppNodeType(StrEnum):
+    """Enumerates C++ specific tree-sitter node types."""
+
     TRANSLATION_UNIT = "translation_unit"
     NAMESPACE_DEFINITION = "namespace_definition"
     NAMESPACE_IDENTIFIER = "namespace_identifier"
@@ -2352,6 +2410,8 @@ RS_FIELD_ARGUMENT = "argument"
 
 # (H) MCP tool names
 class MCPToolName(StrEnum):
+    """Enumerates the names of tools available in the MCP server."""
+
     LIST_PROJECTS = "list_projects"
     DELETE_PROJECT = "delete_project"
     WIPE_DATABASE = "wipe_database"
@@ -2366,6 +2426,8 @@ class MCPToolName(StrEnum):
 
 # (H) MCP environment variables
 class MCPEnvVar(StrEnum):
+    """Enumerates environment variables relevant to the MCP server."""
+
     TARGET_REPO_PATH = "TARGET_REPO_PATH"
     CLAUDE_PROJECT_ROOT = "CLAUDE_PROJECT_ROOT"
     PWD = "PWD"
@@ -2373,6 +2435,8 @@ class MCPEnvVar(StrEnum):
 
 # (H) MCP schema types
 class MCPSchemaType(StrEnum):
+    """Enumerates JSON schema types used in MCP tool schemas."""
+
     OBJECT = "object"
     STRING = "string"
     INTEGER = "integer"
@@ -2381,6 +2445,8 @@ class MCPSchemaType(StrEnum):
 
 # (H) MCP schema fields
 class MCPSchemaField(StrEnum):
+    """Enumerates field names used in MCP tool schemas."""
+
     TYPE = "type"
     PROPERTIES = "properties"
     REQUIRED = "required"
@@ -2390,6 +2456,8 @@ class MCPSchemaField(StrEnum):
 
 # (H) MCP parameter names
 class MCPParamName(StrEnum):
+    """Enumerates parameter names used in MCP tool arguments."""
+
     PROJECT_NAME = "project_name"
     CONFIRM = "confirm"
     NATURAL_LANGUAGE_QUERY = "natural_language_query"
@@ -2761,6 +2829,7 @@ SPEC_LUA_MODULE_TYPES = (TS_LUA_CHUNK,)
 SPEC_LUA_CALL_TYPES = (TS_LUA_FUNCTION_CALL,)
 SPEC_LUA_IMPORT_TYPES = (TS_LUA_FUNCTION_CALL,)
 
+# (H) Health check constants
 HEALTH_CHECK_DOCKER_RUNNING = "Docker daemon is running"
 HEALTH_CHECK_DOCKER_NOT_RUNNING = "Docker daemon is not running"
 HEALTH_CHECK_DOCKER_RUNNING_MSG = "Running (version {version})"

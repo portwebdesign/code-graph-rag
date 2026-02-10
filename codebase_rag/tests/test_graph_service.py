@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.constants import NODE_UNIQUE_CONSTRAINTS
-from codebase_rag.cypher_queries import wrap_with_unwind
+from codebase_rag.core.constants import NODE_UNIQUE_CONSTRAINTS
+from codebase_rag.graph_db.cypher_queries import wrap_with_unwind
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 

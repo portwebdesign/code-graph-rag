@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.core import constants as cs
 from codebase_rag.parsers import stdlib_extractor as se
 from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
 

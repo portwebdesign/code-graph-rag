@@ -5,13 +5,14 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from .. import logs as ls
-from ..constants import SEPARATOR_DOT
+from codebase_rag.core.constants import SEPARATOR_DOT
+
+from ..core import logs as ls
 
 if TYPE_CHECKING:
     from tree_sitter import Node
 
-    from ..language_spec import FQNSpec
+    from codebase_rag.infrastructure.language_spec import FQNSpec
 
 
 def resolve_fqn_from_ast(

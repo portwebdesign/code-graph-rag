@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.core import constants as cs
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.handlers import get_handler
 from codebase_rag.parsers.handlers.cpp import CppHandler
 from codebase_rag.parsers.handlers.java import JavaHandler

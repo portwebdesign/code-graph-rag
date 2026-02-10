@@ -6,16 +6,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag import constants as cs
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
-from codebase_rag.types_defs import NodeType
+from codebase_rag.core import constants as cs
+from codebase_rag.data_models.types_defs import NodeType
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 
 if TYPE_CHECKING:
     from tree_sitter import Node, Parser
 
+    from codebase_rag.data_models.types_defs import LanguageQueries
     from codebase_rag.parsers.call_processor import CallProcessor
-    from codebase_rag.types_defs import LanguageQueries
 
 
 @pytest.fixture

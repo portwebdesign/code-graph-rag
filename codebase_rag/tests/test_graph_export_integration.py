@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
-from codebase_rag.graph_loader import load_graph
+from codebase_rag.data_models.types_defs import GraphData, GraphMetadata
+from codebase_rag.graph_db.graph_loader import load_graph
 from codebase_rag.tests.conftest import (
     create_and_run_updater,
 )
-from codebase_rag.types_defs import GraphData, GraphMetadata
 
 
 def build_graph_data_from_mock(mock_ingestor) -> GraphData:

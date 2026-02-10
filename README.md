@@ -392,8 +392,9 @@ cgr export -o my_graph.json --batch-size 5000
 ```
 
 **Working with exported data:**
+
 ```python
-from codebase_rag.graph_loader import load_graph
+from codebase_rag.graph_db.graph_loader import load_graph
 
 # Load the exported graph
 graph = load_graph("my_graph.json")
@@ -409,8 +410,8 @@ classes = graph.find_nodes_by_label("Class")
 
 # Analyze relationships
 for func in functions[:5]:
-    relationships = graph.get_relationships_for_node(func.node_id)
-    print(f"Function {func.properties['name']} has {len(relationships)} relationships")
+   relationships = graph.get_relationships_for_node(func.node_id)
+   print(f"Function {func.properties['name']} has {len(relationships)} relationships")
 ```
 
 **Example analysis script:**

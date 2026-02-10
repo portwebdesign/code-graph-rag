@@ -1,3 +1,16 @@
+"""
+This module provides services for interacting with Large Language Models (LLMs).
+
+It includes a `CypherGenerator` class that uses an LLM agent to translate
+natural language questions into Cypher queries for the knowledge graph. It also
+provides a factory function, `create_rag_orchestrator`, to construct the main
+RAG agent responsible for orchestrating tool calls and generating user-facing
+responses.
+
+The module dynamically selects the appropriate system prompt based on the configured
+LLM provider (e.g., using a stricter prompt for local models).
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -5,15 +18,16 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from pydantic_ai import Agent, DeferredToolRequests, Tool
 
-from .. import constants as cs
-from .. import exceptions as ex
-from .. import logs as ls
-from ..config import ModelConfig, settings
-from ..prompts import (
+from codebase_rag.ai.prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
     build_rag_orchestrator_prompt,
 )
+from codebase_rag.core.config import ModelConfig, settings
+
+from ..core import constants as cs
+from ..core import logs as ls
+from ..infrastructure import exceptions as ex
 from ..providers.base import get_provider_from_config
 
 if TYPE_CHECKING:
@@ -21,11 +35,29 @@ if TYPE_CHECKING:
 
 
 def _create_provider_model(config: ModelConfig) -> Model:
+    """
+    Creates a Pydantic-AI Model instance from a given model configuration.
+
+    Args:
+        config (ModelConfig): The configuration specifying the provider and model.
+
+    Returns:
+        Model: An initialized Pydantic-AI Model instance.
+    """
     provider = get_provider_from_config(config)
     return provider.create_model(config.model_id)
 
 
 def _clean_cypher_response(response_text: str) -> str:
+    """
+    Cleans and formats the raw text response from the LLM into a valid Cypher query.
+
+    Args:
+        response_text (str): The raw text output from the LLM.
+
+    Returns:
+        str: A cleaned, valid Cypher query string.
+    """
     query = response_text.strip().replace(cs.CYPHER_BACKTICK, "")
     if query.startswith(cs.CYPHER_PREFIX):
         query = query[len(cs.CYPHER_PREFIX) :].strip()
@@ -35,7 +67,17 @@ def _clean_cypher_response(response_text: str) -> str:
 
 
 class CypherGenerator:
+    """
+    A service that uses an LLM agent to generate Cypher queries from natural language.
+    """
+
     def __init__(self) -> None:
+        """
+        Initializes the CypherGenerator agent.
+
+        Raises:
+            ex.LLMGenerationError: If the agent fails to initialize.
+        """
         try:
             config = settings.active_cypher_config
             llm = _create_provider_model(config)
@@ -56,6 +98,18 @@ class CypherGenerator:
             raise ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error=e)) from e
 
     async def generate(self, natural_language_query: str) -> str:
+        """
+        Generates a Cypher query from a natural language input.
+
+        Args:
+            natural_language_query (str): The user's question in natural language.
+
+        Returns:
+            str: The generated Cypher query.
+
+        Raises:
+            ex.LLMGenerationError: If the LLM fails to generate a valid query.
+        """
         logger.info(ls.CYPHER_GENERATING.format(query=natural_language_query))
         try:
             result = await self.agent.run(natural_language_query)
@@ -76,6 +130,18 @@ class CypherGenerator:
 
 
 def create_rag_orchestrator(tools: list[Tool]) -> Agent:
+    """
+    Creates and configures the main RAG orchestrator agent.
+
+    Args:
+        tools (list[Tool]): A list of tools to be made available to the agent.
+
+    Returns:
+        Agent: The configured Pydantic-AI Agent instance.
+
+    Raises:
+        ex.LLMGenerationError: If the agent fails to initialize.
+    """
     try:
         config = settings.active_orchestrator_config
         llm = _create_provider_model(config)

@@ -1,18 +1,45 @@
+"""
+This module defines the `JsTsHandler`, a language-specific handler for
+JavaScript and TypeScript.
+
+It implements the `BaseLanguageHandler` protocol to provide logic for parsing
+constructs common to both languages, such as decorators, arrow functions,
+and nested function scopes within object literals.
+
+Key functionalities:
+-   Extracting decorator names.
+-   Building qualified names for nested functions, considering object literals
+    and class methods.
+-   Determining if a node is a class method or if an export is nested.
+-   Extracting names from arrow functions assigned to variables.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ... import constants as cs
+from ...core import constants as cs
 from ..utils import safe_decode_text
 from .base import BaseLanguageHandler
 
 if TYPE_CHECKING:
-    from ...language_spec import LanguageSpec
-    from ...types_defs import ASTNode
+    from codebase_rag.data_models.types_defs import ASTNode
+    from codebase_rag.infrastructure.language_spec import LanguageSpec
 
 
 class JsTsHandler(BaseLanguageHandler):
+    """Language handler for JavaScript and TypeScript."""
+
     def extract_decorators(self, node: ASTNode) -> list[str]:
+        """
+        Extracts decorator names from a decorated node in JS/TS.
+
+        Args:
+            node (ASTNode): The AST node to extract decorators from.
+
+        Returns:
+            list[str]: A list of decorator names.
+        """
         return [
             decorator_text
             for child in node.children
@@ -21,6 +48,15 @@ class JsTsHandler(BaseLanguageHandler):
         ]
 
     def is_inside_method_with_object_literals(self, node: ASTNode) -> bool:
+        """
+        Checks if a node is inside a method defined within an object literal.
+
+        Args:
+            node (ASTNode): The node to check.
+
+        Returns:
+            bool: True if the node is inside such a method, False otherwise.
+        """
         current = node.parent
         found_object = False
 
@@ -36,6 +72,15 @@ class JsTsHandler(BaseLanguageHandler):
         return False
 
     def is_class_method(self, node: ASTNode) -> bool:
+        """
+        Checks if a function node is a method of a class.
+
+        Args:
+            node (ASTNode): The function node to check.
+
+        Returns:
+            bool: True if the node is a class method, False otherwise.
+        """
         current = node.parent
         while current:
             if current.type == cs.TS_CLASS_BODY:
@@ -46,6 +91,15 @@ class JsTsHandler(BaseLanguageHandler):
         return False
 
     def is_export_inside_function(self, node: ASTNode) -> bool:
+        """
+        Checks if an export statement is nested inside a function.
+
+        Args:
+            node (ASTNode): The export statement node.
+
+        Returns:
+            bool: True if the export is inside a function, False otherwise.
+        """
         current = node.parent
         while current:
             if current.type in (
@@ -61,6 +115,15 @@ class JsTsHandler(BaseLanguageHandler):
         return False
 
     def extract_function_name(self, node: ASTNode) -> str | None:
+        """
+        Extracts the name of a JS/TS function, including arrow functions assigned to variables.
+
+        Args:
+            node (ASTNode): The function's AST node.
+
+        Returns:
+            str | None: The extracted name, or None if not found.
+        """
         if (name_node := node.child_by_field_name(cs.TS_FIELD_NAME)) and name_node.text:
             return safe_decode_text(name_node)
 
@@ -82,6 +145,18 @@ class JsTsHandler(BaseLanguageHandler):
         func_name: str,
         lang_config: LanguageSpec,
     ) -> str | None:
+        """
+        Builds the FQN for a nested JS/TS function.
+
+        Args:
+            func_node (ASTNode): The nested function's AST node.
+            module_qn (str): The FQN of the containing module.
+            func_name (str): The simple name of the function.
+            lang_config (LanguageSpec): The language specification.
+
+        Returns:
+            str | None: The constructed FQN, or None if not applicable.
+        """
         path_parts = self._collect_js_ancestor_path_parts(func_node, lang_config)
         if path_parts is None:
             return None
@@ -92,6 +167,7 @@ class JsTsHandler(BaseLanguageHandler):
         func_node: ASTNode,
         lang_config: LanguageSpec,
     ) -> list[str] | None:
+        """Collects the names of ancestor scopes for a nested JS/TS function."""
         path_parts: list[str] = []
         current = func_node.parent
 

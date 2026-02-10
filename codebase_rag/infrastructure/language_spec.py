@@ -1,16 +1,36 @@
+"""
+This module defines the language-specific configurations for parsing and
+analyzing source code with `tree-sitter`.
+
+It provides detailed specifications for each supported programming language,
+including:
+-   `LanguageSpec`: A data class that holds information about file extensions,
+    `tree-sitter` node types for various code constructs (functions, classes,
+    imports, etc.), and custom queries.
+-   `FQNSpec`: A named tuple that defines the logic for constructing Fully
+    Qualified Names (FQNs) for a language, including scope resolution and
+    name extraction functions.
+
+This centralized configuration allows the rest of the application to handle
+different languages in a generic way by looking up the appropriate specification.
+The module defines specs for Python, JavaScript, TypeScript, Rust, Java, C++,
+and other languages.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import constants as cs
-from .models import FQNSpec, LanguageSpec
+from codebase_rag.core import constants as cs
+from codebase_rag.data_models.models import FQNSpec, LanguageSpec
 
 if TYPE_CHECKING:
     from tree_sitter import Node
 
 
 def _python_get_name(node: Node) -> str | None:
+    """Extracts the name from a Python name-bearing node."""
     name_node = node.child_by_field_name("name")
     return (
         name_node.text.decode(cs.ENCODING_UTF8)
@@ -20,6 +40,7 @@ def _python_get_name(node: Node) -> str | None:
 
 
 def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    """Converts a Python file path to a list of module parts for its FQN."""
     try:
         rel = file_path.relative_to(repo_root)
         parts = list(rel.with_suffix("").parts)
@@ -31,6 +52,7 @@ def _python_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _js_get_name(node: Node) -> str | None:
+    """Extracts the name from a JavaScript/TypeScript name-bearing node."""
     if node.type in cs.JS_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         return (
@@ -42,6 +64,7 @@ def _js_get_name(node: Node) -> str | None:
 
 
 def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    """Converts a JS/TS file path to a list of module parts for its FQN."""
     try:
         rel = file_path.relative_to(repo_root)
         parts = list(rel.with_suffix("").parts)
@@ -53,6 +76,7 @@ def _js_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _generic_get_name(node: Node) -> str | None:
+    """A generic function to extract a name from a node, trying common field names."""
     name_node = node.child_by_field_name("name")
     if name_node and name_node.text:
         return name_node.text.decode(cs.ENCODING_UTF8)
@@ -66,6 +90,7 @@ def _generic_get_name(node: Node) -> str | None:
 
 
 def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    """A generic function to convert a file path to a list of module parts."""
     try:
         rel = file_path.relative_to(repo_root)
         return list(rel.with_suffix("").parts)
@@ -74,6 +99,7 @@ def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _rust_get_name(node: Node) -> str | None:
+    """Extracts the name from a Rust name-bearing node."""
     if node.type in cs.RS_TYPE_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.type == cs.TS_TYPE_IDENTIFIER and name_node.text:
@@ -87,6 +113,7 @@ def _rust_get_name(node: Node) -> str | None:
 
 
 def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
+    """Converts a Rust file path to a list of module parts for its FQN."""
     try:
         rel = file_path.relative_to(repo_root)
         parts = list(rel.with_suffix("").parts)
@@ -98,6 +125,7 @@ def _rust_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
 
 
 def _cpp_get_name(node: Node) -> str | None:
+    """Extracts the name from a C++ name-bearing node."""
     if node.type in cs.CPP_NAME_NODE_TYPES:
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
@@ -112,6 +140,7 @@ def _cpp_get_name(node: Node) -> str | None:
     return _generic_get_name(node)
 
 
+# FQN Specifications for each language
 PYTHON_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PY_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PY_FUNCTION_TYPES),
@@ -202,6 +231,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
 }
+"""A dictionary mapping supported languages to their FQN specifications."""
 
 
 LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
@@ -409,6 +439,7 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         import_node_types=cs.SPEC_LUA_IMPORT_TYPES,
     ),
 }
+"""A dictionary mapping supported languages to their parsing and structural specifications."""
 
 _EXTENSION_TO_SPEC: dict[str, LanguageSpec] = {}
 for _config in LANGUAGE_SPECS.values():
@@ -417,10 +448,28 @@ for _config in LANGUAGE_SPECS.values():
 
 
 def get_language_spec(file_extension: str) -> LanguageSpec | None:
+    """
+    Retrieves the LanguageSpec for a given file extension.
+
+    Args:
+        file_extension (str): The file extension (e.g., '.py', '.js').
+
+    Returns:
+        LanguageSpec | None: The corresponding language specification, or None if not found.
+    """
     return _EXTENSION_TO_SPEC.get(file_extension)
 
 
 def get_language_for_extension(file_extension: str) -> cs.SupportedLanguage | None:
+    """
+    Retrieves the SupportedLanguage enum for a given file extension.
+
+    Args:
+        file_extension (str): The file extension.
+
+    Returns:
+        cs.SupportedLanguage | None: The language enum, or None if not found.
+    """
     spec = _EXTENSION_TO_SPEC.get(file_extension)
     if spec and isinstance(spec.language, cs.SupportedLanguage):
         return spec.language

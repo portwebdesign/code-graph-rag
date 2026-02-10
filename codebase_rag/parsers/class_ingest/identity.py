@@ -1,3 +1,14 @@
+"""
+This module is responsible for resolving the identity of a class-like AST node.
+
+"Identity" here refers to its fully qualified name (FQN), its simple name, and
+whether it is exported (in languages that support explicit exports like C++).
+
+It provides a main resolution function that first attempts to use the precise,
+unified FQN resolver. If that fails or is not applicable for the language, it
+falls back to language-specific heuristics to construct the name.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,15 +16,16 @@ from typing import TYPE_CHECKING
 
 from tree_sitter import Node
 
-from ... import constants as cs
-from ...language_spec import LANGUAGE_FQN_SPECS
+from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS
+
+from ...core import constants as cs
 from ...utils.fqn_resolver import resolve_fqn_from_ast
 from ..cpp import utils as cpp_utils
 from ..rs import utils as rs_utils
 from ..utils import safe_decode_text
 
 if TYPE_CHECKING:
-    from ...language_spec import LanguageSpec
+    from codebase_rag.infrastructure.language_spec import LanguageSpec
 
 
 def resolve_class_identity(
@@ -25,6 +37,22 @@ def resolve_class_identity(
     repo_path: Path,
     project_name: str,
 ) -> tuple[str, str, bool] | None:
+    """
+    Resolves the identity (FQN, simple name, export status) of a class node.
+
+    Args:
+        class_node (Node): The AST node for the class.
+        module_qn (str): The qualified name of the containing module.
+        language (cs.SupportedLanguage): The language of the code.
+        lang_config (LanguageSpec): The language specification.
+        file_path (Path | None): The path to the source file.
+        repo_path (Path): The root path of the repository.
+        project_name (str): The name of the project.
+
+    Returns:
+        tuple[str, str, bool] | None: A tuple of (qualified_name, simple_name, is_exported),
+                                     or None if resolution fails.
+    """
     if (fqn_config := LANGUAGE_FQN_SPECS.get(language)) and file_path:
         if class_qn := resolve_fqn_from_ast(
             class_node,
@@ -49,6 +77,19 @@ def resolve_class_identity_fallback(
     language: cs.SupportedLanguage,
     lang_config: LanguageSpec,
 ) -> tuple[str, str, bool] | None:
+    """
+    A fallback mechanism to resolve class identity using language-specific heuristics.
+
+    Args:
+        class_node (Node): The AST node for the class.
+        module_qn (str): The qualified name of the containing module.
+        language (cs.SupportedLanguage): The language of the code.
+        lang_config (LanguageSpec): The language specification.
+
+    Returns:
+        tuple[str, str, bool] | None: A tuple of (qualified_name, simple_name, is_exported),
+                                     or None if resolution fails.
+    """
     if language == cs.SupportedLanguage.CPP:
         if class_node.type == cs.CppNodeType.FUNCTION_DEFINITION:
             class_name = cpp_utils.extract_exported_class_name(class_node)
@@ -72,6 +113,15 @@ def resolve_class_identity_fallback(
 
 
 def extract_cpp_class_name(class_node: Node) -> str | None:
+    """
+    Extracts the name of a C++ class, struct, or union.
+
+    Args:
+        class_node (Node): The AST node for the C++ class-like entity.
+
+    Returns:
+        str | None: The extracted name, or None if not found.
+    """
     if class_node.type == cs.CppNodeType.TEMPLATE_DECLARATION:
         for child in class_node.children:
             if child.type in cs.CPP_COMPOUND_TYPES:
@@ -86,6 +136,15 @@ def extract_cpp_class_name(class_node: Node) -> str | None:
 
 
 def extract_class_name(class_node: Node) -> str | None:
+    """
+    Extracts the name of a class from its AST node.
+
+    Args:
+        class_node (Node): The AST node for the class.
+
+    Returns:
+        str | None: The extracted name, or None if not found.
+    """
     name_node = class_node.child_by_field_name(cs.KEY_NAME)
     if name_node and name_node.text:
         return safe_decode_text(name_node)
@@ -107,6 +166,18 @@ def build_nested_qualified_name_for_class(
     class_name: str,
     lang_config: LanguageSpec,
 ) -> str | None:
+    """
+    Builds the FQN for a nested class by traversing up the AST.
+
+    Args:
+        class_node (Node): The AST node of the nested class.
+        module_qn (str): The qualified name of the containing module.
+        class_name (str): The simple name of the class.
+        lang_config (LanguageSpec): The language specification.
+
+    Returns:
+        str | None: The constructed FQN, or None if it's a top-level class.
+    """
     if not isinstance(class_node.parent, Node):
         return None
 

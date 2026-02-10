@@ -1,3 +1,23 @@
+"""
+This module defines the `DefinitionProcessor`, which is responsible for parsing
+source code files to identify and ingest definitions of code constructs like
+functions, classes, methods, and their relationships.
+
+It acts as a primary orchestrator for the parsing of a single file, combining
+functionality from various mixins (`FunctionIngestMixin`, `ClassIngestMixin`, etc.)
+to handle different aspects of definition processing.
+
+Key functionalities:
+-   Parsing a file's source code into an AST using the appropriate `tree-sitter` parser.
+-   Ingesting the `Module` node and its relationship to its parent container (Package/Folder).
+-   Delegating to `ImportProcessor` to handle import statements.
+-   Identifying and ingesting all functions, classes, and methods within the file.
+-   Handling language-specific constructs like C++ module declarations, JavaScript/TypeScript
+    exports, and prototype-based inheritance.
+-   Processing dependency files (e.g., `pyproject.toml`) to add dependency relationships
+    to the graph.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,9 +25,14 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from .. import constants as cs
-from .. import logs as ls
-from ..types_defs import ASTNode, FunctionRegistryTrieProtocol, SimpleNameLookup
+from codebase_rag.data_models.types_defs import (
+    ASTNode,
+    FunctionRegistryTrieProtocol,
+    SimpleNameLookup,
+)
+
+from ..core import constants as cs
+from ..core import logs as ls
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
@@ -16,8 +41,9 @@ from .js_ts.ingest import JsTsIngestMixin
 from .utils import safe_decode_with_fallback
 
 if TYPE_CHECKING:
+    from codebase_rag.data_models.types_defs import LanguageQueries
+
     from ..services import IngestorProtocol
-    from ..types_defs import LanguageQueries
     from .handlers import LanguageHandler
     from .import_processor import ImportProcessor
 
@@ -27,6 +53,14 @@ class DefinitionProcessor(
     ClassIngestMixin,
     JsTsIngestMixin,
 ):
+    """
+    Processes a source file to identify and ingest code definitions.
+
+    This class combines multiple mixins to handle the extraction and ingestion of
+    functions, classes, methods, imports, and other language constructs from a
+    parsed Abstract Syntax Tree (AST).
+    """
+
     _handler: LanguageHandler
 
     def __init__(
@@ -39,6 +73,18 @@ class DefinitionProcessor(
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
     ):
+        """
+        Initializes the DefinitionProcessor.
+
+        Args:
+            ingestor (IngestorProtocol): The data ingestion service.
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            function_registry (FunctionRegistryTrieProtocol): The registry for function FQNs.
+            simple_name_lookup (SimpleNameLookup): A map from simple names to FQNs.
+            import_processor (ImportProcessor): The processor for handling imports.
+            module_qn_to_file_path (dict[str, Path]): A map from module FQNs to file paths.
+        """
         super().__init__()
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -57,6 +103,19 @@ class DefinitionProcessor(
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         structural_elements: dict[Path, str | None],
     ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
+        """
+        Parses a single file and ingests all definitions found within it.
+
+        Args:
+            file_path (Path): The absolute path to the file.
+            language (cs.SupportedLanguage): The language of the file.
+            queries (dict): A dictionary of tree-sitter queries.
+            structural_elements (dict): A map of directory paths to their qualified names.
+
+        Returns:
+            tuple[ASTNode, cs.SupportedLanguage] | None: A tuple of the root AST node
+                and the language if parsing was successful, otherwise None.
+        """
         if isinstance(file_path, str):
             file_path = Path(file_path)
         relative_path = file_path.relative_to(self.repo_path)
@@ -144,6 +203,12 @@ class DefinitionProcessor(
             return None
 
     def process_dependencies(self, filepath: Path) -> None:
+        """
+        Parses a dependency file and ingests the dependencies into the graph.
+
+        Args:
+            filepath (Path): The path to the dependency file (e.g., 'pyproject.toml').
+        """
         logger.info(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
 
         dependencies = parse_dependencies(filepath)
@@ -153,6 +218,14 @@ class DefinitionProcessor(
     def _add_dependency(
         self, dep_name: str, dep_spec: str, properties: dict[str, str] | None = None
     ) -> None:
+        """
+        Adds a single dependency node and its relationship to the project.
+
+        Args:
+            dep_name (str): The name of the dependency.
+            dep_spec (str): The version specifier for the dependency.
+            properties (dict[str, str] | None): Additional properties for the relationship.
+        """
         if not dep_name or dep_name.lower() in cs.EXCLUDED_DEPENDENCY_NAMES:
             return
 
@@ -173,6 +246,15 @@ class DefinitionProcessor(
         )
 
     def _get_docstring(self, node: ASTNode) -> str | None:
+        """
+        Extracts the docstring from a function or class node.
+
+        Args:
+            node (ASTNode): The tree-sitter node for the function or class.
+
+        Returns:
+            str | None: The extracted docstring, or None if not found.
+        """
         body_node = node.child_by_field_name(cs.FIELD_BODY)
         if not body_node or not body_node.children:
             return None
@@ -190,4 +272,13 @@ class DefinitionProcessor(
         return None
 
     def _extract_decorators(self, node: ASTNode) -> list[str]:
+        """
+        Extracts a list of decorator names from a node.
+
+        Args:
+            node (ASTNode): The decorated node.
+
+        Returns:
+            list[str]: A list of decorator names.
+        """
         return self._handler.extract_decorators(node)

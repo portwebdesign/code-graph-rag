@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from codebase_rag import constants as cs
-from codebase_rag import exceptions as ex
-from codebase_rag.config import ModelConfig
-from codebase_rag.main import _create_model_from_string, _handle_model_command
+from codebase_rag.core import constants as cs
+from codebase_rag.core.config import ModelConfig
+from codebase_rag.core.main import _create_model_from_string, _handle_model_command
+from codebase_rag.infrastructure import exceptions as ex
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -164,8 +164,11 @@ class TestHandleModelCommand:
 class TestModelOverrideInAgentLoop:
     @pytest.mark.asyncio
     async def test_model_override_passed_to_agent_run(self) -> None:
-        from codebase_rag.main import _run_agent_response_loop
-        from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
+        from codebase_rag.core.main import _run_agent_response_loop
+        from codebase_rag.data_models.types_defs import (
+            CHAT_LOOP_UI,
+            ConfirmationToolNames,
+        )
 
         mock_agent = MagicMock()
         mock_response = MagicMock()
@@ -201,8 +204,11 @@ class TestModelOverrideInAgentLoop:
 
     @pytest.mark.asyncio
     async def test_model_override_none_by_default(self) -> None:
-        from codebase_rag.main import _run_agent_response_loop
-        from codebase_rag.types_defs import CHAT_LOOP_UI, ConfirmationToolNames
+        from codebase_rag.core.main import _run_agent_response_loop
+        from codebase_rag.data_models.types_defs import (
+            CHAT_LOOP_UI,
+            ConfirmationToolNames,
+        )
 
         mock_agent = MagicMock()
         mock_response = MagicMock()

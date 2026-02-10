@@ -1,7 +1,14 @@
+"""
+This module provides utility functions specifically for parsing Python source code.
+
+It contains helpers for resolving class names, which is a common task across
+different Python-related parsers.
+"""
+
 from typing import TYPE_CHECKING
 
-from ...constants import SEPARATOR_DOT
-from ...types_defs import FunctionRegistryTrieProtocol
+from codebase_rag.core.constants import SEPARATOR_DOT
+from codebase_rag.data_models.types_defs import FunctionRegistryTrieProtocol
 
 if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
@@ -13,6 +20,25 @@ def resolve_class_name(
     import_processor: "ImportProcessor",
     function_registry: FunctionRegistryTrieProtocol,
 ) -> str | None:
+    """
+    Resolves a simple class name to its fully qualified name (FQN).
+
+    It uses a multi-step process:
+    1. Check the import map of the current module.
+    2. Check for a class with the same name in the current module.
+    3. Traverse up the module hierarchy to check parent modules.
+    4. As a fallback, search the entire function registry for any FQN ending
+       with the class name.
+
+    Args:
+        class_name (str): The simple name of the class to resolve.
+        module_qn (str): The FQN of the module where the class name is used.
+        import_processor (ImportProcessor): The import processor instance.
+        function_registry (FunctionRegistryTrieProtocol): The registry of all known functions/classes.
+
+    Returns:
+        str | None: The resolved FQN of the class, or None if it cannot be found.
+    """
     if module_qn in import_processor.import_mapping:
         import_map = import_processor.import_mapping[module_qn]
         if class_name in import_map:

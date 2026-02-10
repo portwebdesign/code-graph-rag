@@ -1,3 +1,16 @@
+"""
+This module defines the `JavaMethodResolverMixin`, a component responsible for
+resolving Java method calls to their fully qualified names (FQNs).
+
+It handles the complexities of Java's object-oriented nature, including:
+-   Resolving method calls on local variables, `this`, and `super`.
+-   Resolving static method calls on imported classes.
+-   Traversing the class inheritance hierarchy to find inherited methods.
+-   Searching implemented interfaces for method definitions.
+-   Using a ranking system to find the best match among multiple potential
+    modules for a given class.
+"""
+
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -6,20 +19,29 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ... import constants as cs
-from ... import logs as ls
-from ...types_defs import ASTNode, NodeType
+from codebase_rag.data_models.types_defs import ASTNode, NodeType
+
+from ...core import constants as cs
+from ...core import logs as ls
 from ..utils import safe_decode_text
 from .utils import extract_method_call_info, get_class_context_from_qn
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
+    from codebase_rag.data_models.types_defs import (
+        ASTCacheProtocol,
+        FunctionRegistryTrieProtocol,
+    )
+
     from ..import_processor import ImportProcessor
 
 
 class JavaMethodResolverMixin:
+    """
+    A mixin providing methods to resolve Java method calls to their FQNs.
+    """
+
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
     project_name: str
@@ -29,37 +51,59 @@ class JavaMethodResolverMixin:
     _fqn_to_module_qn: dict[str, list[str]]
 
     @abstractmethod
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
+    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
+        """Abstract method to resolve a Java type name to its FQN."""
+        ...
 
     @abstractmethod
     def _rank_module_candidates(
         self, candidates: list[str], class_qn: str, current_module_qn: str | None
-    ) -> list[str]: ...
+    ) -> list[str]:
+        """Abstract method to rank candidate modules for type resolution."""
+        ...
 
     @abstractmethod
-    def _find_registry_entries_under(
-        self, prefix: str
-    ) -> Iterable[tuple[str, str]]: ...
+    def _find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
+        """Abstract method to find all registry entries under a given prefix."""
+        ...
 
     @abstractmethod
-    def _get_superclass_name(self, class_qn: str) -> str | None: ...
+    def _get_superclass_name(self, class_qn: str) -> str | None:
+        """Abstract method to get the superclass of a given class."""
+        ...
 
     @abstractmethod
-    def _get_implemented_interfaces(self, class_qn: str) -> list[str]: ...
+    def _get_implemented_interfaces(self, class_qn: str) -> list[str]:
+        """Abstract method to get the interfaces implemented by a class."""
+        ...
 
     @abstractmethod
-    def _get_current_class_name(self, module_qn: str) -> str | None: ...
+    def _get_current_class_name(self, module_qn: str) -> str | None:
+        """Abstract method to get the primary class name for a module."""
+        ...
 
     @abstractmethod
-    def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None: ...
+    def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None:
+        """Abstract method to look up the type of a variable."""
+        ...
 
     def _resolve_java_object_type(
         self, object_ref: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
+        """
+        Resolves the type of an object reference (variable, `this`, `super`, etc.).
+
+        Args:
+            object_ref (str): The name of the object reference.
+            local_var_types (dict): A map of local variables to their types.
+            module_qn (str): The FQN of the current module.
+
+        Returns:
+            str | None: The resolved FQN of the object's type, or None.
+        """
         if object_ref in local_var_types:
             return local_var_types[object_ref]
 
-        # (H) Check for 'this' reference - find the containing class (using trie for O(k) lookup)
         if object_ref == cs.JAVA_KEYWORD_THIS:
             return next(
                 (
@@ -72,7 +116,6 @@ class JavaMethodResolverMixin:
                 None,
             )
 
-        # (H) Check for 'super' reference - for super calls, look at parent classes (using trie for O(k) lookup)
         if object_ref == cs.JAVA_KEYWORD_SUPER:
             for qn, entity_type in self.function_registry.find_with_prefix(module_qn):
                 if entity_type == NodeType.CLASS:
@@ -95,12 +138,14 @@ class JavaMethodResolverMixin:
         return None
 
     def _find_parent_class(self, class_qn: str) -> str | None:
+        """Finds the direct parent class from the inheritance map."""
         parent_classes = self.class_inheritance.get(class_qn, [])
         return parent_classes[0] if parent_classes else None
 
     def _resolve_static_or_local_method(
         self, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
+        """Resolves a method call that could be static or local to the current module."""
         return next(
             (
                 (entity_type, qn)
@@ -118,6 +163,7 @@ class JavaMethodResolverMixin:
     def _resolve_instance_method(
         self, object_type: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
+        """Resolves a method call on an instance of a given type."""
         resolved_type = self._resolve_java_type_name(object_type, module_qn)
 
         if method_result := self._find_method_with_any_signature(
@@ -135,6 +181,7 @@ class JavaMethodResolverMixin:
     def _find_method_with_any_signature(
         self, class_qn: str, method_name: str, current_module_qn: str | None = None
     ) -> tuple[str, str] | None:
+        """Finds a method in a class, ignoring parameter signatures."""
         if class_qn:
             if result := self._search_method_in_class(class_qn, method_name):
                 return result
@@ -149,6 +196,7 @@ class JavaMethodResolverMixin:
     def _search_method_in_class(
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
+        """Searches for a method within a single class in the function registry."""
         for qn, method_type in self._find_registry_entries_under(class_qn):
             if qn == class_qn:
                 continue
@@ -163,6 +211,7 @@ class JavaMethodResolverMixin:
     def _search_method_in_alternate_modules(
         self, class_qn: str, method_name: str, current_module_qn: str | None
     ) -> tuple[str, str] | None:
+        """Searches for a method in other potential modules if the initial FQN is ambiguous."""
         suffixes = class_qn.split(cs.SEPARATOR_DOT)
         lookup_keys = [
             cs.SEPARATOR_DOT.join(suffixes[i:]) for i in range(len(suffixes))
@@ -183,6 +232,7 @@ class JavaMethodResolverMixin:
         return None
 
     def _collect_candidate_modules(self, lookup_keys: list[str]) -> list[str]:
+        """Collects potential module candidates from the FQN-to-module map."""
         candidate_modules: list[str] = []
         seen_modules: set[str] = set()
 
@@ -196,6 +246,7 @@ class JavaMethodResolverMixin:
         return candidate_modules
 
     def _is_matching_method(self, member: str, method_name: str) -> bool:
+        """Checks if a member name from the registry matches the target method name."""
         return (
             member == method_name
             or member.startswith(f"{method_name}{cs.CHAR_PAREN_OPEN}")
@@ -205,6 +256,7 @@ class JavaMethodResolverMixin:
     def _find_inherited_method(
         self, class_qn: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
+        """Recursively searches the inheritance hierarchy for a method."""
         if not (superclass_qn := self._get_superclass_name(class_qn)):
             return None
 
@@ -218,6 +270,7 @@ class JavaMethodResolverMixin:
     def _find_interface_method(
         self, class_qn: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
+        """Searches implemented interfaces for a method."""
         for interface_qn in self._get_implemented_interfaces(class_qn):
             if method_result := self._find_method_with_any_signature(
                 interface_qn, method_name, module_qn
@@ -229,6 +282,7 @@ class JavaMethodResolverMixin:
     def _resolve_java_method_return_type(
         self, method_call: str, module_qn: str
     ) -> str | None:
+        """Resolves the return type of a Java method call."""
         if not method_call:
             return None
 
@@ -254,6 +308,7 @@ class JavaMethodResolverMixin:
         return self._heuristic_method_return_type(method_call)
 
     def _find_method_return_type(self, class_qn: str, method_name: str) -> str | None:
+        """Finds a method's return type by looking up its definition in the AST."""
         if not class_qn or not method_name:
             return None
 
@@ -270,6 +325,7 @@ class JavaMethodResolverMixin:
     def _find_method_return_type_in_ast(
         self, node: ASTNode, class_name: str, method_name: str, module_qn: str
     ) -> str | None:
+        """Recursively searches the AST for a method and extracts its return type."""
         if node.type == cs.TS_CLASS_DECLARATION:
             if (
                 name_node := node.child_by_field_name(cs.KEY_NAME)
@@ -290,6 +346,7 @@ class JavaMethodResolverMixin:
     def _search_methods_in_class_body(
         self, body_node: ASTNode, method_name: str, module_qn: str
     ) -> str | None:
+        """Searches for a method by name within a class body node."""
         for child in body_node.children:
             if child.type == cs.TS_METHOD_DECLARATION:
                 if (
@@ -302,6 +359,7 @@ class JavaMethodResolverMixin:
         return None
 
     def _heuristic_method_return_type(self, method_call: str) -> str | None:
+        """Provides a heuristic-based guess for a method's return type."""
         method_lower = method_call.lower()
         if cs.JAVA_GETTER_PATTERN in method_lower:
             if cs.JAVA_NAME_PATTERN in method_lower:
@@ -334,6 +392,17 @@ class JavaMethodResolverMixin:
     def _do_resolve_java_method_call(
         self, call_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> tuple[str, str] | None:
+        """
+        Internal method to perform the resolution of a Java method call.
+
+        Args:
+            call_node (ASTNode): The `method_invocation` AST node.
+            local_var_types (dict): A map of local variables to their types.
+            module_qn (str): The FQN of the current module.
+
+        Returns:
+            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+        """
         if call_node.type != cs.TS_METHOD_INVOCATION:
             return None
 

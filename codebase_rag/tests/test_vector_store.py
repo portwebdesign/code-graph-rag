@@ -24,7 +24,7 @@ def mock_qdrant_client() -> MagicMock:
 
 @pytest.fixture
 def reset_global_client() -> Generator[None, None, None]:
-    import codebase_rag.vector_store as vs
+    import codebase_rag.data_models.vector_store as vs
 
     if has_qdrant_client() and vs._CLIENT is not None:
         try:
@@ -60,7 +60,7 @@ def integration_client(
     from qdrant_client import QdrantClient as QC
     from qdrant_client.models import Distance, VectorParams
 
-    import codebase_rag.vector_store as vs
+    import codebase_rag.data_models.vector_store as vs
 
     client = QC(path=str(temp_qdrant_path))
     client.create_collection(
@@ -82,7 +82,7 @@ def integration_client(
 def test_store_embedding_calls_upsert(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import store_embedding
+    from codebase_rag.data_models.vector_store import store_embedding
 
     node_id = 123
     embedding = [0.1] * 768
@@ -109,7 +109,7 @@ def test_store_embedding_calls_upsert(
 def test_store_embedding_handles_exception(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import store_embedding
+    from codebase_rag.data_models.vector_store import store_embedding
 
     mock_qdrant_client.upsert.side_effect = Exception("Connection failed")
 
@@ -124,7 +124,7 @@ def test_store_embedding_handles_exception(
 def test_search_embeddings_calls_query_points(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.data_models.vector_store import search_embeddings
 
     mock_point1 = MagicMock()
     mock_point1.payload = {"node_id": 1}
@@ -156,7 +156,7 @@ def test_search_embeddings_calls_query_points(
 def test_search_embeddings_filters_null_payloads(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.data_models.vector_store import search_embeddings
 
     mock_point1 = MagicMock()
     mock_point1.payload = {"node_id": 1}
@@ -183,7 +183,7 @@ def test_search_embeddings_filters_null_payloads(
 def test_search_embeddings_handles_exception(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.data_models.vector_store import search_embeddings
 
     mock_qdrant_client.query_points.side_effect = Exception("Connection failed")
 
@@ -200,7 +200,7 @@ def test_search_embeddings_handles_exception(
 def test_search_embeddings_default_top_k(
     mock_qdrant_client: MagicMock, reset_global_client: None
 ) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.data_models.vector_store import search_embeddings
 
     mock_result = MagicMock()
     mock_result.points = []
@@ -219,7 +219,7 @@ def test_search_embeddings_default_top_k(
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_store_and_search_roundtrip(integration_client: QdrantClient) -> None:
-    from codebase_rag.vector_store import search_embeddings, store_embedding
+    from codebase_rag.data_models.vector_store import search_embeddings, store_embedding
 
     embedding1 = [1.0] + [0.0] * 767
     embedding2 = [0.0, 1.0] + [0.0] * 766
@@ -240,7 +240,7 @@ def test_store_and_search_roundtrip(integration_client: QdrantClient) -> None:
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_upsert_updates_existing(integration_client: QdrantClient) -> None:
-    from codebase_rag.vector_store import search_embeddings, store_embedding
+    from codebase_rag.data_models.vector_store import search_embeddings, store_embedding
 
     embedding_v1 = [1.0] + [0.0] * 767
     embedding_v2 = [0.0, 1.0] + [0.0] * 766
@@ -258,7 +258,7 @@ def test_upsert_updates_existing(integration_client: QdrantClient) -> None:
 
 @pytest.mark.skipif(not has_qdrant_client(), reason="qdrant-client not installed")
 def test_empty_search_returns_empty_list(integration_client: QdrantClient) -> None:
-    from codebase_rag.vector_store import search_embeddings
+    from codebase_rag.data_models.vector_store import search_embeddings
 
     results = search_embeddings([0.5] * 768, top_k=5)
     assert results == []

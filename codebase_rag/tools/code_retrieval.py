@@ -1,3 +1,16 @@
+"""
+This module defines the `CodeRetriever` class and a factory function for creating
+a `pydantic-ai` tool to retrieve code snippets from the codebase.
+
+The `CodeRetriever` uses the knowledge graph to find the location (file path and
+line numbers) of a code entity (like a function or class) based on its fully
+qualified name (FQN). It then reads the corresponding lines from the source file
+to construct a `CodeSnippet` object.
+
+This tool is essential for the LLM agent to inspect the implementation details
+of specific code elements it discovers through graph queries or other means.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -5,22 +18,48 @@ from pathlib import Path
 from loguru import logger
 from pydantic_ai import Tool
 
-from .. import logs as ls
-from .. import tool_errors as te
-from ..constants import ENCODING_UTF8
-from ..cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
-from ..schemas import CodeSnippet
+from codebase_rag.core.constants import ENCODING_UTF8
+from codebase_rag.data_models.schemas import CodeSnippet
+from codebase_rag.graph_db.cypher_queries import CYPHER_FIND_BY_QUALIFIED_NAME
+
+from ..core import logs as ls
+from ..infrastructure import tool_errors as te
 from ..services import QueryProtocol
 from . import tool_descriptions as td
 
 
 class CodeRetriever:
+    """
+    A tool for retrieving specific code snippets from the codebase using the knowledge graph.
+    """
+
     def __init__(self, project_root: str, ingestor: QueryProtocol):
+        """
+        Initializes the CodeRetriever.
+
+        Args:
+            project_root (str): The absolute path to the root of the project.
+            ingestor (QueryProtocol): The service for querying the graph database.
+        """
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
+        """
+        Finds and retrieves a code snippet based on its fully qualified name.
+
+        It queries the graph to get the file path and line numbers, then reads
+        the content from the file.
+
+        Args:
+            qualified_name (str): The fully qualified name of the entity to retrieve.
+
+        Returns:
+            CodeSnippet: A Pydantic model containing the source code, file path,
+                         line numbers, and other metadata. Returns a snippet with
+                         `found=False` and an error message if retrieval fails.
+        """
         logger.info(ls.CODE_RETRIEVER_SEARCH.format(name=qualified_name))
 
         params = {"qn": qualified_name}
@@ -83,7 +122,27 @@ class CodeRetriever:
 
 
 def create_code_retrieval_tool(code_retriever: CodeRetriever) -> Tool:
+    """
+    Factory function to create a `pydantic-ai` Tool for code retrieval.
+
+    Args:
+        code_retriever (CodeRetriever): An instance of the CodeRetriever class.
+
+    Returns:
+        Tool: An initialized `pydantic-ai` Tool.
+    """
+
     async def get_code_snippet(qualified_name: str) -> CodeSnippet:
+        """
+        Retrieves the source code of a specific function, method, or class.
+
+        Args:
+            qualified_name (str): The fully qualified name of the code entity
+                                  (e.g., 'my_project.my_module.MyClass.my_method').
+
+        Returns:
+            CodeSnippet: An object containing the source code and metadata.
+        """
         logger.info(ls.CODE_TOOL_RETRIEVE.format(name=qualified_name))
         return await code_retriever.find_code_snippet(qualified_name)
 

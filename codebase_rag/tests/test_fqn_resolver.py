@@ -5,8 +5,8 @@ from pathlib import Path
 import tree_sitter_python as tspython
 from tree_sitter import Language, Parser, Tree
 
-from codebase_rag.constants import SupportedLanguage
-from codebase_rag.language_spec import LANGUAGE_FQN_SPECS
+from codebase_rag.core.constants import SupportedLanguage
+from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS
 from codebase_rag.utils.fqn_resolver import (
     extract_function_fqns,
     find_function_source_by_fqn,

@@ -1,30 +1,61 @@
+"""
+This module provides tools for performing semantic (vector-based) code search
+and retrieving the source code of the results.
+
+It defines functions to:
+1.  `semantic_code_search`: Takes a natural language query, embeds it into a
+    vector, and searches a vector store (Qdrant) for the most similar code
+    embeddings. It then retrieves metadata for the matched nodes from the
+    graph database.
+2.  `get_function_source_code`: Retrieves the full source code of a function or
+    method given its node ID from the graph.
+
+These functions are wrapped into `pydantic-ai` tools by factory functions,
+making them available to the LLM agent for intent-based code discovery.
+The module handles the optional nature of semantic search dependencies, failing
+gracefully if they are not installed.
+"""
+
 from __future__ import annotations
 
 from loguru import logger
 from pydantic_ai import Tool
 
-from .. import constants as cs
-from .. import exceptions as ex
-from .. import logs as ls
-from ..cypher_queries import (
+from codebase_rag.data_models.types_defs import SemanticSearchResult
+from codebase_rag.graph_db.cypher_queries import (
     CYPHER_GET_FUNCTION_SOURCE_LOCATION,
     build_nodes_by_ids_query,
 )
-from ..types_defs import SemanticSearchResult
+
+from ..core import constants as cs
+from ..core import logs as ls
+from ..infrastructure import exceptions as ex
 from ..utils.dependencies import has_semantic_dependencies
 from . import tool_descriptions as td
 
 
 def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResult]:
+    """
+    Performs a semantic search for code snippets based on a natural language query.
+
+    Args:
+        query (str): The natural language search query.
+        top_k (int): The number of top results to return.
+
+    Returns:
+        list[SemanticSearchResult]: A list of search results, each containing
+                                    metadata about the matched code entity.
+    """
     if not has_semantic_dependencies():
         logger.warning(ex.SEMANTIC_EXTRA)
         return []
 
     try:
-        from ..config import settings
-        from ..embedder import embed_code
+        from codebase_rag.ai.embedder import embed_code
+        from codebase_rag.core.config import settings
+        from codebase_rag.data_models.vector_store import search_embeddings
+
         from ..services.graph_service import MemgraphIngestor
-        from ..vector_store import search_embeddings
 
         query_embedding = embed_code(query)
 
@@ -78,8 +109,18 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResul
 
 
 def get_function_source_code(node_id: int) -> str | None:
+    """
+    Retrieves the source code for a function/method using its graph node ID.
+
+    Args:
+        node_id (int): The unique ID of the node in the graph database.
+
+    Returns:
+        str | None: The source code as a string, or None if it cannot be retrieved.
+    """
     try:
-        from ..config import settings
+        from codebase_rag.core.config import settings
+
         from ..services.graph_service import MemgraphIngestor
         from ..utils.source_extraction import (
             extract_source_lines,
@@ -119,7 +160,25 @@ def get_function_source_code(node_id: int) -> str | None:
 
 
 def create_semantic_search_tool() -> Tool:
+    """
+    Factory function to create a `pydantic-ai` Tool for semantic search.
+
+    Returns:
+        Tool: An initialized `pydantic-ai` Tool.
+    """
+
     async def semantic_search_functions(query: str, top_k: int = 5) -> str:
+        """
+        Performs a semantic search for functions based on a natural language query.
+
+        Args:
+            query (str): The natural language query describing the desired functionality.
+            top_k (int): The maximum number of results to return.
+
+        Returns:
+            str: A formatted string containing the search results or a message
+                 indicating that no results were found.
+        """
         logger.info(ls.SEMANTIC_TOOL_SEARCH.format(query=query))
 
         results = semantic_code_search(query, top_k)
@@ -143,7 +202,23 @@ def create_semantic_search_tool() -> Tool:
 
 
 def create_get_function_source_tool() -> Tool:
+    """
+    Factory function to create a `pydantic-ai` Tool for retrieving function source code.
+
+    Returns:
+        Tool: An initialized `pydantic-ai` Tool.
+    """
+
     async def get_function_source_by_id(node_id: int) -> str:
+        """
+        Retrieves the source code of a function or method using its node ID.
+
+        Args:
+            node_id (int): The unique ID of the function/method node from the graph.
+
+        Returns:
+            str: The formatted source code or an error message.
+        """
         logger.info(ls.SEMANTIC_TOOL_SOURCE.format(id=node_id))
 
         source_code = get_function_source_code(node_id)

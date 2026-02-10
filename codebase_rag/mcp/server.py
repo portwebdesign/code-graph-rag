@@ -8,14 +8,14 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from codebase_rag import constants as cs
-from codebase_rag import logs as lg
-from codebase_rag import tool_errors as te
-from codebase_rag.config import settings
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as lg
+from codebase_rag.core.config import settings
+from codebase_rag.data_models.types_defs import MCPToolArguments
+from codebase_rag.infrastructure import tool_errors as te
 from codebase_rag.mcp.tools import create_mcp_tools_registry
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
-from codebase_rag.types_defs import MCPToolArguments
 
 
 def setup_logging() -> None:

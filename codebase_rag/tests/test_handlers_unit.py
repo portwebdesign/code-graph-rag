@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 import pytest
 from tree_sitter import Language, Parser
 
-from codebase_rag import constants as cs
-from codebase_rag.language_spec import LANGUAGE_SPECS
+from codebase_rag.core import constants as cs
+from codebase_rag.infrastructure.language_spec import LANGUAGE_SPECS
 from codebase_rag.parsers.handlers.base import BaseLanguageHandler
 from codebase_rag.parsers.handlers.cpp import CppHandler
 from codebase_rag.parsers.handlers.java import JavaHandler
@@ -18,7 +18,7 @@ from codebase_rag.parsers.handlers.rust import RustHandler
 from codebase_rag.tests.conftest import create_mock_node
 
 if TYPE_CHECKING:
-    from codebase_rag.types_defs import ASTNode
+    from codebase_rag.data_models.types_defs import ASTNode
 
 try:
     import tree_sitter_javascript as tsjs

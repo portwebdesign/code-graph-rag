@@ -1,3 +1,25 @@
+"""
+This module manages the application's configuration using Pydantic's `BaseSettings`.
+
+It loads settings from environment variables and a `.env` file, providing a centralized
+place for all configuration parameters. This includes settings for database connections
+(Memgraph), Large Language Model (LLM) providers (like OpenAI, Anthropic, Ollama),
+and other operational parameters.
+
+Key features:
+-   `AppConfig` class: A Pydantic `BaseSettings` model that holds all configuration
+    variables.
+-   `ModelConfig` dataclass: Represents the configuration for a specific LLM,
+    including provider, model ID, and API keys.
+-   Dynamic loading of LLM configurations for different roles (e.g., 'orchestrator',
+    'cypher').
+-   API key validation and user-friendly error messages for missing keys.
+-   Handling of a `.cgrignore` file for specifying patterns to exclude or include
+    during file processing, similar to `.gitignore`.
+-   A singleton `settings` instance of `AppConfig` is created for easy access
+    throughout the application.
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -9,15 +31,17 @@ from loguru import logger
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from . import constants as cs
-from . import exceptions as ex
-from . import logs
-from .types_defs import CgrignorePatterns, ModelConfigKwargs
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs
+from codebase_rag.data_models.types_defs import CgrignorePatterns, ModelConfigKwargs
+from codebase_rag.infrastructure import exceptions as ex
 
 load_dotenv()
 
 
 class ApiKeyInfoEntry(TypedDict):
+    """Defines the structure for API key information."""
+
     env_var: str
     url: str
     name: str
@@ -55,6 +79,15 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
 def format_missing_api_key_errors(
     provider: str, role: str = cs.DEFAULT_MODEL_ROLE
 ) -> str:
+    """Formats a user-friendly error message for a missing API key.
+
+    Args:
+        provider (str): The name of the LLM provider (e.g., 'openai').
+        role (str): The role the model is serving (e.g., 'orchestrator').
+
+    Returns:
+        str: A formatted, helpful error message string.
+    """
     provider_lower = provider.lower()
 
     if provider_lower in API_KEY_INFO:
@@ -96,6 +129,20 @@ def format_missing_api_key_errors(
 
 @dataclass
 class ModelConfig:
+    """Represents the configuration for a specific language model.
+
+    Attributes:
+        provider (str): The provider of the model (e.g., 'openai', 'ollama').
+        model_id (str): The specific model identifier (e.g., 'gpt-4', 'llama3').
+        api_key (str | None): The API key for the provider's service.
+        endpoint (str | None): The API endpoint URL.
+        project_id (str | None): The project ID for providers like Google.
+        region (str | None): The cloud region for the service.
+        provider_type (str | None): The type of provider, e.g., for Azure.
+        thinking_budget (int | None): A budget for model 'thinking' steps.
+        service_account_file (str | None): Path to a service account file.
+    """
+
     provider: str
     model_id: str
     api_key: str | None = None
@@ -107,12 +154,25 @@ class ModelConfig:
     service_account_file: str | None = None
 
     def to_update_kwargs(self) -> ModelConfigKwargs:
+        """Converts the config to a dictionary suitable for updating settings.
+
+        Returns:
+            ModelConfigKwargs: A TypedDict of the model's optional parameters.
+        """
         result = asdict(self)
         del result[cs.FIELD_PROVIDER]
         del result[cs.FIELD_MODEL_ID]
         return ModelConfigKwargs(**result)
 
     def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
+        """Validates that the API key is present for non-local providers.
+
+        Args:
+            role (str): The role the model is serving, for error messaging.
+
+        Raises:
+            ValueError: If the API key is missing for a required provider.
+        """
         local_providers = {cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM}
         if self.provider.lower() in local_providers:
             return
@@ -126,8 +186,10 @@ class ModelConfig:
 
 
 class AppConfig(BaseSettings):
-    """
-    (H) All settings are loaded from environment variables or a .env file.
+    """Main application settings, loaded from environment variables or a .env file.
+
+    This class uses Pydantic's `BaseSettings` to automatically load and validate
+    configuration from the environment.
     """
 
     model_config = SettingsConfigDict(
@@ -136,14 +198,18 @@ class AppConfig(BaseSettings):
         case_sensitive=False,
     )
 
+    # Memgraph settings
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
+
+    # Agent settings
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 
+    # Orchestrator LLM settings
     ORCHESTRATOR_PROVIDER: str = ""
     ORCHESTRATOR_MODEL: str = ""
     ORCHESTRATOR_API_KEY: str | None = None
@@ -154,6 +220,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
 
+    # Cypher LLM settings
     CYPHER_PROVIDER: str = ""
     CYPHER_MODEL: str = ""
     CYPHER_API_KEY: str | None = None
@@ -164,13 +231,16 @@ class AppConfig(BaseSettings):
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
+    # Ollama settings
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     @property
     def ollama_endpoint(self) -> str:
+        """Constructs the Ollama v1 API endpoint URL."""
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
-    TARGET_REPO_PATH: str = "."
+    # Repository and Shell settings
+    TARGET_REPO_PATH: str = ".."
     SHELL_COMMAND_TIMEOUT: int = 30
     SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
         {
@@ -234,6 +304,7 @@ class AppConfig(BaseSettings):
         }
     )
 
+    # Vector store (Qdrant) and embedding settings
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
@@ -241,19 +312,33 @@ class AppConfig(BaseSettings):
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
 
+    # Cache settings
     CACHE_MAX_ENTRIES: int = 1000
     CACHE_MAX_MEMORY_MB: int = 500
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
+    # Health check settings
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
 
+    # Active model configurations (can be overridden at runtime)
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
+    # General settings
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
     def _get_default_config(self, role: str) -> ModelConfig:
+        """Constructs a default model configuration for a given role from environment variables.
+
+        If specific environment variables for the role are not set, it defaults to Ollama.
+
+        Args:
+            role (str): The role ('orchestrator' or 'cypher').
+
+        Returns:
+            ModelConfig: The constructed model configuration.
+        """
         role_upper = role.upper()
 
         provider = getattr(self, f"{role_upper}_PROVIDER", None)
@@ -282,32 +367,63 @@ class AppConfig(BaseSettings):
         )
 
     def _get_default_orchestrator_config(self) -> ModelConfig:
+        """Gets the default configuration for the orchestrator model."""
         return self._get_default_config(cs.ModelRole.ORCHESTRATOR)
 
     def _get_default_cypher_config(self) -> ModelConfig:
+        """Gets the default configuration for the cypher model."""
         return self._get_default_config(cs.ModelRole.CYPHER)
 
     @property
     def active_orchestrator_config(self) -> ModelConfig:
+        """Returns the currently active orchestrator model configuration."""
         return self._active_orchestrator or self._get_default_orchestrator_config()
 
     @property
     def active_cypher_config(self) -> ModelConfig:
+        """Returns the currently active cypher model configuration."""
         return self._active_cypher or self._get_default_cypher_config()
 
     def set_orchestrator(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
+        """Sets or overrides the orchestrator model configuration at runtime.
+
+        Args:
+            provider (str): The model provider.
+            model (str): The model ID.
+            **kwargs: Additional optional configuration parameters.
+        """
         config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
         self._active_orchestrator = config
 
     def set_cypher(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
+        """Sets or overrides the cypher model configuration at runtime.
+
+        Args:
+            provider (str): The model provider.
+            model (str): The model ID.
+            **kwargs: Additional optional configuration parameters.
+        """
         config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
         self._active_cypher = config
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
+        """Parses a 'provider:model' string into a provider and model tuple.
+
+        If no provider is specified, it defaults to 'ollama'.
+
+        Args:
+            model_string (str): The string to parse.
+
+        Raises:
+            ValueError: If the provider part is empty (e.g., ':model').
+
+        Returns:
+            tuple[str, str]: A tuple of (provider, model_id).
+        """
         if ":" not in model_string:
             return cs.Provider.OLLAMA, model_string
         provider, model = model_string.split(":", 1)
@@ -316,6 +432,19 @@ class AppConfig(BaseSettings):
         return provider.lower(), model
 
     def resolve_batch_size(self, batch_size: int | None) -> int:
+        """Resolves the batch size to use for database operations.
+
+        Uses the provided value, or falls back to the default from settings.
+
+        Args:
+            batch_size (int | None): The desired batch size.
+
+        Raises:
+            ValueError: If the resolved batch size is less than 1.
+
+        Returns:
+            int: The resolved batch size.
+        """
         resolved = self.MEMGRAPH_BATCH_SIZE if batch_size is None else batch_size
         if resolved < 1:
             raise ValueError(ex.BATCH_SIZE_POSITIVE)
@@ -331,6 +460,20 @@ EMPTY_CGRIGNORE = CgrignorePatterns(exclude=frozenset(), unignore=frozenset())
 
 
 def load_cgrignore_patterns(repo_path: Path) -> CgrignorePatterns:
+    """Loads exclusion and inclusion patterns from a .cgrignore file.
+
+    This function reads a file similar to .gitignore to determine which files
+    and directories should be skipped or forcefully included during processing.
+
+    Args:
+        repo_path (Path): The root path of the repository where the .cgrignore
+                          file is located.
+
+    Returns:
+        CgrignorePatterns: A dataclass containing frozensets of exclude and
+                           unignore patterns. Returns empty sets if the file
+                           doesn't exist or an error occurs.
+    """
     ignore_file = repo_path / CGRIGNORE_FILENAME
     if not ignore_file.is_file():
         return EMPTY_CGRIGNORE

@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 import codec.schema_pb2 as pb
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 
 COMPREHENSIVE_PROJECT_FIXTURE: dict[str, str] = {

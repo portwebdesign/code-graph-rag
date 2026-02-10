@@ -3,13 +3,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.data_models.types_defs import NodeType
 from codebase_rag.tests.conftest import (
     get_node_names,
     get_nodes,
     get_qualified_names,
     run_updater,
 )
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture

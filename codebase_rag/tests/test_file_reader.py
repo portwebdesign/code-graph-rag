@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Tool
 
-from codebase_rag import constants as cs
-from codebase_rag.schemas import FileReadResult
+from codebase_rag.core import constants as cs
+from codebase_rag.data_models.schemas import FileReadResult
 from codebase_rag.tools.file_reader import (
     FileReader,
     create_file_reader_tool,

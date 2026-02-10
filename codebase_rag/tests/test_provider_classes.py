@@ -7,7 +7,7 @@ import pytest
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
-from codebase_rag.constants import GoogleProviderType, Provider
+from codebase_rag.core.constants import GoogleProviderType, Provider
 from codebase_rag.providers.base import (
     GoogleProvider,
     ModelProvider,

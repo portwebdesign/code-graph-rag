@@ -2,11 +2,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.core import constants as cs
+from codebase_rag.data_models.types_defs import NodeType
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.js_ts.type_inference import JsTypeInferenceEngine
 from codebase_rag.tests.conftest import MockNode, create_mock_node
-from codebase_rag.types_defs import NodeType
 
 
 def create_js_variable_declarator(

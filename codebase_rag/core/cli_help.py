@@ -1,7 +1,23 @@
+"""
+This module centralizes all help text, descriptions, and command names for the
+command-line interface (CLI), built with Typer.
+
+By defining these strings in one place, it ensures consistency across the CLI
+and makes it easier to update the help messages.
+
+The contents include:
+-   `CLICommandName`: An enumeration of all main CLI commands.
+-   `APP_DESCRIPTION`: The main description for the CLI application.
+-   Command descriptions for each CLI command and subcommand.
+-   Help text for various CLI options and arguments.
+"""
+
 from enum import StrEnum
 
 
 class CLICommandName(StrEnum):
+    """Enumerates the names of the main CLI commands."""
+
     START = "start"
     INDEX = "index"
     EXPORT = "export"
@@ -17,7 +33,9 @@ APP_DESCRIPTION = (
     "multi-language codebases using Tree-sitter, builds comprehensive knowledge "
     "graphs, and enables natural language querying of codebase structure and relationships."
 )
+"""The main description for the CLI application, shown in the help output."""
 
+# --- Command Descriptions ---
 CMD_START = "Start interactive chat session with your codebase"
 CMD_INDEX = "Index codebase to protobuf files for offline use"
 CMD_EXPORT = "Export knowledge graph from Memgraph to JSON file"
@@ -27,12 +45,14 @@ CMD_GRAPH_LOADER = "Load and display summary of exported graph JSON"
 CMD_LANGUAGE = "Manage language grammars (add, remove, list)"
 CMD_DOCTOR = "Verify that all dependencies and configurations are properly set up"
 
+# --- Language Subcommand Descriptions ---
 CMD_LANGUAGE_GROUP = "CLI for managing language grammars"
 CMD_LANGUAGE_ADD = "Add a new language grammar to the project."
 CMD_LANGUAGE_LIST = "List all currently configured languages."
 CMD_LANGUAGE_REMOVE = "Remove a language from the project."
 CMD_LANGUAGE_CLEANUP = "Clean up orphaned git modules that weren't properly removed."
 
+# --- Option Help Texts ---
 HELP_BATCH_SIZE = "Number of buffered nodes/relationships before flushing to Memgraph"
 HELP_MEMGRAPH_HOST = "Memgraph host"
 HELP_MEMGRAPH_PORT = "Memgraph port"
@@ -91,3 +111,4 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DOCTOR: CMD_DOCTOR,
 }
+"""A mapping from CLI command enums to their description strings."""

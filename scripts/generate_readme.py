@@ -28,7 +28,7 @@ def replace_sections(readme_content: str, sections: dict[str, str]) -> str:
 
 
 def main() -> None:
-    from codebase_rag.readme_sections import generate_all_sections
+    from codebase_rag.infrastructure.readme_sections import generate_all_sections
 
     readme_path = PROJECT_ROOT / "README.md"
     readme_content = readme_path.read_text(encoding="utf-8")

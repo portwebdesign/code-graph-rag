@@ -1,6 +1,29 @@
+"""
+This module contains all the prompt templates and builders used to instruct the
+Large Language Models (LLMs) for various tasks.
+
+It defines the system prompts for the main RAG (Retrieval-Augmented Generation)
+orchestrator, the Cypher query generation model, and specific optimization tasks.
+These prompts are crucial for guiding the behavior of the LLMs, providing them with
+context about the available tools, the graph schema, and the rules they must follow.
+
+Key components:
+-   `GRAPH_SCHEMA_AND_RULES`: A detailed description of the graph schema and
+    critical rules for querying it.
+-   `build_rag_orchestrator_prompt()`: Constructs the main system prompt for the
+    orchestrator agent, defining its persona, rules, and tool usage strategies.
+-   `CYPHER_SYSTEM_PROMPT`: A prompt for a powerful model to translate natural
+    language into precise Cypher queries.
+-   `LOCAL_CYPHER_SYSTEM_PROMPT`: A stricter, more simplified prompt for less
+    capable local models to generate Cypher queries.
+-   `OPTIMIZATION_PROMPT`: A prompt to guide an agent in analyzing and proposing
+    code optimizations.
+"""
+
 from typing import TYPE_CHECKING
 
-from .cypher_queries import (
+from codebase_rag.data_models.types_defs import ToolNames
+from codebase_rag.graph_db.cypher_queries import (
     CYPHER_EXAMPLE_CLASS_METHODS,
     CYPHER_EXAMPLE_CONTENT_BY_PATH,
     CYPHER_EXAMPLE_DECORATED_FUNCTIONS,
@@ -12,14 +35,25 @@ from .cypher_queries import (
     CYPHER_EXAMPLE_README,
     CYPHER_EXAMPLE_TASKS,
 )
-from .schema_builder import GRAPH_SCHEMA_DEFINITION
-from .types_defs import ToolNames
+from codebase_rag.graph_db.schema_builder import GRAPH_SCHEMA_DEFINITION
 
 if TYPE_CHECKING:
     from pydantic_ai import Tool
 
 
 def extract_tool_names(tools: list["Tool"]) -> ToolNames:
+    """
+    Extracts standardized tool names from a list of Pydantic AI Tool objects.
+
+    This allows prompts to dynamically reference the correct tool names, even if
+    they are changed in the tool definition.
+
+    Args:
+        tools (list["Tool"]): The list of tool objects.
+
+    Returns:
+        ToolNames: A NamedTuple containing the standardized names of the tools.
+    """
     tool_map = {t.name: t.name for t in tools}
     return ToolNames(
         query_graph=tool_map.get(
@@ -41,9 +75,16 @@ CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
 - **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{name: 'VatManager'}` equality matching.
 - **Use `toLower()` for Searches**: For case-insensitive searching on string properties, use `toLower()`.
 - **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`)."""
+"""A string containing critical rules for generating Cypher queries."""
 
 
 def build_graph_schema_and_rules() -> str:
+    """
+    Combines the graph schema definition and Cypher query rules into a single block.
+
+    Returns:
+        str: The combined text for use in system prompts.
+    """
     return f"""You are an expert AI assistant for analyzing codebases using a **hybrid retrieval system**: a **Memgraph knowledge graph** for structural queries and a **semantic code search engine** for intent-based discovery.
 
 **1. Graph Schema Definition**
@@ -56,9 +97,24 @@ The database contains information about a codebase, structured with the followin
 
 
 GRAPH_SCHEMA_AND_RULES = build_graph_schema_and_rules()
+"""A constant holding the combined graph schema and Cypher rules."""
 
 
 def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
+    """
+    Builds the main system prompt for the RAG orchestrator agent.
+
+    This prompt defines the agent's persona, its core operating principles (e.g.,
+    using only tool-provided information), and detailed strategies for using
+    different tools like semantic search, graph queries, and file reading.
+
+    Args:
+        tools (list["Tool"]): The list of available tools, used to dynamically
+                               insert their names into the prompt.
+
+    Returns:
+        str: The fully constructed system prompt.
+    """
     t = extract_tool_names(tools)
     return f"""You are an expert AI assistant for analyzing codebases. Your answers are based **EXCLUSIVELY** on information retrieved using your tools.
 
@@ -176,6 +232,12 @@ cypher// "What methods does UserService have?" or "Show me methods in UserServic
 **4. Output Format**
 Provide only the Cypher query.
 """
+"""
+System prompt for a powerful LLM to translate natural language into Cypher queries.
+
+This prompt includes the full graph schema, query rules, optimization guidelines,
+and a variety of query patterns and examples to guide the model.
+"""
 
 # (H) Stricter prompt for less capable open-source/local models (e.g., Ollama)
 LOCAL_CYPHER_SYSTEM_PROMPT = f"""
@@ -240,6 +302,13 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
     {CYPHER_EXAMPLE_CLASS_METHODS}
     ```
 """
+"""
+A stricter, more simplified system prompt for generating Cypher queries,
+designed for less capable or local LLMs.
+
+This prompt enforces simpler query patterns, forbids complex clauses like `UNION`,
+and provides very direct examples to ensure reliable output.
+"""
 
 OPTIMIZATION_PROMPT = """
 I want you to analyze my {language} codebase and propose specific optimizations based on best practices.
@@ -254,6 +323,13 @@ Please:
 
 Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
 Remember: Propose changes first, wait for my approval, then implement.
+"""
+"""
+A prompt template for guiding an agent to perform code optimizations.
+
+It instructs the agent to analyze the codebase, propose changes based on best
+practices, and wait for user approval before implementing them. The `{language}`
+placeholder can be filled with the target programming language.
 """
 
 OPTIMIZATION_PROMPT_WITH_REFERENCE = """
@@ -270,4 +346,12 @@ Please:
 
 Start by analyzing the codebase structure and identifying the main areas that could benefit from optimization.
 Remember: Propose changes first, wait for my approval, then implement.
+"""
+"""
+An extended version of the optimization prompt that instructs the agent to use a
+specific reference document for best practices.
+
+This is useful for guiding the agent with a particular style guide or
+optimization manual. The `{language}` and `{reference_document}` placeholders
+can be filled accordingly.
 """

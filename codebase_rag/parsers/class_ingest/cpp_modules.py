@@ -1,3 +1,13 @@
+"""
+This module provides utility functions specifically for handling C++20 modules.
+
+It contains logic to:
+-   Find and parse `export module` and `module` declarations.
+-   Ingest `ModuleInterface` and `ModuleImplementation` nodes into the graph.
+-   Create the appropriate `EXPORTS_MODULE` and `IMPLEMENTS_MODULE` relationships.
+-   Identify classes that are explicitly exported from a module.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,8 +16,8 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
-from ... import constants as cs
-from ... import logs
+from ...core import constants as cs
+from ...core import logs
 from ..utils import safe_decode_text, safe_decode_with_fallback
 from .utils import decode_node_stripped
 
@@ -23,6 +33,17 @@ def ingest_cpp_module_declarations(
     project_name: str,
     ingestor: IngestorProtocol,
 ) -> None:
+    """
+    Finds and ingests C++ module declarations from a file's AST.
+
+    Args:
+        root_node (Node): The root node of the file's AST.
+        module_qn (str): The qualified name of the containing file-as-a-module.
+        file_path (Path): The path to the source file.
+        repo_path (Path): The root path of the repository.
+        project_name (str): The name of the project.
+        ingestor (IngestorProtocol): The data ingestion service.
+    """
     module_declarations = _find_module_declarations(root_node)
 
     for _, decl_text in module_declarations:
@@ -39,6 +60,16 @@ def ingest_cpp_module_declarations(
 
 
 def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
+    """
+    Recursively finds all C++ module declaration nodes in the AST.
+
+    Args:
+        root_node (Node): The node to start the search from.
+
+    Returns:
+        list[tuple[Node, str]]: A list of tuples, each containing the found
+                                node and its decoded text.
+    """
     module_declarations: list[tuple[Node, str]] = []
 
     def find_declarations(node: Node) -> None:
@@ -71,6 +102,7 @@ def _process_export_module(
     project_name: str,
     ingestor: IngestorProtocol,
 ) -> None:
+    """Processes an `export module` declaration."""
     parts = decl_text.split()
     if len(parts) < 3:
         return
@@ -105,6 +137,7 @@ def _process_module_implementation(
     project_name: str,
     ingestor: IngestorProtocol,
 ) -> None:
+    """Processes a `module` implementation declaration."""
     parts = decl_text.split()
     if len(parts) < 2:
         return
@@ -140,6 +173,18 @@ def _process_module_implementation(
 
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:
+    """
+    Finds C++ classes that are exported using the `export` keyword.
+
+    This is a workaround for tree-sitter's parsing of `export class ...` as
+    a function definition with an error node.
+
+    Args:
+        root_node (Node): The root node of the AST to search.
+
+    Returns:
+        list[Node]: A list of AST nodes corresponding to exported classes.
+    """
     exported_class_nodes: list[Node] = []
 
     def traverse(node: Node) -> None:

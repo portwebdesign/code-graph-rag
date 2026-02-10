@@ -9,9 +9,9 @@ from pathlib import Path
 import toml
 from loguru import logger
 
-from codebase_rag import constants as cs
-from codebase_rag import logs
-from codebase_rag.constants import PyInstallerPackage
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs
+from codebase_rag.core.constants import PyInstallerPackage
 
 
 def _get_treesitter_packages() -> list[str]:

@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 from tree_sitter import Language, Parser
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 
 try:
     import tree_sitter_python as tspython
@@ -693,7 +693,7 @@ class TestProcessFile:
         py_file = temp_repo / "example.py"
         py_file.write_text(encoding="utf-8", data="def hello(): pass")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         result = definition_processor.factory.definition_processor.process_file(
             py_file,
@@ -723,7 +723,7 @@ class TestProcessFile:
         init_file = pkg_dir / "__init__.py"
         init_file.write_text(encoding="utf-8", data="# package init")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         result = definition_processor.factory.definition_processor.process_file(
             init_file,
@@ -751,7 +751,7 @@ class TestProcessFile:
         init_file = nested_dir / "__init__.py"
         init_file.write_text(encoding="utf-8", data="# nested package")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         result = definition_processor.factory.definition_processor.process_file(
             init_file,
@@ -778,7 +778,7 @@ class TestProcessFile:
         txt_file = temp_repo / "readme.txt"
         txt_file.write_text(encoding="utf-8", data="Just a text file")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         result = definition_processor.factory.definition_processor.process_file(
             txt_file,
@@ -795,7 +795,7 @@ class TestProcessFile:
         py_file = temp_repo / "root_module.py"
         py_file.write_text(encoding="utf-8", data="x = 1")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         definition_processor.factory.definition_processor.process_file(
             py_file,
@@ -824,7 +824,7 @@ class TestProcessFile:
         py_file = pkg_dir / "module.py"
         py_file.write_text(encoding="utf-8", data="y = 2")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         structural_elements = {Path("mypackage"): "test_project.mypackage"}
 
@@ -854,7 +854,7 @@ class TestProcessFile:
         py_file = folder_dir / "util.py"
         py_file.write_text(encoding="utf-8", data="z = 3")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         definition_processor.factory.definition_processor.process_file(
             py_file,
@@ -880,7 +880,7 @@ class TestProcessFile:
         py_file = temp_repo / "tracked.py"
         py_file.write_text(encoding="utf-8", data="a = 1")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         processor = definition_processor.factory.definition_processor
         processor.process_file(
@@ -915,7 +915,7 @@ def standalone():
 """,
         )
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         result = definition_processor.factory.definition_processor.process_file(
             py_file,
@@ -938,7 +938,7 @@ def standalone():
         py_file = temp_repo / "bad_syntax.py"
         py_file.write_text(encoding="utf-8", data="def broken( x = 1")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         result = definition_processor.factory.definition_processor.process_file(
             py_file,
@@ -955,7 +955,7 @@ def standalone():
         py_file = temp_repo / "empty.py"
         py_file.write_text(encoding="utf-8", data="")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         result = definition_processor.factory.definition_processor.process_file(
             py_file,
@@ -984,7 +984,7 @@ class TestProcessFileRust:
         mod_file = rust_dir / "mod.rs"
         mod_file.write_text(encoding="utf-8", data="pub fn helper() {}")
 
-        from codebase_rag.constants import SupportedLanguage
+        from codebase_rag.core.constants import SupportedLanguage
 
         if SupportedLanguage.RUST not in definition_processor.queries:
             pytest.skip("Rust parser not available")

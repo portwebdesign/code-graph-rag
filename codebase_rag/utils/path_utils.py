@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from .. import constants as cs
+from ..core import constants as cs
 
 
 def should_skip_path(

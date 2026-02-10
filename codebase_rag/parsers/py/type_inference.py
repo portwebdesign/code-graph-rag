@@ -6,13 +6,14 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
-from ... import constants as cs
-from ... import logs as lg
-from ...types_defs import (
+from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     SimpleNameLookup,
 )
+
+from ...core import constants as cs
+from ...core import logs as lg
 from ..import_processor import ImportProcessor
 from .ast_analyzer import PythonAstAnalyzerMixin
 from .expression_analyzer import PythonExpressionAnalyzerMixin

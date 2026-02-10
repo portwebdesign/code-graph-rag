@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from codebase_rag.main import (
+from codebase_rag.core.main import (
     _find_image_paths,
     _get_path_variants,
     _handle_chat_images,

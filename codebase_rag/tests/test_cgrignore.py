@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from codebase_rag.config import (
+from codebase_rag.core.config import (
     CGRIGNORE_FILENAME,
     EMPTY_CGRIGNORE,
     load_cgrignore_patterns,
 )
-from codebase_rag.main import prompt_for_unignored_directories
-from codebase_rag.types_defs import CgrignorePatterns
+from codebase_rag.core.main import prompt_for_unignored_directories
+from codebase_rag.data_models.types_defs import CgrignorePatterns
 
 
 def test_returns_empty_when_no_file(temp_repo: Path) -> None:

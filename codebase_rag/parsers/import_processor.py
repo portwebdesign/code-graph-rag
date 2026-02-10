@@ -1,13 +1,37 @@
+"""
+This module defines the `ImportProcessor`, which is responsible for parsing
+import statements from various programming languages and creating `IMPORTS`
+relationships in the knowledge graph.
+
+It uses language-specific parsing logic to handle the different syntaxes of
+imports (e.g., Python's `import` and `from ... import`, JavaScript's ES6 and
+CommonJS modules, Java's `import static`, etc.). The processor maintains an
+internal `import_mapping` to track which local names correspond to which
+fully qualified names within each module.
+
+Key functionalities:
+-   Parsing import statements from a file's AST.
+-   Resolving relative and absolute import paths.
+-   Handling aliased and wildcard imports.
+-   Differentiating between local project modules and external/standard library modules.
+-   Ingesting `IMPORTS` relationships into the graph database.
+-   Utilizing a `StdlibExtractor` to identify standard library modules.
+"""
+
 from pathlib import Path
 
 from loguru import logger
 from tree_sitter import Node
 
-from .. import constants as cs
-from .. import logs as ls
-from ..language_spec import LanguageSpec
+from codebase_rag.data_models.types_defs import (
+    FunctionRegistryTrieProtocol,
+    LanguageQueries,
+)
+from codebase_rag.infrastructure.language_spec import LanguageSpec
+
+from ..core import constants as cs
+from ..core import logs as ls
 from ..services import IngestorProtocol
-from ..types_defs import FunctionRegistryTrieProtocol, LanguageQueries
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
 from .stdlib_extractor import (
@@ -23,6 +47,10 @@ from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
 
 
 class ImportProcessor:
+    """
+    Parses and processes import statements from source code files.
+    """
+
     def __init__(
         self,
         repo_path: Path,
@@ -30,6 +58,15 @@ class ImportProcessor:
         ingestor: IngestorProtocol | None = None,
         function_registry: FunctionRegistryTrieProtocol | None = None,
     ) -> None:
+        """
+        Initializes the ImportProcessor.
+
+        Args:
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            ingestor (IngestorProtocol | None): The data ingestion service.
+            function_registry (FunctionRegistryTrieProtocol | None): The registry of all known functions.
+        """
         self.repo_path = repo_path
         self.project_name = project_name
         self.ingestor = ingestor
@@ -42,6 +79,7 @@ class ImportProcessor:
         load_persistent_cache()
 
     def __del__(self) -> None:
+        """Saves the persistent cache on object destruction."""
         try:
             save_persistent_cache()
         except Exception:
@@ -49,14 +87,22 @@ class ImportProcessor:
 
     @staticmethod
     def flush_stdlib_cache() -> None:
+        """Flushes the standard library cache to disk."""
         flush_stdlib_cache()
 
     @staticmethod
     def clear_stdlib_cache() -> None:
+        """Clears the standard library cache from disk."""
         clear_stdlib_cache()
 
     @staticmethod
     def get_stdlib_cache_stats() -> StdlibCacheStats:
+        """
+        Gets statistics about the standard library cache.
+
+        Returns:
+            StdlibCacheStats: An object containing cache statistics.
+        """
         return get_stdlib_cache_stats()
 
     def parse_imports(
@@ -66,6 +112,15 @@ class ImportProcessor:
         language: cs.SupportedLanguage,
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
+        """
+        Parses all import statements in a given AST and updates the import mapping.
+
+        Args:
+            root_node (Node): The root node of the file's AST.
+            module_qn (str): The qualified name of the module being processed.
+            language (cs.SupportedLanguage): The language of the source file.
+            queries (dict): A dictionary of tree-sitter queries.
+        """
         if language not in queries:
             return
         imports_query = queries[language]["imports"]
@@ -135,6 +190,7 @@ class ImportProcessor:
             logger.warning(ls.IMP_PARSE_FAILED.format(module=module_qn, error=e))
 
     def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
+        """Parses Python `import` and `from ... import` statements."""
         all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
             cs.CAPTURE_IMPORT_FROM, []
         )
@@ -147,6 +203,7 @@ class ImportProcessor:
     def _handle_python_import_statement(
         self, import_node: Node, module_qn: str
     ) -> None:
+        """Handles a standard Python `import ...` statement."""
         for child in import_node.named_children:
             match child.type:
                 case cs.TS_DOTTED_NAME:
@@ -155,6 +212,7 @@ class ImportProcessor:
                     self._handle_aliased_import(child, module_qn)
 
     def _handle_dotted_name_import(self, child: Node, module_qn: str) -> None:
+        """Handles a `dotted_name` part of a Python import."""
         module_name = safe_decode_text(child) or ""
         local_name = module_name.split(cs.SEPARATOR_DOT)[0]
         full_name = self._resolve_import_full_name(module_name, local_name)
@@ -162,6 +220,7 @@ class ImportProcessor:
         logger.debug(ls.IMP_IMPORT.format(local=local_name, full=full_name))
 
     def _handle_aliased_import(self, child: Node, module_qn: str) -> None:
+        """Handles an `import ... as ...` part of a Python import."""
         module_name_node = child.child_by_field_name(cs.FIELD_NAME)
         alias_node = child.child_by_field_name(cs.FIELD_ALIAS)
         if not module_name_node or not alias_node:
@@ -178,11 +237,13 @@ class ImportProcessor:
         logger.debug(ls.IMP_ALIASED_IMPORT.format(alias=alias, full=full_name))
 
     def _resolve_import_full_name(self, module_name: str, top_level: str) -> str:
+        """Resolves the full name of an imported module, prepending the project name if local."""
         if self._is_local_module(top_level):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
         return module_name
 
     def _is_local_module(self, module_name: str) -> bool:
+        """Checks if a module name corresponds to a local module in the project."""
         return (
             (self.repo_path / module_name).is_dir()
             or (self.repo_path / f"{module_name}{cs.EXT_PY}").is_file()
@@ -190,18 +251,22 @@ class ImportProcessor:
         )
 
     def _is_local_java_import(self, import_path: str) -> bool:
+        """Checks if a Java import path corresponds to a local package."""
         top_level = import_path.split(cs.SEPARATOR_DOT)[0]
         return (self.repo_path / top_level).is_dir()
 
     def _resolve_java_import_path(self, import_path: str) -> str:
+        """Resolves a Java import path, prepending the project name if local."""
         if self._is_local_java_import(import_path):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{import_path}"
         return import_path
 
     def _is_local_js_import(self, full_name: str) -> bool:
+        """Checks if a JavaScript/TypeScript import is internal to the project."""
         return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
 
     def _resolve_js_internal_module(self, full_name: str) -> str:
+        """Resolves the module path for an internal JavaScript/TypeScript import."""
         if full_name.endswith(cs.IMPORT_DEFAULT_SUFFIX):
             return full_name[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
 
@@ -222,9 +287,11 @@ class ImportProcessor:
         return full_name
 
     def _is_local_rust_import(self, import_path: str) -> bool:
+        """Checks if a Rust import path is local (starts with 'crate::')."""
         return import_path.startswith(cs.RUST_CRATE_PREFIX)
 
     def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
+        """Ensures a node exists for an external module."""
         if not self.ingestor or not module_path:
             return
         if cs.SEPARATOR_DOUBLE_COLON in module_path:
@@ -242,6 +309,7 @@ class ImportProcessor:
         )
 
     def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:
+        """Resolves a Rust import path to a module FQN."""
         # (H) crate:: is always relative to the crate root, not the current module.
         # (H) We find the src directory in the qualified name to identify the crate root.
         if self._is_local_rust_import(import_path):
@@ -269,6 +337,17 @@ class ImportProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
     ) -> str:
+        """
+        Resolves the final module path for an import, handling different languages.
+
+        Args:
+            full_name (str): The full name of the imported entity.
+            module_qn (str): The qualified name of the current module.
+            language (cs.SupportedLanguage): The language of the code.
+
+        Returns:
+            str: The resolved module FQN.
+        """
         project_prefix = self.project_name + cs.SEPARATOR_DOT
         match language:
             # (H) Java MODULE semantics: Internal imports point to file-level MODULE
@@ -293,6 +372,7 @@ class ImportProcessor:
     def _handle_python_import_from_statement(
         self, import_node: Node, module_qn: str
     ) -> None:
+        """Handles a Python `from ... import ...` statement."""
         module_name = self._extract_python_from_module_name(import_node, module_qn)
         if not module_name:
             return
@@ -313,6 +393,7 @@ class ImportProcessor:
     def _extract_python_from_module_name(
         self, import_node: Node, module_qn: str
     ) -> str | None:
+        """Extracts the module name from a `from ... import` statement."""
         module_name_node = import_node.child_by_field_name(cs.FIELD_MODULE_NAME)
         if not module_name_node:
             return None
@@ -326,6 +407,7 @@ class ImportProcessor:
     def _extract_python_imported_items(
         self, import_node: Node
     ) -> list[tuple[str, str]]:
+        """Extracts the imported items (and their aliases) from a `from ... import` statement."""
         imported_items: list[tuple[str, str]] = []
 
         for name_node in import_node.children_by_field_name(cs.FIELD_NAME):
@@ -335,6 +417,7 @@ class ImportProcessor:
         return imported_items
 
     def _extract_single_python_import(self, name_node: Node) -> tuple[str, str] | None:
+        """Extracts a single item from a `from ... import` list."""
         if name_node.type == cs.TS_DOTTED_NAME:
             if name := safe_decode_text(name_node):
                 return (name, name)
@@ -349,6 +432,7 @@ class ImportProcessor:
         return None
 
     def _resolve_python_base_module(self, module_name: str) -> str:
+        """Resolves the base module for a `from ... import` statement."""
         if module_name.startswith(self.project_name):
             return module_name
         top_level = module_name.split(cs.SEPARATOR_DOT)[0]
@@ -361,6 +445,7 @@ class ImportProcessor:
         imported_items: list[tuple[str, str]],
         is_wildcard: bool,
     ) -> None:
+        """Registers the resolved names from a `from ... import` statement."""
         if is_wildcard:
             wildcard_key = f"*{base_module}"
             self.import_mapping[module_qn][wildcard_key] = base_module
@@ -373,6 +458,7 @@ class ImportProcessor:
             logger.debug(ls.IMP_FROM_IMPORT.format(local=local_name, full=full_name))
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
+        """Resolves a relative Python import path (e.g., `from . import foo`)."""
         module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
 
         dots = 0
@@ -394,6 +480,7 @@ class ImportProcessor:
         return cs.SEPARATOR_DOT.join(target_parts)
 
     def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
+        """Parses JavaScript/TypeScript `import`, `require`, and `export from` statements."""
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_STATEMENT:
                 source_module = None
@@ -419,6 +506,7 @@ class ImportProcessor:
                 self._parse_js_reexport(import_node, module_qn)
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
+        """Resolves a JavaScript/TypeScript module path."""
         if not import_path.startswith(cs.PATH_CURRENT_DIR):
             return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
 
@@ -439,6 +527,7 @@ class ImportProcessor:
     def _parse_js_import_clause(
         self, clause_node: Node, source_module: str, current_module: str
     ) -> None:
+        """Parses the clause of a JS/TS import statement (e.g., `{ a, b as c }`)."""
         for child in clause_node.children:
             if child.type == cs.TS_IDENTIFIER:
                 imported_name = safe_decode_with_fallback(child)
@@ -487,6 +576,7 @@ class ImportProcessor:
                         break
 
     def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
+        """Parses a CommonJS `require()` call."""
         for declarator in decl_node.children:
             if declarator.type == cs.TS_VARIABLE_DECLARATOR:
                 name_node = declarator.child_by_field_name(cs.FIELD_NAME)
@@ -528,6 +618,7 @@ class ImportProcessor:
                                 break
 
     def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
+        """Parses a JS/TS `export ... from ...` statement."""
         source_module = None
         for child in export_node.children:
             if child.type == cs.TS_STRING:
@@ -569,6 +660,7 @@ class ImportProcessor:
                             )
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
+        """Parses Java `import` and `import static` statements."""
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_IMPORT_DECLARATION:
                 is_static = False
@@ -608,11 +700,13 @@ class ImportProcessor:
                         )
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
+        """Parses Rust `use` statements."""
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_USE_DECLARATION:
                 self._parse_rust_use_declaration(import_node, module_qn)
 
     def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
+        """Parses a single Rust `use` declaration."""
         imports = rs_utils.extract_use_imports(use_node)
 
         for imported_name, full_path in imports.items():
@@ -620,11 +714,13 @@ class ImportProcessor:
             logger.debug(ls.IMP_RUST.format(name=imported_name, path=full_path))
 
     def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
+        """Parses Go `import` statements."""
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_GO_IMPORT_DECLARATION:
                 self._parse_go_import_declaration(import_node, module_qn)
 
     def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:
+        """Parses a Go `import` declaration block."""
         for child in import_node.children:
             if child.type == cs.TS_IMPORT_SPEC:
                 self._parse_go_import_spec(child, module_qn)
@@ -634,6 +730,7 @@ class ImportProcessor:
                         self._parse_go_import_spec(grandchild, module_qn)
 
     def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:
+        """Parses a single Go import specifier."""
         alias_name = None
         import_path = None
 
@@ -649,6 +746,7 @@ class ImportProcessor:
             logger.debug(ls.IMP_GO.format(package=package_name, path=import_path))
 
     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
+        """Parses C++ `#include` and module import statements."""
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_PREPROC_INCLUDE:
                 self._parse_cpp_include(import_node, module_qn)
@@ -658,6 +756,7 @@ class ImportProcessor:
                 self._parse_cpp_module_declaration(import_node, module_qn)
 
     def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
+        """Parses a C++ `#include` directive."""
         include_path = None
         is_system_include = False
 
@@ -698,6 +797,7 @@ class ImportProcessor:
             )
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
+        """Parses a C++20 module `import` statement."""
         identifier_child = None
         template_args_child = None
 
@@ -730,6 +830,7 @@ class ImportProcessor:
                 logger.debug(ls.IMP_CPP_MODULE.format(local=local_name, full=full_name))
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
+        """Parses a C++20 `module` or `export module` declaration."""
         decoded_text = safe_decode_text(decl_node)
         if not decoded_text:
             return
@@ -765,6 +866,7 @@ class ImportProcessor:
     def _register_cpp_module_mapping(
         self, parts: list[str], name_index: int, module_qn: str, log_template: str
     ) -> None:
+        """Registers a mapping for a C++ module declaration."""
         module_name = parts[name_index].rstrip(";")
         self.import_mapping[module_qn][module_name] = (
             f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
@@ -774,6 +876,7 @@ class ImportProcessor:
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageSpec
     ) -> None:
+        """A generic fallback for parsing imports in less-supported languages."""
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             logger.debug(
                 ls.IMP_GENERIC.format(
@@ -782,6 +885,7 @@ class ImportProcessor:
             )
 
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
+        """Parses Lua `require` and `pcall(require, ...)` statements."""
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
             if self._lua_is_require_call(call_node):
                 if module_path := self._lua_extract_require_arg(call_node):
@@ -805,12 +909,14 @@ class ImportProcessor:
                     self.import_mapping[module_qn][stdlib_module] = stdlib_module
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
+        """Checks if a Lua call node is a `require` call."""
         first_child = call_node.children[0] if call_node.children else None
         if first_child and first_child.type == cs.TS_IDENTIFIER:
             return safe_decode_text(first_child) == cs.IMPORT_REQUIRE
         return False
 
     def _lua_is_pcall_require(self, call_node: Node) -> bool:
+        """Checks if a Lua call node is a `pcall(require, ...)` call."""
         first_child = call_node.children[0] if call_node.children else None
         if not (
             first_child
@@ -839,6 +945,7 @@ class ImportProcessor:
         )
 
     def _lua_extract_require_arg(self, call_node: Node) -> str | None:
+        """Extracts the module path argument from a Lua `require` call."""
         args = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         candidates = args.children if args else call_node.children
         for node in candidates:
@@ -848,6 +955,7 @@ class ImportProcessor:
         return None
 
     def _lua_extract_pcall_require_arg(self, call_node: Node) -> str | None:
+        """Extracts the module path from a `pcall(require, ...)` call."""
         args = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         if not args:
             return None
@@ -864,14 +972,17 @@ class ImportProcessor:
         return None
 
     def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
+        """Extracts the left-hand side variable name from an assignment involving a `require` call."""
         return lua_utils.extract_assigned_name(
             call_node, accepted_var_types=(cs.TS_IDENTIFIER,)
         )
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
+        """Extracts the second identifier from the LHS of a `pcall` assignment."""
         return lua_utils.extract_pcall_second_identifier(call_node)
 
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
+        """Resolves a Lua module path to a fully qualified name."""
         if import_path.startswith(cs.PATH_RELATIVE_PREFIX) or import_path.startswith(
             cs.PATH_PARENT_PREFIX
         ):
@@ -904,6 +1015,7 @@ class ImportProcessor:
         return dotted
 
     def _lua_is_stdlib_call(self, call_node: Node) -> bool:
+        """Checks if a Lua call is to a standard library module."""
         if not call_node.children:
             return False
 
@@ -917,6 +1029,7 @@ class ImportProcessor:
         return False
 
     def _lua_extract_stdlib_module(self, call_node: Node) -> str | None:
+        """Extracts the standard library module name from a call node."""
         if not call_node.children:
             return None
 

@@ -6,10 +6,10 @@ import pytest
 import tree_sitter_python as tsp
 from tree_sitter import Language, Parser
 
-from codebase_rag.graph_updater import FunctionRegistryTrie, GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.data_models.types_defs import NodeType
+from codebase_rag.graph_db.graph_updater import FunctionRegistryTrie, GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.import_processor import ImportProcessor
-from codebase_rag.types_defs import NodeType
 
 
 @pytest.fixture
@@ -274,7 +274,7 @@ class TestExternalModuleNodeCreation:
     def test_external_module_name_uses_module_path_not_local_alias(
         self, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag import constants as cs
+        from codebase_rag.core import constants as cs
 
         processor = ImportProcessor(
             repo_path=Path("/tmp/test_project"),
@@ -300,7 +300,7 @@ class TestExternalModuleNodeCreation:
         )
 
     def test_rust_external_module_node_created(self, mock_ingestor: MagicMock) -> None:
-        from codebase_rag import constants as cs
+        from codebase_rag.core import constants as cs
 
         processor = ImportProcessor(
             repo_path=Path("/tmp/test_project"),
@@ -323,7 +323,7 @@ class TestExternalModuleNodeCreation:
     def test_rust_external_module_name_uses_module_path(
         self, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag import constants as cs
+        from codebase_rag.core import constants as cs
 
         processor = ImportProcessor(
             repo_path=Path("/tmp/test_project"),
@@ -437,7 +437,7 @@ class TestProjectPrefixMatching:
     def test_similar_prefix_not_matched_without_dot(
         self, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag import constants as cs
+        from codebase_rag.core import constants as cs
 
         processor = ImportProcessor(
             repo_path=Path("/tmp/myapp"),
@@ -458,7 +458,7 @@ class TestProjectPrefixMatching:
     def test_internal_import_matched_with_dot_separator(
         self, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag import constants as cs
+        from codebase_rag.core import constants as cs
 
         processor = ImportProcessor(
             repo_path=Path("/tmp/myapp"),

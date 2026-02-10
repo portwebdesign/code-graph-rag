@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from codebase_rag.unixcoder import Beam
+from codebase_rag.ai.unixcoder import Beam
 
 
 class TestBeamInit:

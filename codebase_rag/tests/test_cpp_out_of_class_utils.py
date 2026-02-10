@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag import constants as cs
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.core import constants as cs
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.cpp import utils as cpp_utils
 
 

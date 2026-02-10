@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from build_binary import _build_package_args, _get_treesitter_packages
-from codebase_rag.constants import PyInstallerPackage
+from codebase_rag.core.constants import PyInstallerPackage
 
 
 class TestGetTreesitterPackages:

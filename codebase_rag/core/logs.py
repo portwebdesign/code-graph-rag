@@ -1,3 +1,15 @@
+"""
+This module centralizes all logging message templates used throughout the application.
+
+By defining log strings in one place, it ensures consistency in logging and
+simplifies maintenance. The messages are organized by the component or process
+they relate to, such as graph loading, parsing passes, tool execution, and
+database interactions.
+
+These constants are designed to be used with `loguru.logger`'s formatting
+capabilities (e.g., `logger.info(logs.SOME_LOG, value=123)`).
+"""
+
 # (H) Provider logs
 PROVIDER_REGISTERED = "Registered provider: {name}"
 

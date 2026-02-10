@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.constants import SupportedLanguage
+from codebase_rag.core.constants import SupportedLanguage
 from codebase_rag.parsers.handlers import get_handler
 from codebase_rag.parsers.handlers.base import BaseLanguageHandler
 from codebase_rag.parsers.handlers.cpp import CppHandler

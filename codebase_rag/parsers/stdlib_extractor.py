@@ -1,3 +1,22 @@
+"""
+This module provides the `StdlibExtractor` class, which is responsible for
+determining if an imported entity belongs to a standard library for a given
+language.
+
+It uses a combination of heuristics, external tool calls (like `node` or `go`),
+and a persistent cache to make this determination. The goal is to differentiate
+between internal project modules and external dependencies (including standard
+libraries) to correctly build the import graph.
+
+Key functionalities:
+-   A persistent, time-to-live (TTL) cache for storing stdlib check results to
+    avoid repeated, slow external process calls.
+-   Language-specific extraction logic for Python, JavaScript, Go, Rust, C++,
+    Java, and Lua.
+-   Heuristic-based fallbacks for when external tools are not available or fail.
+-   Functions to manage the persistent cache (`load`, `save`, `clear`, `flush`).
+"""
+
 import json
 import time
 from pathlib import Path
@@ -5,12 +24,15 @@ from typing import TypedDict
 
 from loguru import logger
 
-from .. import constants as cs
-from .. import logs as ls
-from ..types_defs import FunctionRegistryTrieProtocol
+from codebase_rag.data_models.types_defs import FunctionRegistryTrieProtocol
+
+from ..core import constants as cs
+from ..core import logs as ls
 
 
 class StdlibCacheStats(TypedDict):
+    """Statistics about the standard library cache."""
+
     cache_entries: int
     cache_languages: list[str]
     total_cached_results: int
@@ -25,6 +47,15 @@ _EXTERNAL_TOOLS: dict[str, bool] = {}
 
 
 def _is_tool_available(tool_name: str) -> bool:
+    """
+    Checks if an external command-line tool is available in the system's PATH.
+
+    Args:
+        tool_name (str): The name of the tool to check (e.g., 'node').
+
+    Returns:
+        bool: True if the tool is available, False otherwise.
+    """
     if tool_name in _EXTERNAL_TOOLS:
         return _EXTERNAL_TOOLS[tool_name]
 
@@ -47,6 +78,16 @@ def _is_tool_available(tool_name: str) -> bool:
 
 
 def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | None:
+    """
+    Retrieves a cached result for a standard library check.
+
+    Args:
+        language (str): The language of the check.
+        full_qualified_name (str): The FQN of the entity being checked.
+
+    Returns:
+        str | None: The cached module path, or None if not in cache or expired.
+    """
     cache_key = f"{language}:{full_qualified_name}"
 
     if cache_key not in _STDLIB_CACHE:
@@ -64,12 +105,21 @@ def _get_cached_stdlib_result(language: str, full_qualified_name: str) -> str | 
 
 
 def _cache_stdlib_result(language: str, full_qualified_name: str, result: str) -> None:
+    """
+    Caches the result of a standard library check.
+
+    Args:
+        language (str): The language of the check.
+        full_qualified_name (str): The FQN of the entity.
+        result (str): The resolved module path to cache.
+    """
     cache_key = f"{language}:{full_qualified_name}"
     _STDLIB_CACHE.setdefault(cache_key, {})[full_qualified_name] = result
     _CACHE_TIMESTAMPS[cache_key] = time.time()
 
 
 def load_persistent_cache() -> None:
+    """Loads the stdlib cache from a persistent file in the user's home directory."""
     try:
         cache_file = Path.home() / cs.IMPORT_CACHE_DIR / cs.IMPORT_CACHE_FILE
         if cache_file.exists():
@@ -83,6 +133,7 @@ def load_persistent_cache() -> None:
 
 
 def save_persistent_cache() -> None:
+    """Saves the current in-memory stdlib cache to a persistent file."""
     try:
         cache_dir = Path.home() / cs.IMPORT_CACHE_DIR
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -103,10 +154,12 @@ def save_persistent_cache() -> None:
 
 
 def flush_stdlib_cache() -> None:
+    """Alias for `save_persistent_cache`."""
     save_persistent_cache()
 
 
 def clear_stdlib_cache() -> None:
+    """Clears the in-memory cache and deletes the persistent cache file."""
     _STDLIB_CACHE.clear()
     _CACHE_TIMESTAMPS.clear()
     try:
@@ -119,6 +172,12 @@ def clear_stdlib_cache() -> None:
 
 
 def get_stdlib_cache_stats() -> StdlibCacheStats:
+    """
+    Retrieves statistics about the current state of the stdlib cache.
+
+    Returns:
+        StdlibCacheStats: A dictionary containing cache statistics.
+    """
     return StdlibCacheStats(
         cache_entries=len(_STDLIB_CACHE),
         cache_languages=list(_STDLIB_CACHE.keys()),
@@ -130,12 +189,24 @@ def get_stdlib_cache_stats() -> StdlibCacheStats:
 
 
 class StdlibExtractor:
+    """
+    Extracts module paths for standard library imports for various languages.
+    """
+
     def __init__(
         self,
         function_registry: FunctionRegistryTrieProtocol | None = None,
         repo_path: Path | None = None,
         project_name: str | None = None,
     ) -> None:
+        """
+        Initializes the StdlibExtractor.
+
+        Args:
+            function_registry (FunctionRegistryTrieProtocol | None): The function registry.
+            repo_path (Path | None): The root path of the repository.
+            project_name (str | None): The name of the project.
+        """
         self.function_registry = function_registry
         self.repo_path = repo_path
         self.project_name = project_name
@@ -145,6 +216,16 @@ class StdlibExtractor:
         full_qualified_name: str,
         language: cs.SupportedLanguage = cs.SupportedLanguage.PYTHON,
     ) -> str:
+        """
+        Extracts the module path for a given FQN and language.
+
+        Args:
+            full_qualified_name (str): The FQN of the imported entity.
+            language (cs.SupportedLanguage): The programming language.
+
+        Returns:
+            str: The resolved module path.
+        """
         if self.function_registry and full_qualified_name in self.function_registry:
             entity_type = self.function_registry[full_qualified_name]
             if entity_type in (cs.ENTITY_CLASS, cs.ENTITY_FUNCTION, cs.ENTITY_METHOD):
@@ -171,6 +252,7 @@ class StdlibExtractor:
                 return self._extract_generic_stdlib_path(full_qualified_name)
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extracts the module path for a Python standard library import."""
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 3:
             return self._resolve_python_entity_module_path(parts, full_qualified_name)
@@ -188,6 +270,7 @@ class StdlibExtractor:
     def _resolve_python_entity_module_path(
         self, parts: list[str], full_qualified_name: str
     ) -> str:
+        """Resolves the module path for a Python entity."""
         module_name = parts[0]
         entity_name = parts[-1]
 
@@ -255,6 +338,7 @@ class StdlibExtractor:
         return result
 
     def _extract_js_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extracts the module path for a JavaScript standard library import."""
         cached_result = _get_cached_stdlib_result(
             cs.SupportedLanguage.JS, full_qualified_name
         )
@@ -269,6 +353,7 @@ class StdlibExtractor:
     def _resolve_js_entity_module_path(
         self, parts: list[str], full_qualified_name: str
     ) -> str:
+        """Resolves the module path for a JavaScript entity using `node`."""
         module_name = parts[0]
         entity_name = parts[-1]
 
@@ -339,6 +424,7 @@ class StdlibExtractor:
         return result
 
     def _extract_go_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extracts the module path for a Go standard library import."""
         parts = full_qualified_name.split(cs.SEPARATOR_SLASH)
         if len(parts) >= 2:
             try:
@@ -470,6 +556,7 @@ func main() {
         return full_qualified_name
 
     def _extract_rust_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extracts the module path for a Rust standard library import."""
         parts = full_qualified_name.split(cs.SEPARATOR_DOUBLE_COLON)
         if len(parts) >= 2:
             entity_name = parts[-1]
@@ -484,6 +571,7 @@ func main() {
         return full_qualified_name
 
     def _extract_cpp_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extracts the module path for a C++ standard library import."""
         parts = full_qualified_name.split(cs.SEPARATOR_DOUBLE_COLON)
         if len(parts) >= 2:
             namespace = parts[0]
@@ -551,6 +639,7 @@ int main() {{
         return full_qualified_name
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extracts the module path for a Java standard library import."""
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             try:
@@ -680,6 +769,7 @@ public class StdlibCheck {
         return full_qualified_name
 
     def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
+        """Extracts the module path for a Lua standard library import."""
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             module_name = parts[0]
@@ -756,6 +846,7 @@ end
         return full_qualified_name
 
     def _extract_generic_stdlib_path(self, full_qualified_name: str) -> str:
+        """A generic fallback for extracting a module path based on capitalization."""
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             entity_name = parts[-1]

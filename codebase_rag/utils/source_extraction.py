@@ -5,8 +5,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from .. import logs as ls
-from ..constants import ENCODING_UTF8
+from codebase_rag.core.constants import ENCODING_UTF8
+
+from ..core import logs as ls
 
 
 def extract_source_lines(

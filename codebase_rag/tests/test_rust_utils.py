@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.rs.utils import (
     build_module_path,
     extract_impl_target,
@@ -323,7 +323,7 @@ class TestRustImportsIntegration:
     def test_imports_create_relationships(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag.graph_updater import GraphUpdater
+        from codebase_rag.graph_db.graph_updater import GraphUpdater
 
         test_file = temp_repo / "lib.rs"
         test_file.write_text(
@@ -362,7 +362,7 @@ fn main() {
     def test_complex_nested_imports_integration(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag.graph_updater import GraphUpdater
+        from codebase_rag.graph_db.graph_updater import GraphUpdater
 
         test_file = temp_repo / "complex.rs"
         test_file.write_text(
@@ -418,7 +418,7 @@ fn process() {
     def test_impl_methods_have_correct_qualified_names(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag.graph_updater import GraphUpdater
+        from codebase_rag.graph_db.graph_updater import GraphUpdater
 
         test_file = temp_repo / "structs.rs"
         test_file.write_text(
@@ -471,7 +471,7 @@ impl User {
     def test_wildcard_imports_tracked(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag.graph_updater import GraphUpdater
+        from codebase_rag.graph_db.graph_updater import GraphUpdater
 
         test_file = temp_repo / "wildcards.rs"
         test_file.write_text(
@@ -508,7 +508,7 @@ fn use_wildcards() {}
     def test_aliased_imports_tracked(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:
-        from codebase_rag.graph_updater import GraphUpdater
+        from codebase_rag.graph_db.graph_updater import GraphUpdater
 
         test_file = temp_repo / "aliases.rs"
         test_file.write_text(

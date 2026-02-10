@@ -1,10 +1,28 @@
+"""
+This module defines the `JavaTypeResolverMixin`, a component responsible for
+resolving Java type names to their fully qualified names (FQNs).
+
+Java's type system, with its packages, imports (including wildcards), and nested
+classes, requires specific logic for accurate resolution. This mixin encapsulates
+that logic.
+
+Key functionalities:
+-   Resolving a simple type name (e.g., `String`, `MyClass`) to its FQN
+    (e.g., `java.lang.String`, `com.mycompany.MyClass`).
+-   Handling primitive types, wrapper types, and arrays.
+-   Using the current module's import map to resolve types.
+-   Searching within the same package for unresolved types.
+-   Traversing the AST to find superclass and interface FQNs for a given class.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from ... import constants as cs
-from ...types_defs import ASTNode, NodeType
+from codebase_rag.data_models.types_defs import ASTNode, NodeType
+
+from ...core import constants as cs
 from .utils import (
     find_package_start_index,
     get_class_context_from_qn,
@@ -15,11 +33,19 @@ from .utils import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ...types_defs import ASTCacheProtocol, FunctionRegistryTrieProtocol
+    from codebase_rag.data_models.types_defs import (
+        ASTCacheProtocol,
+        FunctionRegistryTrieProtocol,
+    )
+
     from ..import_processor import ImportProcessor
 
 
 class JavaTypeResolverMixin:
+    """
+    A mixin providing methods to resolve Java type names to their FQNs.
+    """
+
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
     module_qn_to_file_path: dict[str, Path]
@@ -27,6 +53,7 @@ class JavaTypeResolverMixin:
     _fqn_to_module_qn: dict[str, list[str]]
 
     def _module_qn_to_java_fqn(self, module_qn: str) -> str | None:
+        """Converts an internal module FQN to a Java-style FQN."""
         parts = module_qn.split(cs.SEPARATOR_DOT)
         package_start_idx = find_package_start_index(parts)
         if package_start_idx is None:
@@ -37,6 +64,7 @@ class JavaTypeResolverMixin:
     def _calculate_module_distance(
         self, candidate_qn: str, caller_module_qn: str
     ) -> int:
+        """Calculates a 'distance' score between two module FQNs."""
         caller_parts = caller_module_qn.split(cs.SEPARATOR_DOT)
         candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
 
@@ -63,6 +91,7 @@ class JavaTypeResolverMixin:
         class_qn: str,
         current_module_qn: str | None,
     ) -> list[str]:
+        """Ranks potential module candidates based on their relevance to the current context."""
         if not candidates or not current_module_qn:
             return candidates
 
@@ -84,6 +113,7 @@ class JavaTypeResolverMixin:
         return [candidate for _, candidate in ranked]
 
     def _find_registry_entries_under(self, prefix: str) -> Iterable[tuple[str, str]]:
+        """Finds all entries in the function registry that start with a given prefix."""
         finder = getattr(self.function_registry, cs.METHOD_FIND_WITH_PREFIX, None)
         if callable(finder):
             if matches := list(finder(prefix)):
@@ -101,6 +131,16 @@ class JavaTypeResolverMixin:
         return []
 
     def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
+        """
+        Resolves a Java type name to its fully qualified name.
+
+        Args:
+            type_name (str): The simple or partially qualified type name.
+            module_qn (str): The FQN of the module where the type is used.
+
+        Returns:
+            str: The resolved fully qualified name.
+        """
         if not type_name:
             return cs.JAVA_TYPE_OBJECT
 
@@ -136,6 +176,15 @@ class JavaTypeResolverMixin:
         return type_name
 
     def _get_superclass_name(self, class_qn: str) -> str | None:
+        """
+        Retrieves the fully qualified name of the superclass for a given class.
+
+        Args:
+            class_qn (str): The FQN of the class to check.
+
+        Returns:
+            str | None: The FQN of the superclass, or None if not found.
+        """
         ctx = get_class_context_from_qn(
             class_qn, self.module_qn_to_file_path, self.ast_cache
         )
@@ -149,6 +198,7 @@ class JavaTypeResolverMixin:
     def _find_superclass_using_ast(
         self, node: ASTNode, target_class_name: str, module_qn: str
     ) -> str | None:
+        """Recursively searches the AST for a class and extracts its superclass."""
         if node.type == cs.TS_CLASS_DECLARATION:
             if (
                 name_node := node.child_by_field_name(cs.FIELD_NAME)
@@ -168,6 +218,7 @@ class JavaTypeResolverMixin:
         return None
 
     def _extract_type_name_from_node(self, parent_node: ASTNode) -> str | None:
+        """Extracts a type name from a `generic_type` or `type_identifier` node."""
         for child in parent_node.children:
             if child.type == cs.TS_GENERIC_TYPE:
                 for subchild in child.children:
@@ -178,6 +229,15 @@ class JavaTypeResolverMixin:
         return None
 
     def _get_implemented_interfaces(self, class_qn: str) -> list[str]:
+        """
+        Retrieves the FQNs of all interfaces implemented by a given class.
+
+        Args:
+            class_qn (str): The FQN of the class.
+
+        Returns:
+            list[str]: A list of FQNs of the implemented interfaces.
+        """
         parts = class_qn.split(cs.SEPARATOR_DOT)
         if len(parts) < 2:
             return []
@@ -196,6 +256,7 @@ class JavaTypeResolverMixin:
     def _find_interfaces_using_ast(
         self, node: ASTNode, target_class_name: str, module_qn: str
     ) -> list[str]:
+        """Recursively searches the AST for a class and extracts its implemented interfaces."""
         if node.type == cs.TS_CLASS_DECLARATION:
             if (
                 name_node := node.child_by_field_name(cs.FIELD_NAME)
@@ -218,6 +279,7 @@ class JavaTypeResolverMixin:
     def _extract_interface_names(
         self, interfaces_node: ASTNode, interface_list: list[str], module_qn: str
     ) -> None:
+        """Extracts interface names from an `implements` clause node."""
         for child in interfaces_node.children:
             if child.type == cs.TS_TYPE_IDENTIFIER:
                 if interface_name := safe_decode_text(child):
@@ -229,6 +291,15 @@ class JavaTypeResolverMixin:
                 self._extract_interface_names(child, interface_list, module_qn)
 
     def _get_current_class_name(self, module_qn: str) -> str | None:
+        """
+        Gets the FQN of the primary class defined in a module.
+
+        Args:
+            module_qn (str): The FQN of the module.
+
+        Returns:
+            str | None: The FQN of the primary class, or None.
+        """
         root_node = get_root_node_from_module_qn(
             module_qn, self.module_qn_to_file_path, self.ast_cache
         )
@@ -243,6 +314,7 @@ class JavaTypeResolverMixin:
     def _traverse_for_class_declarations(
         self, node: ASTNode, class_names: list[str]
     ) -> None:
+        """Recursively traverses the AST to find all class declaration names."""
         match node.type:
             case (
                 cs.TS_CLASS_DECLARATION

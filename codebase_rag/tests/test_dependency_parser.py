@@ -3,7 +3,7 @@ from pathlib import Path
 
 import toml
 
-from codebase_rag.models import Dependency
+from codebase_rag.data_models.models import Dependency
 from codebase_rag.parsers.dependency_parser import (
     CargoTomlParser,
     ComposerJsonParser,

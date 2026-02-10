@@ -1,13 +1,31 @@
+"""
+This module defines the `ProcessorFactory`, a class responsible for creating
+and providing access to the various processors used in the parsing pipeline.
+
+It uses lazy initialization for each processor, meaning a processor is only
+instantiated the first time it is requested. This factory ensures that all
+processors share the same context, such as the project path, ingestor, and
+shared data structures like the function registry.
+
+The factory provides access to:
+-   `ImportProcessor`
+-   `StructureProcessor`
+-   `DefinitionProcessor`
+-   `TypeInferenceEngine`
+-   `CallProcessor`
+"""
+
 from pathlib import Path
 
-from ..constants import SupportedLanguage
-from ..services import IngestorProtocol
-from ..types_defs import (
+from codebase_rag.core.constants import SupportedLanguage
+from codebase_rag.data_models.types_defs import (
     ASTCacheProtocol,
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     SimpleNameLookup,
 )
+
+from ..services import IngestorProtocol
 from .call_processor import CallProcessor
 from .definition_processor import DefinitionProcessor
 from .import_processor import ImportProcessor
@@ -16,6 +34,13 @@ from .type_inference import TypeInferenceEngine
 
 
 class ProcessorFactory:
+    """
+    A factory for creating and managing parser processor instances.
+
+    This class ensures that processors are created with shared context and are
+    lazily instantiated upon first access.
+    """
+
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -28,6 +53,20 @@ class ProcessorFactory:
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
     ) -> None:
+        """
+        Initializes the ProcessorFactory.
+
+        Args:
+            ingestor (IngestorProtocol): The data ingestion service.
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            queries (dict): A dictionary of tree-sitter queries for each language.
+            function_registry (FunctionRegistryTrieProtocol): The shared function registry.
+            simple_name_lookup (SimpleNameLookup): The shared simple name lookup map.
+            ast_cache (ASTCacheProtocol): The shared AST cache.
+            unignore_paths (frozenset[str] | None): Paths to include even if ignored.
+            exclude_paths (frozenset[str] | None): Paths to exclude from processing.
+        """
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -48,6 +87,12 @@ class ProcessorFactory:
 
     @property
     def import_processor(self) -> ImportProcessor:
+        """
+        Lazily initializes and returns the `ImportProcessor`.
+
+        Returns:
+            ImportProcessor: The singleton instance of the import processor.
+        """
         if self._import_processor is None:
             self._import_processor = ImportProcessor(
                 repo_path=self.repo_path,
@@ -59,6 +104,12 @@ class ProcessorFactory:
 
     @property
     def structure_processor(self) -> StructureProcessor:
+        """
+        Lazily initializes and returns the `StructureProcessor`.
+
+        Returns:
+            StructureProcessor: The singleton instance of the structure processor.
+        """
         if self._structure_processor is None:
             self._structure_processor = StructureProcessor(
                 ingestor=self.ingestor,
@@ -72,6 +123,12 @@ class ProcessorFactory:
 
     @property
     def definition_processor(self) -> DefinitionProcessor:
+        """
+        Lazily initializes and returns the `DefinitionProcessor`.
+
+        Returns:
+            DefinitionProcessor: The singleton instance of the definition processor.
+        """
         if self._definition_processor is None:
             self._definition_processor = DefinitionProcessor(
                 ingestor=self.ingestor,
@@ -86,6 +143,12 @@ class ProcessorFactory:
 
     @property
     def type_inference(self) -> TypeInferenceEngine:
+        """
+        Lazily initializes and returns the `TypeInferenceEngine`.
+
+        Returns:
+            TypeInferenceEngine: The singleton instance of the type inference engine.
+        """
         if self._type_inference is None:
             self._type_inference = TypeInferenceEngine(
                 import_processor=self.import_processor,
@@ -102,6 +165,12 @@ class ProcessorFactory:
 
     @property
     def call_processor(self) -> CallProcessor:
+        """
+        Lazily initializes and returns the `CallProcessor`.
+
+        Returns:
+            CallProcessor: The singleton instance of the call processor.
+        """
         if self._call_processor is None:
             self._call_processor = CallProcessor(
                 ingestor=self.ingestor,

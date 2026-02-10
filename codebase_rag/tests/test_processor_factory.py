@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.call_processor import CallProcessor
 from codebase_rag.parsers.definition_processor import DefinitionProcessor
 from codebase_rag.parsers.import_processor import ImportProcessor
@@ -377,7 +377,7 @@ class TestSharedState:
     def test_function_registry_is_shared_across_processors(
         self, factory: ProcessorFactory
     ) -> None:
-        from codebase_rag.types_defs import NodeType
+        from codebase_rag.data_models.types_defs import NodeType
 
         import_proc = factory.import_processor
         definition_proc = factory.definition_processor

@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from codebase_rag.constants import SEPARATOR_DOT
+from codebase_rag.core.constants import SEPARATOR_DOT
 from codebase_rag.tests.conftest import get_nodes, run_updater
 
 if TYPE_CHECKING:
     from unittest.mock import MagicMock
 
-    from codebase_rag.types_defs import PropertyDict
+    from codebase_rag.data_models.types_defs import PropertyDict
 
 
 def _get_line_span(props: PropertyDict) -> int:

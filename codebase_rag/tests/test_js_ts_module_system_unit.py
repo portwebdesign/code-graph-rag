@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from codebase_rag import constants as cs
+from codebase_rag.core import constants as cs
 from codebase_rag.parsers.js_ts.module_system import JsTsModuleSystemMixin
 from codebase_rag.tests.conftest import create_mock_node
 

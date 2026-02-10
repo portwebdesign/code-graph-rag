@@ -2,9 +2,14 @@ from collections.abc import Callable
 
 from loguru import logger
 
-from ... import constants as cs
-from ... import logs as ls
-from ...types_defs import ASTNode, FunctionRegistryTrieProtocol, NodeType
+from codebase_rag.data_models.types_defs import (
+    ASTNode,
+    FunctionRegistryTrieProtocol,
+    NodeType,
+)
+
+from ...core import constants as cs
+from ...core import logs as ls
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
 from . import utils as ut

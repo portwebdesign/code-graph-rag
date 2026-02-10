@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from codebase_rag.constants import (
+from codebase_rag.core.constants import (
     CPP_EXTENSIONS,
     CS_EXTENSIONS,
     GO_EXTENSIONS,
@@ -20,11 +20,11 @@ from codebase_rag.constants import (
     SupportedLanguage,
     UniqueKeyType,
 )
-from codebase_rag.language_spec import (
+from codebase_rag.data_models.types_defs import NodeType
+from codebase_rag.infrastructure.language_spec import (
     LANGUAGE_SPECS,
     get_language_for_extension,
 )
-from codebase_rag.types_defs import NodeType
 
 
 class TestSupportedLanguageCoverage:

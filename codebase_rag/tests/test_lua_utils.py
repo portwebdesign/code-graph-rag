@@ -1,8 +1,8 @@
 import pytest
 from tree_sitter import Node, Parser
 
-from codebase_rag.constants import SupportedLanguage
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.core.constants import SupportedLanguage
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.lua.utils import (
     extract_assigned_name,
     extract_pcall_second_identifier,

@@ -7,8 +7,8 @@ from tempfile import NamedTemporaryFile
 
 import pytest
 
-from codebase_rag.graph_loader import GraphLoader, load_graph
-from codebase_rag.types_defs import GraphData
+from codebase_rag.data_models.types_defs import GraphData
+from codebase_rag.graph_db.graph_loader import GraphLoader, load_graph
 
 
 def create_test_graph() -> GraphData:

@@ -9,9 +9,9 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from codebase_rag import cli_help as ch
-from codebase_rag import logs
-from codebase_rag.constants import (
+from codebase_rag.core import cli_help as ch
+from codebase_rag.core import logs
+from codebase_rag.core.constants import (
     DEFAULT_NAME,
     KEY_EXPORTED_AT,
     KEY_METADATA,
@@ -22,8 +22,8 @@ from codebase_rag.constants import (
     KEY_TOTAL_RELATIONSHIPS,
     NodeLabel,
 )
-from codebase_rag.graph_loader import GraphLoader, load_graph
-from codebase_rag.types_defs import GraphSummary
+from codebase_rag.data_models.types_defs import GraphSummary
+from codebase_rag.graph_db.graph_loader import GraphLoader, load_graph
 
 
 def log_summary(summary: GraphSummary) -> None:

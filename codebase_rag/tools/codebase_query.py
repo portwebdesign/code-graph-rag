@@ -1,3 +1,16 @@
+"""
+This module defines a factory function for creating a `pydantic-ai` tool that
+allows an LLM agent to query the codebase knowledge graph using natural language.
+
+The tool takes a natural language query, uses a `CypherGenerator` to translate
+it into a Cypher query, executes the query against the graph database, and then
+formats the results into a structured `QueryGraphData` object. It also prints a
+user-friendly table of the results to the console.
+
+This tool is a primary interface for the agent to explore the structural
+relationships within the codebase.
+"""
+
 from __future__ import annotations
 
 from loguru import logger
@@ -6,16 +19,17 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from .. import exceptions as ex
-from .. import logs as ls
-from ..constants import (
+from codebase_rag.core.constants import (
     QUERY_NOT_AVAILABLE,
     QUERY_RESULTS_PANEL_TITLE,
     QUERY_SUMMARY_DB_ERROR,
     QUERY_SUMMARY_SUCCESS,
     QUERY_SUMMARY_TRANSLATION_FAILED,
 )
-from ..schemas import QueryGraphData
+from codebase_rag.data_models.schemas import QueryGraphData
+
+from ..core import logs as ls
+from ..infrastructure import exceptions as ex
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
 from . import tool_descriptions as td
@@ -26,12 +40,37 @@ def create_query_tool(
     cypher_gen: CypherGenerator,
     console: Console | None = None,
 ) -> Tool:
+    """
+    Factory function to create a `pydantic-ai` Tool for querying the knowledge graph.
+
+    Args:
+        ingestor (QueryProtocol): The service for executing queries against the database.
+        cypher_gen (CypherGenerator): The service for generating Cypher from natural language.
+        console (Console | None): An optional Rich console instance for printing results.
+
+    Returns:
+        Tool: An initialized `pydantic-ai` Tool.
+    """
     if console is None:
         console = Console(width=None, force_terminal=True)
 
     async def query_codebase_knowledge_graph(
         natural_language_query: str,
     ) -> QueryGraphData:
+        """
+        Queries the codebase knowledge graph using a natural language question.
+
+        This function translates the natural language query to Cypher, executes it,
+        and returns the results in a structured format. It also prints a table of
+        the results to the console.
+
+        Args:
+            natural_language_query (str): The question about the codebase in plain English.
+
+        Returns:
+            QueryGraphData: An object containing the Cypher query used, the raw results,
+                            and a summary of the operation.
+        """
         logger.info(ls.TOOL_QUERY_RECEIVED.format(query=natural_language_query))
         cypher_query = QUERY_NOT_AVAILABLE
         try:

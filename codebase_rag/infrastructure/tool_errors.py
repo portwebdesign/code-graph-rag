@@ -1,3 +1,16 @@
+"""
+This module centralizes all error message constants used by the LLM agent's tools.
+
+By defining error messages in one place, it ensures consistency across the
+application and simplifies maintenance. The messages are organized by the tool or
+operation they relate to, such as file operations, shell commands, and document
+analysis.
+
+Each constant represents a specific error scenario, and they are formatted as
+strings that can be used with `str.format()` to include dynamic information like
+file paths or command names.
+"""
+
 from __future__ import annotations
 
 # (H) Generic error wrapper

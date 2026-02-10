@@ -1,8 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from codebase_rag.data_models.types_defs import NodeType
 from codebase_rag.tests.conftest import run_updater
-from codebase_rag.types_defs import NodeType
 
 
 def test_lua_arithmetic_metamethods(temp_repo: Path, mock_ingestor: MagicMock) -> None:

@@ -1,3 +1,22 @@
+"""
+Main Command Line Interface (CLI) entry point for the Graph-Code RAG system.
+
+This module defines the CLI commands and arguments using the `typer` library.
+It serves as the user-facing interface that delegates actual execution to core
+logic components.
+
+Key Responsibilities:
+- Command Definitions: Defines commands like `start`, `index`, `export`, `optimize`.
+- Argument Parsing: Handles CLI arguments and options using Typer.
+- Configuration Integration: Updates global settings in `config.py` based on user input.
+- Execution Delegation: Calls async functions in `main.py` (e.g., `main_async`) to perform tasks.
+
+Dependencies:
+- `typer`: Used for CLI construction.
+- `codebase_rag.main`: Contains the core application logic and workflows.
+- `codebase_rag.config`: Manages application configuration and environment variables.
+"""
+
 import asyncio
 from pathlib import Path
 
@@ -6,11 +25,16 @@ from loguru import logger
 from rich.panel import Panel
 from rich.table import Table
 
-from . import cli_help as ch
-from . import constants as cs
-from . import logs as ls
+from codebase_rag.core import cli_help as ch
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
+from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.tools.health_checker import HealthChecker
+from codebase_rag.tools.language import cli as language_cli
+
 from .config import load_cgrignore_patterns, settings
-from .graph_updater import GraphUpdater
 from .main import (
     app_context,
     connect_memgraph,
@@ -21,10 +45,6 @@ from .main import (
     style,
     update_model_settings,
 )
-from .parser_loader import load_parsers
-from .services.protobuf_service import ProtobufFileIngestor
-from .tools.health_checker import HealthChecker
-from .tools.language import cli as language_cli
 
 app = typer.Typer(
     name="code-graph-rag",
@@ -35,6 +55,7 @@ app = typer.Typer(
 
 
 def validate_models_early() -> None:
+    """Validates that the active orchestrator and cypher models have valid API keys."""
     try:
         orchestrator_config = settings.active_orchestrator_config
         orchestrator_config.validate_api_key(cs.ModelRole.ORCHESTRATOR)
@@ -47,6 +68,12 @@ def validate_models_early() -> None:
 
 
 def _update_and_validate_models(orchestrator: str | None, cypher: str | None) -> None:
+    """Updates model settings based on CLI arguments and validates them.
+
+    Args:
+        orchestrator (str | None): The orchestrator model string from the CLI.
+        cypher (str | None): The cypher model string from the CLI.
+    """
     try:
         update_model_settings(orchestrator, cypher)
     except ValueError as e:
@@ -66,6 +93,12 @@ def _global_options(
         is_eager=True,
     ),
 ) -> None:
+    """
+    Global CLI callback to handle common options like 'quiet' mode.
+
+    Args:
+        quiet (bool): If True, suppresses non-error output.
+    """
     settings.QUIET = quiet
     if quiet:
         logger.remove()
@@ -73,6 +106,11 @@ def _global_options(
 
 
 def _info(msg: str) -> None:
+    """Wrapper to print messages to the console only if quiet mode is disabled.
+
+    Args:
+        msg (str): The message to print.
+    """
     if not settings.QUIET:
         app_context.console.print(msg)
 
@@ -130,6 +168,23 @@ def start(
         help=ch.HELP_INTERACTIVE_SETUP,
     ),
 ) -> None:
+    """
+    Starts the main application workflow.
+
+    Can update the graph for a repository or start the interactive chat/RAG session.
+
+    Args:
+        repo_path (str | None): Path to the repository (defaults to current target).
+        update_graph (bool): Whether to parse and update the graph database.
+        clean (bool): Whether to clean the database before updating.
+        output (str | None): Optional path to export the graph after update.
+        orchestrator (str | None): Override orchestrator model provider.
+        cypher (str | None): Override cypher generation model provider.
+        no_confirm (bool): Skip confirmation prompts.
+        batch_size (int | None): Batch size for database operations.
+        exclude (list[str] | None): List of patterns to exclude from parsing.
+        interactive_setup (bool): Whether to run interactive setup for exclusions.
+    """
     app_context.session.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
@@ -223,6 +278,16 @@ def index(
         help=ch.HELP_INTERACTIVE_SETUP,
     ),
 ) -> None:
+    """
+    Indexes the repository and generates a Protobuf representation.
+
+    Args:
+        repo_path (str | None): Path to the repository to index.
+        output_proto_dir (str): Directory to save the generated protobuf files.
+        split_index (bool): Whether to split the index into multiple files.
+        exclude (list[str] | None): List of patterns to exclude.
+        interactive_setup (bool): Whether to run interactive setup.
+    """
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
     repo_to_index = Path(target_repo_path)
     _info(style(cs.CLI_MSG_INDEXING_AT.format(path=repo_to_index), cs.Color.GREEN))
@@ -272,6 +337,14 @@ def export(
         help=ch.HELP_BATCH_SIZE,
     ),
 ) -> None:
+    """
+    Exports the current graph database to a file.
+
+    Args:
+        output (str): Output file path.
+        format_json (bool): Whether to export in JSON format (currently the only supported format).
+        batch_size (int | None): Batch size for fetching data during export.
+    """
     if not format_json:
         app_context.console.print(style(cs.CLI_ERR_ONLY_JSON, cs.Color.RED))
         raise typer.Exit(1)
@@ -331,6 +404,18 @@ def optimize(
         help=ch.HELP_BATCH_SIZE,
     ),
 ) -> None:
+    """
+    Runs optimization analytics or transformations on the code.
+
+    Args:
+        language (str): Target programming language for optimization.
+        repo_path (str | None): Path to the repository.
+        reference_document (str | None): Path to a reference document/guideline.
+        orchestrator (str | None): Override orchestrator model.
+        cypher (str | None): Override cypher model.
+        no_confirm (bool): Skip confirmations.
+        batch_size (int | None): Database batch size.
+    """
     app_context.session.confirm_edits = not no_confirm
 
     target_repo_path = repo_path or settings.TARGET_REPO_PATH
@@ -358,6 +443,11 @@ def optimize(
 
 @app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
 def mcp_server() -> None:
+    """
+    Starts the Model Context Protocol (MCP) server.
+
+    Allows integration with IDEs and other tools that support MCP.
+    """
     try:
         from codebase_rag.mcp import main as mcp_main
 
@@ -380,6 +470,12 @@ def mcp_server() -> None:
 def graph_loader_command(
     graph_file: str = typer.Argument(..., help=ch.HELP_GRAPH_FILE),
 ) -> None:
+    """
+    Loads a graph file and displays the summary.
+
+    Args:
+        graph_file (str): Path to the graph file to load.
+    """
     from .graph_loader import load_graph
 
     try:
@@ -414,11 +510,24 @@ def graph_loader_command(
     context_settings={"allow_extra_args": True, "allow_interspersed_args": False},
 )
 def language_command(ctx: typer.Context) -> None:
+    """
+    Sub-command for language-specific operations.
+
+    Delegates to the language tool CLI.
+
+    Args:
+        ctx (typer.Context): The Typer context, containing extra arguments.
+    """
     language_cli(ctx.args, standalone_mode=False)
 
 
 @app.command(name=ch.CLICommandName.DOCTOR, help=ch.CMD_DOCTOR)
 def doctor() -> None:
+    """
+    Runs health checks for the environment and configuration.
+
+    Verifies dependencies, connections, and required settings.
+    """
     checker = HealthChecker()
     results = checker.run_all_checks()
 

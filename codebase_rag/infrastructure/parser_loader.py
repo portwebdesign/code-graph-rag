@@ -1,3 +1,26 @@
+"""
+This module is responsible for loading tree-sitter parsers and queries for
+various programming languages.
+
+It dynamically loads the necessary language grammars, either from pre-installed
+`tree-sitter` packages or by attempting to build them from git submodules if
+they are not found. This allows the application to support multiple languages
+for parsing without requiring all grammars to be installed beforehand.
+
+Key functionalities include:
+-   Dynamically importing or building tree-sitter language bindings.
+-   Creating `tree-sitter.Language` and `tree-sitter.Parser` objects for each
+    supported language.
+-   Constructing language-specific `tree-sitter.Query` objects for identifying
+    key code structures like functions, classes, calls, and imports based on
+    definitions in `language_spec.py`.
+-   Handling failures gracefully by logging issues and skipping languages that
+    cannot be loaded.
+
+The main entry point is the `load_parsers()` function, which returns dictionaries
+of initialized parsers and queries, ready to be used for code analysis.
+"""
+
 import importlib
 import subprocess
 import sys
@@ -7,14 +30,31 @@ from pathlib import Path
 from loguru import logger
 from tree_sitter import Language, Parser, Query
 
-from . import constants as cs
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
+from codebase_rag.data_models.types_defs import (
+    LanguageImport,
+    LanguageLoader,
+    LanguageQueries,
+)
+
 from . import exceptions as ex
-from . import logs as ls
 from .language_spec import LANGUAGE_SPECS, LanguageSpec
-from .types_defs import LanguageImport, LanguageLoader, LanguageQueries
 
 
 def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
+    """Attempts to load a tree-sitter language grammar from a git submodule.
+
+    This function is a fallback for when a language grammar is not installed as a
+    standard Python package. It looks for the grammar in the `grammars/` directory,
+    tries to build the C bindings if necessary, and then loads it.
+
+    Args:
+        lang_name (cs.SupportedLanguage): The name of the language to load.
+
+    Returns:
+        LanguageLoader: A loader function for the language, or None if it fails.
+    """
     submodule_path = Path(cs.GRAMMARS_DIR) / f"{cs.TREE_SITTER_PREFIX}{lang_name}"
     python_bindings_path = (
         submodule_path / cs.BINDINGS_DIR / cs.SupportedLanguage.PYTHON
@@ -85,6 +125,16 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 def _try_import_language(
     module_path: str, attr_name: str, lang_name: cs.SupportedLanguage
 ) -> LanguageLoader:
+    """Tries to import a language from a standard package, falling back to submodule loading.
+
+    Args:
+        module_path (str): The Python module path (e.g., 'tree_sitter_python').
+        attr_name (str): The attribute name for the language loader function.
+        lang_name (cs.SupportedLanguage): The language name for the submodule fallback.
+
+    Returns:
+        LanguageLoader: The language loader function, or None if it fails.
+    """
     try:
         module = importlib.import_module(module_path)
         loader: LanguageLoader = getattr(module, attr_name)
@@ -94,6 +144,14 @@ def _try_import_language(
 
 
 def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
+    """Imports all configured language loaders.
+
+    It iterates through a predefined list of languages and attempts to load each one.
+
+    Returns:
+        dict[cs.SupportedLanguage, LanguageLoader]: A dictionary mapping language names
+            to their loader functions.
+    """
     language_imports: list[LanguageImport] = [
         LanguageImport(
             cs.SupportedLanguage.PYTHON,
@@ -173,10 +231,29 @@ LANGUAGE_LIBRARIES: dict[cs.SupportedLanguage, LanguageLoader] = _language_loade
 
 
 def _build_query_pattern(node_types: tuple[str, ...], capture_name: str) -> str:
+    """Builds a tree-sitter query pattern from a list of node types.
+
+    Example: `(function_definition) @function (class_definition) @class`
+
+    Args:
+        node_types (tuple[str, ...]): The node types to capture.
+        capture_name (str): The name to assign to the capture (e.g., '@function').
+
+    Returns:
+        str: The combined query pattern string.
+    """
     return " ".join([f"({node_type}) @{capture_name}" for node_type in node_types])
 
 
 def _get_locals_pattern(lang_name: cs.SupportedLanguage) -> str | None:
+    """Gets the language-specific pattern for capturing local definitions.
+
+    Args:
+        lang_name (cs.SupportedLanguage): The language to get the pattern for.
+
+    Returns:
+        str | None: The locals query pattern, or None if not defined for the language.
+    """
     match lang_name:
         case cs.SupportedLanguage.JS:
             return cs.JS_LOCALS_PATTERN
@@ -187,6 +264,14 @@ def _get_locals_pattern(lang_name: cs.SupportedLanguage) -> str | None:
 
 
 def _build_combined_import_pattern(lang_config: LanguageSpec) -> str:
+    """Builds a combined query pattern for both `import` and `from ... import` statements.
+
+    Args:
+        lang_config (LanguageSpec): The language specification containing import node types.
+
+    Returns:
+        str: The combined query pattern string for imports.
+    """
     import_patterns = _build_query_pattern(
         lang_config.import_node_types, cs.CAPTURE_IMPORT
     )
@@ -203,12 +288,30 @@ def _build_combined_import_pattern(lang_config: LanguageSpec) -> str:
 
 
 def _create_optional_query(language: Language, pattern: str | None) -> Query | None:
+    """Creates a tree-sitter Query object if a pattern is provided.
+
+    Args:
+        language (Language): The tree-sitter Language object.
+        pattern (str | None): The query pattern string.
+
+    Returns:
+        Query | None: A Query object, or None if the pattern is empty.
+    """
     return Query(language, pattern) if pattern else None
 
 
 def _create_locals_query(
     language: Language, lang_name: cs.SupportedLanguage
 ) -> Query | None:
+    """Creates a tree-sitter Query for capturing local definitions.
+
+    Args:
+        language (Language): The tree-sitter Language object.
+        lang_name (cs.SupportedLanguage): The name of the language.
+
+    Returns:
+        Query | None: A Query object for locals, or None if no pattern is defined.
+    """
     locals_pattern = _get_locals_pattern(lang_name)
     if not locals_pattern:
         return None
@@ -225,6 +328,17 @@ def _create_language_queries(
     lang_config: LanguageSpec,
     lang_name: cs.SupportedLanguage,
 ) -> LanguageQueries:
+    """Creates a full set of queries for a given language.
+
+    Args:
+        language (Language): The tree-sitter Language object.
+        parser (Parser): The tree-sitter Parser object.
+        lang_config (LanguageSpec): The configuration for the language.
+        lang_name (cs.SupportedLanguage): The name of the language.
+
+    Returns:
+        LanguageQueries: A dataclass containing all queries for the language.
+    """
     function_patterns = lang_config.function_query or _build_query_pattern(
         lang_config.function_node_types, cs.CAPTURE_FUNCTION
     )
@@ -254,6 +368,17 @@ def _process_language(
     parsers: dict[cs.SupportedLanguage, Parser],
     queries: dict[cs.SupportedLanguage, LanguageQueries],
 ) -> bool:
+    """Processes a single language: loads its grammar, creates a parser, and builds queries.
+
+    Args:
+        lang_name (cs.SupportedLanguage): The language to process.
+        lang_config (LanguageSpec): The configuration for the language.
+        parsers (dict): The dictionary to store the created parser in.
+        queries (dict): The dictionary to store the created queries in.
+
+    Returns:
+        bool: True if the language was processed successfully, False otherwise.
+    """
     lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
     if not lang_lib:
         logger.debug(ls.LIB_NOT_AVAILABLE.format(lang=lang_name))
@@ -276,6 +401,20 @@ def _process_language(
 def load_parsers() -> tuple[
     dict[cs.SupportedLanguage, Parser], dict[cs.SupportedLanguage, LanguageQueries]
 ]:
+    """Loads all available tree-sitter parsers and queries.
+
+    This is the main entry point of the module. It iterates through all languages
+    defined in `LANGUAGE_SPECS`, attempts to load them, and returns the successfully
+    loaded parsers and queries.
+
+    Raises:
+        RuntimeError: If no languages could be loaded at all.
+
+    Returns:
+        tuple: A tuple containing two dictionaries:
+            - A mapping of language names to `Parser` objects.
+            - A mapping of language names to `LanguageQueries` objects.
+    """
     parsers: dict[cs.SupportedLanguage, Parser] = {}
     queries: dict[cs.SupportedLanguage, LanguageQueries] = {}
     available_languages: list[cs.SupportedLanguage] = []

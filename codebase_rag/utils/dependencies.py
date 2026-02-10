@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Sequence
 
-from codebase_rag.constants import (
+from codebase_rag.core.constants import (
     MODULE_QDRANT_CLIENT,
     MODULE_TORCH,
     MODULE_TRANSFORMERS,

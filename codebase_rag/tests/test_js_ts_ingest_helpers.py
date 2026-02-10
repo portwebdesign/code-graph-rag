@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 from tree_sitter import Language, Parser
 
-from codebase_rag.graph_updater import GraphUpdater
-from codebase_rag.parser_loader import load_parsers
+from codebase_rag.graph_db.graph_updater import GraphUpdater
+from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.tests.conftest import run_updater
 
 try:

@@ -1,3 +1,15 @@
+"""
+This module is responsible for processing method override relationships.
+
+After all class and method definitions have been ingested into the graph, this
+module iterates through all identified methods. For each method, it traverses
+the class inheritance hierarchy to find if the method overrides a method from a
+parent class.
+
+If an overridden method is found, it creates an `OVERRIDES` relationship in the
+graph between the child method and the parent method.
+"""
+
 from __future__ import annotations
 
 from collections import deque
@@ -5,13 +17,15 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from ... import constants as cs
-from ... import logs
-from ...types_defs import NodeType
+from codebase_rag.data_models.types_defs import NodeType
+
+from ...core import constants as cs
+from ...core import logs
 
 if TYPE_CHECKING:
+    from codebase_rag.data_models.types_defs import FunctionRegistryTrieProtocol
+
     from ...services import IngestorProtocol
-    from ...types_defs import FunctionRegistryTrieProtocol
 
 
 def process_all_method_overrides(
@@ -19,6 +33,14 @@ def process_all_method_overrides(
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
 ) -> None:
+    """
+    Iterates through all methods and checks for overrides in parent classes.
+
+    Args:
+        function_registry (FunctionRegistryTrieProtocol): The registry of all functions and methods.
+        class_inheritance (dict[str, list[str]]): A dictionary mapping class FQNs to their parents.
+        ingestor (IngestorProtocol): The data ingestion service.
+    """
     logger.info(logs.CLASS_PASS_4)
 
     for method_qn in function_registry.keys():
@@ -47,6 +69,20 @@ def check_method_overrides(
     class_inheritance: dict[str, list[str]],
     ingestor: IngestorProtocol,
 ) -> None:
+    """
+    Checks for and ingests an `OVERRIDES` relationship for a single method.
+
+    It performs a breadth-first search up the inheritance hierarchy of the method's
+    class to find a method with the same name.
+
+    Args:
+        method_qn (str): The FQN of the method to check.
+        method_name (str): The simple name of the method.
+        class_qn (str): The FQN of the class containing the method.
+        function_registry (FunctionRegistryTrieProtocol): The registry of all functions.
+        class_inheritance (dict): The class inheritance map.
+        ingestor (IngestorProtocol): The data ingestion service.
+    """
     if class_qn not in class_inheritance:
         return
 
