@@ -5,9 +5,15 @@ from loguru import logger
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs
 from codebase_rag.data_models.types_defs import LanguageQueries, NodeIdentifier
+from codebase_rag.infrastructure.language_spec import get_language_spec_for_path
 from codebase_rag.services import IngestorProtocol
 
-from ..utils.path_utils import should_skip_path, to_posix
+from ..utils.path_utils import (
+    compute_file_hash,
+    is_test_path,
+    should_skip_path,
+    to_posix,
+)
 
 
 class StructureProcessor:
@@ -95,12 +101,24 @@ class StructureProcessor:
                 logger.info(
                     logs.STRUCT_IDENTIFIED_PACKAGE.format(package_qn=package_qn)
                 )
+                parent_qn = (
+                    package_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                    if cs.SEPARATOR_DOT in package_qn
+                    else self.project_name
+                )
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.PACKAGE,
                     {
                         cs.KEY_QUALIFIED_NAME: package_qn,
                         cs.KEY_NAME: root.name,
                         cs.KEY_PATH: to_posix(relative_root),
+                        cs.KEY_REPO_REL_PATH: to_posix(relative_root),
+                        cs.KEY_ABS_PATH: root.resolve().as_posix(),
+                        cs.KEY_SYMBOL_KIND: cs.NodeLabel.PACKAGE.value.lower(),
+                        cs.KEY_PARENT_QN: parent_qn,
+                        cs.KEY_NAMESPACE: parent_qn,
+                        cs.KEY_PACKAGE: package_qn,
+                        cs.KEY_IS_TEST: is_test_path(relative_root),
                     },
                 )
                 parent_identifier = self._get_parent_identifier(
@@ -118,7 +136,14 @@ class StructureProcessor:
                 )
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.FOLDER,
-                    {cs.KEY_PATH: to_posix(relative_root), cs.KEY_NAME: root.name},
+                    {
+                        cs.KEY_PATH: to_posix(relative_root),
+                        cs.KEY_NAME: root.name,
+                        cs.KEY_REPO_REL_PATH: to_posix(relative_root),
+                        cs.KEY_ABS_PATH: root.resolve().as_posix(),
+                        cs.KEY_SYMBOL_KIND: cs.NodeLabel.FOLDER.value.lower(),
+                        cs.KEY_IS_TEST: is_test_path(relative_root),
+                    },
                 )
                 parent_identifier = self._get_parent_identifier(
                     parent_rel_path, parent_container_qn
@@ -144,14 +169,29 @@ class StructureProcessor:
         parent_identifier = self._get_parent_identifier(
             relative_root, parent_container_qn
         )
+        language_value = None
+        if lang_spec := get_language_spec_for_path(file_path):
+            if isinstance(lang_spec.language, cs.SupportedLanguage):
+                language_value = lang_spec.language.value
+            else:
+                language_value = str(lang_spec.language)
+
+        file_props = {
+            cs.KEY_PATH: relative_filepath,
+            cs.KEY_NAME: file_name,
+            cs.KEY_EXTENSION: file_path.suffix,
+            cs.KEY_REPO_REL_PATH: relative_filepath,
+            cs.KEY_ABS_PATH: file_path.resolve().as_posix(),
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.FILE.value.lower(),
+            cs.KEY_IS_TEST: is_test_path(file_path.relative_to(self.repo_path)),
+            cs.KEY_FILE_HASH: compute_file_hash(file_path),
+        }
+        if language_value:
+            file_props[cs.KEY_LANGUAGE] = language_value
 
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.FILE,
-            {
-                cs.KEY_PATH: relative_filepath,
-                cs.KEY_NAME: file_name,
-                cs.KEY_EXTENSION: file_path.suffix,
-            },
+            file_props,
         )
 
         self.ingestor.ensure_relationship_batch(

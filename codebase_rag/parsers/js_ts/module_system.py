@@ -11,6 +11,7 @@ from tree_sitter import Query, QueryCursor
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import ASTNode
+from codebase_rag.infrastructure.language_spec import get_language_spec_for_path
 
 from ..utils import (
     ingest_exported_function,
@@ -45,6 +46,7 @@ class JsTsModuleSystemMixin:
     simple_name_lookup: SimpleNameLookup
     import_processor: ImportProcessor
     module_qn_to_file_path: dict[str, Path]
+    module_qn_to_file_hash: dict[str, str]
     _processed_imports: set[str]
 
     @abstractmethod
@@ -263,6 +265,11 @@ class JsTsModuleSystemMixin:
             export_type: Type of export (CommonJS, ES6, etc.).
         """
         file_path = self.module_qn_to_file_path.get(module_qn)
+        file_hash = self.module_qn_to_file_hash.get(module_qn)
+        language = None
+        if file_path and (lang_spec := get_language_spec_for_path(file_path)):
+            if isinstance(lang_spec.language, cs.SupportedLanguage):
+                language = lang_spec.language
         ingest_exported_function(
             export_function,
             function_name,
@@ -273,6 +280,8 @@ class JsTsModuleSystemMixin:
             self.simple_name_lookup,
             self._get_docstring,
             self._is_export_inside_function,
+            language,
+            file_hash,
             file_path,
             self.repo_path,
         )
@@ -413,6 +422,12 @@ class JsTsModuleSystemMixin:
         """
         try:
             lang_query = queries[language][cs.QUERY_LANGUAGE]
+            file_path = self.module_qn_to_file_path.get(module_qn)
+            file_hash = self.module_qn_to_file_hash.get(module_qn)
+            language_value = None
+            if file_path and (lang_spec := get_language_spec_for_path(file_path)):
+                if isinstance(lang_spec.language, cs.SupportedLanguage):
+                    language_value = lang_spec.language
 
             for query_text in [
                 cs.JS_ES6_EXPORT_CONST_QUERY,
@@ -442,6 +457,10 @@ class JsTsModuleSystemMixin:
                                     self.simple_name_lookup,
                                     self._get_docstring,
                                     self._is_export_inside_function,
+                                    language_value,
+                                    file_hash,
+                                    file_path,
+                                    self.repo_path,
                                 )
 
                     if not export_names:
@@ -462,6 +481,10 @@ class JsTsModuleSystemMixin:
                                                 self.simple_name_lookup,
                                                 self._get_docstring,
                                                 self._is_export_inside_function,
+                                                language_value,
+                                                file_hash,
+                                                file_path,
+                                                self.repo_path,
                                             )
 
                 except Exception as e:

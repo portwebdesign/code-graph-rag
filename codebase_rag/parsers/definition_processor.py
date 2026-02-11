@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -17,13 +18,13 @@ from codebase_rag.data_models.types_defs import (
     SimpleNameLookup,
 )
 
-from ..utils.path_utils import to_posix
+from ..utils.path_utils import is_test_path, to_posix
 from .class_ingest import ClassIngestMixin
 from .dependency_parser import parse_dependencies
 from .function_ingest import FunctionIngestMixin
 from .handlers import get_handler
 from .js_ts.ingest import JsTsIngestMixin
-from .utils import safe_decode_with_fallback
+from .utils import get_parent_qualified_name, safe_decode_with_fallback
 
 if TYPE_CHECKING:
     from codebase_rag.data_models.types_defs import LanguageQueries
@@ -74,6 +75,7 @@ class DefinitionProcessor(
         self.simple_name_lookup = simple_name_lookup
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
+        self.module_qn_to_file_hash: dict[str, str] = {}
         self.class_inheritance: dict[str, list[str]] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
 
@@ -137,6 +139,8 @@ class DefinitionProcessor(
             if source_text is None:
                 source_text = self._safe_decode_source(source_bytes)
 
+            file_hash = hashlib.sha256(source_bytes).hexdigest() if source_bytes else ""
+
             module_qn = cs.SEPARATOR_DOT.join(
                 [self.project_name] + list(relative_path.with_suffix("").parts)
             )
@@ -145,12 +149,28 @@ class DefinitionProcessor(
                     [self.project_name] + list(relative_path.parent.parts)
                 )
             self.module_qn_to_file_path[module_qn] = file_path
+            if file_hash:
+                self.module_qn_to_file_hash[module_qn] = file_hash
 
+            parent_qn = get_parent_qualified_name(module_qn)
+            namespace = parent_qn
             module_props = {
                 cs.KEY_QUALIFIED_NAME: module_qn,
                 cs.KEY_NAME: file_path.name,
                 cs.KEY_PATH: relative_path_str,
+                cs.KEY_LANGUAGE: language.value,
+                cs.KEY_MODULE_QN: module_qn,
+                cs.KEY_REPO_REL_PATH: relative_path_str,
+                cs.KEY_ABS_PATH: file_path.resolve().as_posix(),
+                cs.KEY_SYMBOL_KIND: cs.NodeLabel.MODULE.value.lower(),
+                cs.KEY_PARENT_QN: parent_qn or self.project_name,
+                cs.KEY_IS_TEST: is_test_path(relative_path),
             }
+            if namespace:
+                module_props[cs.KEY_NAMESPACE] = namespace
+                module_props[cs.KEY_PACKAGE] = namespace
+            if file_hash:
+                module_props[cs.KEY_FILE_HASH] = file_hash
 
             if self._framework_metadata_enabled():
                 framework_type, framework_metadata = self._detect_framework_metadata(
@@ -349,21 +369,42 @@ class DefinitionProcessor(
         else:
             base_qn = module_qn
 
+        namespace = (
+            module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if cs.SEPARATOR_DOT in module_qn
+            else None
+        )
+        file_hash = self.module_qn_to_file_hash.get(module_qn)
+        relative_path = file_path.relative_to(self.repo_path).as_posix()
+        abs_path = file_path.resolve().as_posix()
+        is_test_file = is_test_path(file_path.relative_to(self.repo_path))
+
         for class_name in sorted(class_names):
             class_qn = f"{base_qn}.{class_name}"
             if class_qn in self.function_registry:
                 continue
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.CLASS,
-                {
-                    cs.KEY_QUALIFIED_NAME: class_qn,
-                    cs.KEY_NAME: class_name,
-                    cs.KEY_START_LINE: 1,
-                    cs.KEY_END_LINE: 1,
-                    cs.KEY_DOCSTRING: None,
-                    cs.KEY_IS_EXPORTED: "export" in cleaned,
-                },
-            )
+            class_props = {
+                cs.KEY_QUALIFIED_NAME: class_qn,
+                cs.KEY_NAME: class_name,
+                cs.KEY_START_LINE: 1,
+                cs.KEY_END_LINE: 1,
+                cs.KEY_DOCSTRING: None,
+                cs.KEY_IS_EXPORTED: "export" in cleaned,
+                cs.KEY_LANGUAGE: language.value,
+                cs.KEY_MODULE_QN: module_qn,
+                cs.KEY_SYMBOL_KIND: cs.NodeLabel.CLASS.value.lower(),
+                cs.KEY_PARENT_QN: module_qn,
+                cs.KEY_PATH: relative_path,
+                cs.KEY_REPO_REL_PATH: relative_path,
+                cs.KEY_ABS_PATH: abs_path,
+                cs.KEY_IS_TEST: is_test_file,
+            }
+            if namespace:
+                class_props[cs.KEY_NAMESPACE] = namespace
+                class_props[cs.KEY_PACKAGE] = namespace
+            if file_hash:
+                class_props[cs.KEY_FILE_HASH] = file_hash
+            self.ingestor.ensure_node_batch(cs.NodeLabel.CLASS, class_props)
             self.function_registry[class_qn] = NodeType.CLASS
             self.simple_name_lookup[class_name].add(class_qn)
             self.ingestor.ensure_relationship_batch(
@@ -376,17 +417,28 @@ class DefinitionProcessor(
             enum_qn = f"{base_qn}.{enum_name}"
             if enum_qn in self.function_registry:
                 continue
-            self.ingestor.ensure_node_batch(
-                cs.NodeLabel.ENUM,
-                {
-                    cs.KEY_QUALIFIED_NAME: enum_qn,
-                    cs.KEY_NAME: enum_name,
-                    cs.KEY_START_LINE: 1,
-                    cs.KEY_END_LINE: 1,
-                    cs.KEY_DOCSTRING: None,
-                    cs.KEY_IS_EXPORTED: "export" in cleaned,
-                },
-            )
+            enum_props = {
+                cs.KEY_QUALIFIED_NAME: enum_qn,
+                cs.KEY_NAME: enum_name,
+                cs.KEY_START_LINE: 1,
+                cs.KEY_END_LINE: 1,
+                cs.KEY_DOCSTRING: None,
+                cs.KEY_IS_EXPORTED: "export" in cleaned,
+                cs.KEY_LANGUAGE: language.value,
+                cs.KEY_MODULE_QN: module_qn,
+                cs.KEY_SYMBOL_KIND: cs.NodeLabel.ENUM.value.lower(),
+                cs.KEY_PARENT_QN: module_qn,
+                cs.KEY_PATH: relative_path,
+                cs.KEY_REPO_REL_PATH: relative_path,
+                cs.KEY_ABS_PATH: abs_path,
+                cs.KEY_IS_TEST: is_test_file,
+            }
+            if namespace:
+                enum_props[cs.KEY_NAMESPACE] = namespace
+                enum_props[cs.KEY_PACKAGE] = namespace
+            if file_hash:
+                enum_props[cs.KEY_FILE_HASH] = file_hash
+            self.ingestor.ensure_node_batch(cs.NodeLabel.ENUM, enum_props)
             self.function_registry[enum_qn] = NodeType.ENUM
             self.simple_name_lookup[enum_name].add(enum_qn)
             self.ingestor.ensure_relationship_batch(

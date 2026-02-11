@@ -309,14 +309,23 @@ class ResolverPass:
             str: The qualified name of the component node.
         """
         component_qn = f"{module_qn}{cs.SEPARATOR_DOT}component.{tag_name}"
-        self.ingestor.ensure_node_batch(
-            cs.NodeLabel.COMPONENT,
-            {
-                cs.KEY_QUALIFIED_NAME: component_qn,
-                cs.KEY_NAME: tag_name,
-                cs.KEY_FRAMEWORK: "component",
-            },
+        namespace = (
+            module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if cs.SEPARATOR_DOT in module_qn
+            else None
         )
+        component_props = {
+            cs.KEY_QUALIFIED_NAME: component_qn,
+            cs.KEY_NAME: tag_name,
+            cs.KEY_FRAMEWORK: "component",
+            cs.KEY_MODULE_QN: module_qn,
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.COMPONENT.value.lower(),
+            cs.KEY_PARENT_QN: module_qn,
+        }
+        if namespace:
+            component_props[cs.KEY_NAMESPACE] = namespace
+            component_props[cs.KEY_PACKAGE] = namespace
+        self.ingestor.ensure_node_batch(cs.NodeLabel.COMPONENT, component_props)
         return component_qn
 
     def _ensure_placeholder_function(
@@ -336,21 +345,30 @@ class ResolverPass:
         if not normalized:
             normalized = "unknown"
         placeholder_qn = f"{self.project_name}{cs.SEPARATOR_DOT}framework.{framework_tag}.{normalized}"
-        self.ingestor.ensure_node_batch(
-            cs.NodeLabel.FUNCTION,
-            {
-                cs.KEY_QUALIFIED_NAME: placeholder_qn,
-                cs.KEY_NAME: name,
-                cs.KEY_DECORATORS: [],
-                cs.KEY_IS_EXTERNAL: True,
-                cs.KEY_IS_PLACEHOLDER: True,
-                cs.KEY_FRAMEWORK: framework_tag,
-                cs.KEY_FRAMEWORK_METADATA: json.dumps(
-                    {"origin": "placeholder", "reason": framework_tag},
-                    ensure_ascii=False,
-                ),
-            },
+        namespace = (
+            placeholder_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if cs.SEPARATOR_DOT in placeholder_qn
+            else None
         )
+        placeholder_props = {
+            cs.KEY_QUALIFIED_NAME: placeholder_qn,
+            cs.KEY_NAME: name,
+            cs.KEY_DECORATORS: [],
+            cs.KEY_IS_EXTERNAL: True,
+            cs.KEY_IS_PLACEHOLDER: True,
+            cs.KEY_FRAMEWORK: framework_tag,
+            cs.KEY_FRAMEWORK_METADATA: json.dumps(
+                {"origin": "placeholder", "reason": framework_tag},
+                ensure_ascii=False,
+            ),
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.FUNCTION.value.lower(),
+        }
+        if namespace:
+            placeholder_props[cs.KEY_MODULE_QN] = namespace
+            placeholder_props[cs.KEY_PARENT_QN] = namespace
+            placeholder_props[cs.KEY_NAMESPACE] = namespace
+            placeholder_props[cs.KEY_PACKAGE] = namespace
+        self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, placeholder_props)
         return cs.NodeLabel.FUNCTION, placeholder_qn
 
     def _get_query(

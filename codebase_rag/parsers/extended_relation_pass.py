@@ -177,6 +177,8 @@ class ExtendedRelationPass:
             cs.KEY_QUALIFIED_NAME: qualified_name,
             cs.KEY_NAME: name,
             cs.KEY_DECORATORS: [],
+            cs.KEY_DECORATORS_NORM: [],
             cs.KEY_IS_PLACEHOLDER: True,
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.FUNCTION.value.lower(),
         }
         self.ingestor.ensure_node_batch(cs.NodeLabel.FUNCTION, props)

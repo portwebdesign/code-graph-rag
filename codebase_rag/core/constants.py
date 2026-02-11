@@ -289,6 +289,7 @@ INIT_PY = "__init__.py"
 
 # (H) Keywords
 KEYWORD_FUNCTION = "function"
+JS_FUNCTION_CONSTRUCTOR = "Function"
 
 # (H) Encoding
 ENCODING_UTF8 = "utf-8"
@@ -407,6 +408,7 @@ PATH_RELATIVE_PREFIX = "./"
 PATH_PARENT_PREFIX = "../"
 CPP_IMPORT_PARTITION_PREFIX = "import :"
 CPP_PARTITION_PREFIX = "partition_"
+EXTERNAL_PATH_SEGMENT = "__external__"
 
 # (H) Trie internal keys
 TRIE_TYPE_KEY = "__type__"
@@ -500,6 +502,17 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.EVENT_FLOW: UniqueKeyType.QUALIFIED_NAME,
 }
 
+SYNTHETIC_PATH_LABELS = frozenset(
+    {
+        NodeLabel.EXTERNAL_PACKAGE.value,
+        NodeLabel.IMPORT.value,
+        NodeLabel.ANALYSIS_REPORT.value,
+        NodeLabel.ANALYSIS_METRIC.value,
+        NodeLabel.ANALYSIS_RUN.value,
+        NodeLabel.LIBRARY.value,
+    }
+)
+
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
 if _missing_keys:
     raise RuntimeError(
@@ -590,6 +603,19 @@ KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
 KEY_IS_ENTRY_POINT = "is_entry_point"
 KEY_SIGNATURE_LITE = "signature_lite"
+KEY_LANGUAGE = "language"
+KEY_MODULE_QN = "module_qn"
+KEY_REPO_REL_PATH = "repo_rel_path"
+KEY_ABS_PATH = "abs_path"
+KEY_NAMESPACE = "namespace"
+KEY_PACKAGE = "package"
+KEY_SYMBOL_KIND = "symbol_kind"
+KEY_PARENT_QN = "parent_qn"
+KEY_SIGNATURE = "signature"
+KEY_DECORATORS_NORM = "decorators_norm"
+KEY_IS_TEST = "is_test"
+KEY_VISIBILITY = "visibility"
+KEY_FILE_HASH = "file_hash"
 
 # (H) Method signature formatting
 EMPTY_PARENS = "()"

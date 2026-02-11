@@ -166,15 +166,25 @@ class ImportProcessor:
             name = module_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
         else:
             name = module_path.rsplit(cs.SEPARATOR_DOT, 1)[-1]
-        self.ingestor.ensure_node_batch(
-            cs.NodeLabel.MODULE,
-            {
-                cs.KEY_NAME: name,
-                cs.KEY_QUALIFIED_NAME: module_path,
-                cs.KEY_PATH: full_name,
-                cs.KEY_IS_EXTERNAL: True,
-            },
+        namespace = (
+            module_path.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if cs.SEPARATOR_DOT in module_path
+            else None
         )
+        module_props = {
+            cs.KEY_NAME: name,
+            cs.KEY_QUALIFIED_NAME: module_path,
+            cs.KEY_PATH: full_name,
+            cs.KEY_IS_EXTERNAL: True,
+            cs.KEY_MODULE_QN: module_path,
+            cs.KEY_REPO_REL_PATH: full_name,
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.MODULE.value.lower(),
+        }
+        if namespace:
+            module_props[cs.KEY_NAMESPACE] = namespace
+            module_props[cs.KEY_PACKAGE] = namespace
+            module_props[cs.KEY_PARENT_QN] = namespace
+        self.ingestor.ensure_node_batch(cs.NodeLabel.MODULE, module_props)
         self.import_nodes_created.add(module_path)
 
     def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:

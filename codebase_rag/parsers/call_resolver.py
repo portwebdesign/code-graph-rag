@@ -811,7 +811,7 @@ class CallResolver:
             if call_name.endswith(suffix):
                 return (
                     cs.NodeLabel.FUNCTION,
-                    f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{cs.KEYWORD_FUNCTION}{cs.SEPARATOR_PROTOTYPE}{method}",
+                    f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{cs.JS_FUNCTION_CONSTRUCTOR}{cs.SEPARATOR_PROTOTYPE}{method}",
                 )
 
         if cs.SEPARATOR_PROTOTYPE in call_name and (

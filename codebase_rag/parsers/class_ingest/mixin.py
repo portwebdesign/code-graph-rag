@@ -11,10 +11,16 @@ from codebase_rag.core import constants as cs
 from codebase_rag.data_models.types_defs import ASTNode, PropertyDict
 
 from ... import logs
+from ...utils.path_utils import is_test_path
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
-from ..utils import ingest_method, safe_decode_text
+from ..utils import (
+    infer_visibility,
+    ingest_method,
+    normalize_decorators,
+    safe_decode_text,
+)
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -48,6 +54,7 @@ class ClassIngestMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
+    module_qn_to_file_hash: dict[str, str]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
 
@@ -123,7 +130,7 @@ class ClassIngestMixin:
                     file_path,
                 )
 
-        self._process_inline_modules(module_nodes, module_qn, lang_config)
+        self._process_inline_modules(module_nodes, module_qn, language, lang_config)
 
     def _process_class_node(
         self,
@@ -161,18 +168,47 @@ class ClassIngestMixin:
 
         class_qn, class_name, is_exported = identity
         node_type = nt.determine_node_type(class_node, class_name, class_qn, language)
+        namespace = (
+            module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if cs.SEPARATOR_DOT in module_qn
+            else None
+        )
+        visibility = None
+        if language == cs.SupportedLanguage.JAVA:
+            visibility = java_utils.get_java_visibility(class_node)
+        else:
+            visibility = infer_visibility(class_name, language)
 
+        decorators = self._extract_decorators(class_node)
         class_props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: class_qn,
             cs.KEY_NAME: class_name,
-            cs.KEY_DECORATORS: self._extract_decorators(class_node),
+            cs.KEY_DECORATORS: decorators,
+            cs.KEY_DECORATORS_NORM: normalize_decorators(decorators),
             cs.KEY_START_LINE: class_node.start_point[0] + 1,
             cs.KEY_END_LINE: class_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
             cs.KEY_IS_EXPORTED: is_exported,
+            cs.KEY_LANGUAGE: language.value,
+            cs.KEY_MODULE_QN: module_qn,
+            cs.KEY_SYMBOL_KIND: node_type.value.lower(),
+            cs.KEY_PARENT_QN: module_qn,
         }
+        if namespace:
+            class_props[cs.KEY_NAMESPACE] = namespace
+            class_props[cs.KEY_PACKAGE] = namespace
+        if visibility:
+            class_props[cs.KEY_VISIBILITY] = visibility
         if file_path:
-            class_props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
+            relative_path = file_path.relative_to(self.repo_path).as_posix()
+            class_props[cs.KEY_PATH] = relative_path
+            class_props[cs.KEY_REPO_REL_PATH] = relative_path
+            class_props[cs.KEY_ABS_PATH] = file_path.resolve().as_posix()
+            class_props[cs.KEY_IS_TEST] = is_test_path(
+                file_path.relative_to(self.repo_path)
+            )
+            if file_hash := self.module_qn_to_file_hash.get(module_qn):
+                class_props[cs.KEY_FILE_HASH] = file_hash
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -192,7 +228,7 @@ class ClassIngestMixin:
             self.function_registry,
         )
         self._ingest_class_methods(
-            class_node, class_qn, language, lang_queries, file_path
+            class_node, class_qn, module_qn, language, lang_queries, file_path
         )
 
     def _ingest_rust_impl_methods(
@@ -218,6 +254,7 @@ class ClassIngestMixin:
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(body_node)
         file_path = self.module_qn_to_file_path.get(module_qn)
+        file_hash = self.module_qn_to_file_hash.get(module_qn)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if isinstance(method_node, Node):
                 ingest_method(
@@ -231,6 +268,8 @@ class ClassIngestMixin:
                     language,
                     None,
                     None,
+                    module_qn,
+                    file_hash,
                     file_path,
                     self.repo_path,
                 )
@@ -239,6 +278,7 @@ class ClassIngestMixin:
         self,
         class_node: Node,
         class_qn: str,
+        module_qn: str,
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
         file_path: Path | None = None,
@@ -280,6 +320,8 @@ class ClassIngestMixin:
                 language,
                 self._extract_decorators,
                 method_qualified_name,
+                module_qn,
+                self.module_qn_to_file_hash.get(module_qn),
                 file_path,
                 self.repo_path,
             )
@@ -288,6 +330,7 @@ class ClassIngestMixin:
         self,
         module_nodes: list[Node],
         module_qn: str,
+        language: cs.SupportedLanguage,
         lang_config: LanguageSpec,
     ) -> None:
         """
@@ -311,6 +354,12 @@ class ClassIngestMixin:
                 cs.KEY_QUALIFIED_NAME: inline_module_qn,
                 cs.KEY_NAME: module_name,
                 cs.KEY_PATH: f"{cs.INLINE_MODULE_PATH_PREFIX}{module_name}",
+                cs.KEY_LANGUAGE: language.value,
+                cs.KEY_MODULE_QN: inline_module_qn,
+                cs.KEY_NAMESPACE: module_qn,
+                cs.KEY_PACKAGE: module_qn,
+                cs.KEY_SYMBOL_KIND: cs.NodeLabel.MODULE.value.lower(),
+                cs.KEY_PARENT_QN: module_qn,
             }
             logger.info(
                 logs.CLASS_FOUND_INLINE_MODULE.format(

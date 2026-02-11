@@ -404,9 +404,21 @@ class MemgraphIngestor:
         if project_name and cs.KEY_PROJECT_NAME not in properties:
             properties[cs.KEY_PROJECT_NAME] = project_name
 
+        if (
+            project_name
+            and cs.KEY_PATH not in properties
+            and label in cs.SYNTHETIC_PATH_LABELS
+        ):
+            properties[cs.KEY_PATH] = (
+                f"{project_name}{cs.SEPARATOR_SLASH}{cs.EXTERNAL_PATH_SEGMENT}"
+                f"{cs.SEPARATOR_SLASH}{label}"
+            )
+
         path_value = properties.get(cs.KEY_PATH)
         if not path_value:
             return
+        if cs.KEY_REPO_REL_PATH not in properties:
+            properties[cs.KEY_REPO_REL_PATH] = path_value
 
         folder_path, folder_name = self._derive_folder_props(
             label, str(path_value), project_name

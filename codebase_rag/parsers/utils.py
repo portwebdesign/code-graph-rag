@@ -19,7 +19,7 @@ from codebase_rag.data_models.types_defs import (
     TreeSitterNodeProtocol,
 )
 
-from ..utils.path_utils import to_posix
+from ..utils.path_utils import is_test_path, to_posix
 
 if TYPE_CHECKING:
     from codebase_rag.data_models.types_defs import FunctionRegistryTrieProtocol
@@ -155,6 +155,38 @@ def build_lite_signature(
     return signature
 
 
+def normalize_decorators(decorators: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for decorator in decorators:
+        cleaned = decorator.strip()
+        if cleaned.startswith("@"):
+            cleaned = cleaned[1:]
+        cleaned = cleaned.strip()
+        if cleaned:
+            normalized.append(cleaned.lower())
+    return normalized
+
+
+def get_parent_qualified_name(qualified_name: str) -> str | None:
+    if cs.SEPARATOR_DOT not in qualified_name:
+        return None
+    return qualified_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
+
+
+def infer_visibility(
+    name: str | None, language: cs.SupportedLanguage | None
+) -> str | None:
+    if not name or not language:
+        return None
+    if language == cs.SupportedLanguage.PYTHON:
+        if name.startswith("__") and not name.endswith("__"):
+            return "private"
+        if name.startswith("_"):
+            return "protected"
+        return "public"
+    return None
+
+
 def contains_node(parent: ASTNode, target: ASTNode) -> bool:
     return parent == target or any(
         contains_node(child, target) for child in parent.children
@@ -172,6 +204,8 @@ def ingest_method(
     language: cs.SupportedLanguage | None = None,
     extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
     method_qualified_name: str | None = None,
+    module_qn: str | None = None,
+    file_hash: str | None = None,
     file_path: Path | None = None,
     repo_path: Path | None = None,
 ) -> None:
@@ -190,6 +224,14 @@ def ingest_method(
 
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
 
+    if not module_qn:
+        module_qn = get_parent_qualified_name(container_qn)
+    namespace = (
+        module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if module_qn and cs.SEPARATOR_DOT in module_qn
+        else None
+    )
+
     decorators = extract_decorators_func(method_node) if extract_decorators_func else []
     param_names = extract_param_names(method_node)
     signature_lite = build_lite_signature(
@@ -198,18 +240,42 @@ def ingest_method(
         None,
         language,
     )
+    visibility = infer_visibility(method_name, language)
+    if language == cs.SupportedLanguage.JAVA:
+        from .java import utils as java_utils
+
+        visibility = java_utils.get_java_visibility(method_node)
 
     method_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: method_qn,
         cs.KEY_NAME: method_name,
         cs.KEY_DECORATORS: decorators,
+        cs.KEY_DECORATORS_NORM: normalize_decorators(decorators),
         cs.KEY_START_LINE: method_node.start_point[0] + 1,
         cs.KEY_END_LINE: method_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
         cs.KEY_SIGNATURE_LITE: signature_lite,
+        cs.KEY_SIGNATURE: signature_lite,
+        cs.KEY_SYMBOL_KIND: cs.NodeLabel.METHOD.value.lower(),
+        cs.KEY_PARENT_QN: container_qn,
     }
+    if module_qn:
+        method_props[cs.KEY_MODULE_QN] = module_qn
+    if namespace:
+        method_props[cs.KEY_NAMESPACE] = namespace
+        method_props[cs.KEY_PACKAGE] = namespace
+    if visibility:
+        method_props[cs.KEY_VISIBILITY] = visibility
+    if language:
+        method_props[cs.KEY_LANGUAGE] = language.value
     if file_path and repo_path:
-        method_props[cs.KEY_PATH] = to_posix(file_path.relative_to(repo_path))
+        relative_path = to_posix(file_path.relative_to(repo_path))
+        method_props[cs.KEY_PATH] = relative_path
+        method_props[cs.KEY_REPO_REL_PATH] = relative_path
+        method_props[cs.KEY_ABS_PATH] = file_path.resolve().as_posix()
+        method_props[cs.KEY_IS_TEST] = is_test_path(file_path.relative_to(repo_path))
+    if file_hash:
+        method_props[cs.KEY_FILE_HASH] = file_hash
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
@@ -233,6 +299,8 @@ def ingest_exported_function(
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
     is_export_inside_function_func: Callable[[ASTNode], bool],
+    language: cs.SupportedLanguage | None = None,
+    file_hash: str | None = None,
     file_path: Path | None = None,
     repo_path: Path | None = None,
 ) -> None:
@@ -240,6 +308,18 @@ def ingest_exported_function(
         return
 
     function_qn = f"{module_qn}.{function_name}"
+    namespace = (
+        module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        if cs.SEPARATOR_DOT in module_qn
+        else None
+    )
+    param_names = extract_param_names(function_node)
+    signature_lite = build_lite_signature(
+        function_name,
+        param_names,
+        None,
+        language,
+    )
 
     function_props = {
         cs.KEY_QUALIFIED_NAME: function_qn,
@@ -247,9 +327,27 @@ def ingest_exported_function(
         cs.KEY_START_LINE: function_node.start_point[0] + 1,
         cs.KEY_END_LINE: function_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(function_node),
+        cs.KEY_SIGNATURE_LITE: signature_lite,
+        cs.KEY_SIGNATURE: signature_lite,
+        cs.KEY_DECORATORS: [],
+        cs.KEY_DECORATORS_NORM: [],
+        cs.KEY_MODULE_QN: module_qn,
+        cs.KEY_SYMBOL_KIND: cs.NodeLabel.FUNCTION.value.lower(),
+        cs.KEY_PARENT_QN: module_qn,
     }
+    if namespace:
+        function_props[cs.KEY_NAMESPACE] = namespace
+        function_props[cs.KEY_PACKAGE] = namespace
+    if language:
+        function_props[cs.KEY_LANGUAGE] = language.value
     if file_path and repo_path:
-        function_props[cs.KEY_PATH] = to_posix(file_path.relative_to(repo_path))
+        relative_path = to_posix(file_path.relative_to(repo_path))
+        function_props[cs.KEY_PATH] = relative_path
+        function_props[cs.KEY_REPO_REL_PATH] = relative_path
+        function_props[cs.KEY_ABS_PATH] = file_path.resolve().as_posix()
+        function_props[cs.KEY_IS_TEST] = is_test_path(file_path.relative_to(repo_path))
+    if file_hash:
+        function_props[cs.KEY_FILE_HASH] = file_hash
 
     logger.info(
         logs.EXPORT_FOUND.format(

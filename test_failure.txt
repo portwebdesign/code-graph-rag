@@ -1,0 +1,31 @@
+
+  codebase_rag/tests/test_call_processor.py::TestGetIifeTargetName::test_function_expression_iife PASSED
+  codebase_rag/tests/test_call_processor.py::TestGetIifeTargetName::test_arrow_function_iife PASSED
+  codebase_rag/tests/test_call_processor.py::TestGetIifeTargetName::test_non_iife_returns_none PASSED
+  codebase_rag/tests/test_call_processor.py::TestResolveBuiltinCall::test_js_builtin_pattern_object_keys PASSED
+  codebase_rag/tests/test_call_processor.py::TestResolveBuiltinCall::test_js_builtin_pattern_json_parse PASSED
+> codebase_rag/tests/test_call_processor.py::TestResolveBuiltinCall::test_bind_method FAILED
+
+  ================================== FAILURES ===================================
+  ___________________ TestResolveBuiltinCall.test_bind_method ___________________
+
+  self = <test_call_processor.TestResolveBuiltinCall object at 0x000002C0E9B1C3E0>
+  call_processor = <codebase_rag.parsers.call_processor.CallProcessor object at 0x000002C099837650>
+
+      def test_bind_method(self, call_processor: CallProcessor) -> None:
+          result = call_processor._resolver.resolve_builtin_call("someFunc.bind")
+>         assert result is not None
+>         assert result[0] == cs.NodeLabel.FUNCTION
+> >       assert result[1] == f"{cs.BUILTIN_PREFIX}.Function.prototype.bind"
+> E       AssertionError: assert 'builtin.func...rototype.bind' == 'builtin.Func...rototype.bind'
+  E
+  E         - builtin.Function.prototype.bind
+  E         ?         ^
+  E         + builtin.function.prototype.bind
+  E         ?         ^
+
+> codebase_rag\tests\test_call_processor.py:349: AssertionError
+  =========================== short test summary info ===========================
+> FAILED codebase_rag/tests/test_call_processor.py::TestResolveBuiltinCall::test_bind_method
+  !!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!
+  ================== 1 failed, 90 passed, 92 skipped in 40.27s ==================

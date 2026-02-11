@@ -20,7 +20,7 @@ from codebase_rag.data_models.types_defs import (
 from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS, LanguageSpec
 
 from ..utils.fqn_resolver import resolve_fqn_from_ast
-from ..utils.path_utils import to_posix
+from ..utils.path_utils import is_test_path, to_posix
 from .cpp import utils as cpp_utils
 from .lua import utils as lua_utils
 from .rs import utils as rs_utils
@@ -28,8 +28,10 @@ from .utils import (
     build_lite_signature,
     extract_param_names,
     get_function_captures,
+    infer_visibility,
     ingest_method,
     is_method_node,
+    normalize_decorators,
     safe_decode_text,
 )
 
@@ -78,6 +80,7 @@ class FunctionIngestMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
+    module_qn_to_file_hash: dict[str, str]
     _handler: LanguageHandler
 
     @abstractmethod
@@ -267,6 +270,7 @@ class FunctionIngestMixin:
         class_qn = f"{module_qn}.{class_name_normalized}"
 
         file_path = self.module_qn_to_file_path.get(module_qn)
+        file_hash = self.module_qn_to_file_hash.get(module_qn)
         ingest_method(
             method_node=func_node,
             container_qn=class_qn,
@@ -277,6 +281,8 @@ class FunctionIngestMixin:
             get_docstring_func=self._get_docstring,
             language=cs.SupportedLanguage.CPP,
             extract_decorators_func=self._extract_decorators,
+            module_qn=module_qn,
+            file_hash=file_hash,
             file_path=file_path,
             repo_path=self.repo_path,
         )
@@ -537,10 +543,16 @@ class FunctionIngestMixin:
             None,
             language,
         )
+        namespace = (
+            module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if cs.SEPARATOR_DOT in module_qn
+            else None
+        )
         props: PropertyDict = {
             cs.KEY_QUALIFIED_NAME: resolution.qualified_name,
             cs.KEY_NAME: resolution.name,
             cs.KEY_DECORATORS: decorators,
+            cs.KEY_DECORATORS_NORM: normalize_decorators(decorators),
             cs.KEY_START_LINE: func_node.start_point[0] + 1,
             cs.KEY_END_LINE: func_node.end_point[0] + 1,
             cs.KEY_DOCSTRING: self._get_docstring(func_node),
@@ -549,10 +561,26 @@ class FunctionIngestMixin:
                 func_node, resolution, module_qn, language, decorators
             ),
             cs.KEY_SIGNATURE_LITE: signature_lite,
+            cs.KEY_SIGNATURE: signature_lite,
+            cs.KEY_LANGUAGE: language.value,
+            cs.KEY_MODULE_QN: module_qn,
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.FUNCTION.value.lower(),
+            cs.KEY_PARENT_QN: module_qn,
         }
+        if namespace:
+            props[cs.KEY_NAMESPACE] = namespace
+            props[cs.KEY_PACKAGE] = namespace
+        if visibility := infer_visibility(resolution.name, language):
+            props[cs.KEY_VISIBILITY] = visibility
         file_path = self.module_qn_to_file_path.get(module_qn)
         if file_path:
-            props[cs.KEY_PATH] = to_posix(file_path.relative_to(self.repo_path))
+            relative_path = to_posix(file_path.relative_to(self.repo_path))
+            props[cs.KEY_PATH] = relative_path
+            props[cs.KEY_REPO_REL_PATH] = relative_path
+            props[cs.KEY_ABS_PATH] = file_path.resolve().as_posix()
+            props[cs.KEY_IS_TEST] = is_test_path(file_path.relative_to(self.repo_path))
+            if file_hash := self.module_qn_to_file_hash.get(module_qn):
+                props[cs.KEY_FILE_HASH] = file_hash
         return props
 
     def _create_function_relationships(

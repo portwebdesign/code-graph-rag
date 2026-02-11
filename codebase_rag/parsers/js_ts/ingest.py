@@ -16,8 +16,15 @@ from codebase_rag.data_models.types_defs import (
     PropertyDict,
     SimpleNameLookup,
 )
+from codebase_rag.infrastructure.language_spec import get_language_spec_for_path
 
-from ..utils import safe_decode_text, safe_decode_with_fallback
+from ...utils.path_utils import is_test_path
+from ..utils import (
+    build_lite_signature,
+    extract_param_names,
+    safe_decode_text,
+    safe_decode_with_fallback,
+)
 from .module_system import JsTsModuleSystemMixin
 from .utils import get_js_ts_language_obj
 
@@ -44,6 +51,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     module_qn_to_file_path: dict[str, Path]
+    module_qn_to_file_hash: dict[str, str]
     import_processor: ImportProcessor
     class_inheritance: dict[str, list[str]]
     _handler: LanguageHandler
@@ -60,6 +68,65 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         lang_config: LanguageSpec,
         skip_classes: bool = False,
     ) -> str | None: ...
+
+    def _build_js_ts_function_props(
+        self,
+        function_qn: str,
+        function_name: str,
+        function_node: ASTNode,
+        module_qn: str,
+    ) -> PropertyDict:
+        namespace = (
+            module_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+            if cs.SEPARATOR_DOT in module_qn
+            else None
+        )
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        file_hash = self.module_qn_to_file_hash.get(module_qn)
+        language_value = None
+        language_key = None
+        if file_path and (lang_spec := get_language_spec_for_path(file_path)):
+            if isinstance(lang_spec.language, cs.SupportedLanguage):
+                language_value = lang_spec.language
+                language_key = lang_spec.language.value
+            else:
+                language_key = str(lang_spec.language)
+        signature_lite = build_lite_signature(
+            function_name,
+            extract_param_names(function_node),
+            None,
+            language_value,
+        )
+        function_props: PropertyDict = {
+            cs.KEY_QUALIFIED_NAME: function_qn,
+            cs.KEY_NAME: function_name,
+            cs.KEY_START_LINE: function_node.start_point[0] + 1,
+            cs.KEY_END_LINE: function_node.end_point[0] + 1,
+            cs.KEY_DOCSTRING: self._get_docstring(function_node),
+            cs.KEY_SIGNATURE_LITE: signature_lite,
+            cs.KEY_SIGNATURE: signature_lite,
+            cs.KEY_DECORATORS: [],
+            cs.KEY_DECORATORS_NORM: [],
+            cs.KEY_MODULE_QN: module_qn,
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.FUNCTION.value.lower(),
+            cs.KEY_PARENT_QN: module_qn,
+        }
+        if namespace:
+            function_props[cs.KEY_NAMESPACE] = namespace
+            function_props[cs.KEY_PACKAGE] = namespace
+        if language_key:
+            function_props[cs.KEY_LANGUAGE] = language_key
+        if file_path and self.repo_path:
+            relative_path = file_path.relative_to(self.repo_path).as_posix()
+            function_props[cs.KEY_PATH] = relative_path
+            function_props[cs.KEY_REPO_REL_PATH] = relative_path
+            function_props[cs.KEY_ABS_PATH] = file_path.resolve().as_posix()
+            function_props[cs.KEY_IS_TEST] = is_test_path(
+                file_path.relative_to(self.repo_path)
+            )
+        if file_hash:
+            function_props[cs.KEY_FILE_HASH] = file_hash
+        return function_props
 
     def _ingest_prototype_inheritance(
         self,
@@ -218,13 +285,10 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
                 constructor_qn = f"{module_qn}{cs.SEPARATOR_DOT}{constructor_name}"
                 method_qn = f"{constructor_qn}{cs.SEPARATOR_DOT}{method_name}"
 
-                method_props: PropertyDict = {
-                    cs.KEY_QUALIFIED_NAME: method_qn,
-                    cs.KEY_NAME: method_name,
-                    cs.KEY_START_LINE: func_node.start_point[0] + 1,
-                    cs.KEY_END_LINE: func_node.end_point[0] + 1,
-                    cs.KEY_DOCSTRING: self._get_docstring(func_node),
-                }
+                method_props = self._build_js_ts_function_props(
+                    method_qn, method_name, func_node, module_qn
+                )
+                method_props[cs.KEY_PARENT_QN] = constructor_qn
                 logger.info(
                     lg.JS_PROTOTYPE_METHOD_FOUND.format(
                         method_name=method_name, method_qn=method_qn
@@ -408,13 +472,9 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             method_func_node: The method AST node.
             module_qn: The module qualified name.
         """
-        method_props: PropertyDict = {
-            cs.KEY_QUALIFIED_NAME: method_qn,
-            cs.KEY_NAME: method_name,
-            cs.KEY_START_LINE: method_func_node.start_point[0] + 1,
-            cs.KEY_END_LINE: method_func_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(method_func_node),
-        }
+        method_props = self._build_js_ts_function_props(
+            method_qn, method_name, method_func_node, module_qn
+        )
         logger.info(
             lg.JS_OBJECT_METHOD_FOUND.format(
                 method_name=method_name, method_qn=method_qn
@@ -685,13 +745,10 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
             function_node: The function AST node.
             log_message: Log message template to use.
         """
-        function_props: PropertyDict = {
-            cs.KEY_QUALIFIED_NAME: function_qn,
-            cs.KEY_NAME: function_name,
-            cs.KEY_START_LINE: function_node.start_point[0] + 1,
-            cs.KEY_END_LINE: function_node.end_point[0] + 1,
-            cs.KEY_DOCSTRING: self._get_docstring(function_node),
-        }
+        module_qn = function_qn.rsplit(cs.SEPARATOR_DOT, 1)[0]
+        function_props = self._build_js_ts_function_props(
+            function_qn, function_name, function_node, module_qn
+        )
 
         logger.debug(
             log_message.format(function_name=function_name, function_qn=function_qn)
