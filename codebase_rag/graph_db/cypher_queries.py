@@ -1,21 +1,4 @@
-"""
-This module centralizes all Cypher queries used in the application.
-
-It contains both static query strings for common operations and functions to
-dynamically build more complex queries. This approach helps in maintaining
-and debugging database interactions.
-
-The queries are organized into several categories:
--   Database management queries (e.g., deleting data, listing projects).
--   Example queries used in prompts to guide the LLM.
--   Data export queries for nodes and relationships.
--   Functions for building dynamic queries, such as creating constraints,
-    indexes, and MERGE statements for nodes and relationships.
-"""
-
 from codebase_rag.core.constants import CYPHER_DEFAULT_LIMIT
-
-# --- Database Management Queries ---
 
 CYPHER_DELETE_ALL = "MATCH (n) DETACH DELETE n;"
 """Deletes all nodes and relationships from the database."""
@@ -31,7 +14,121 @@ DETACH DELETE p, container, defined
 """
 """Deletes a specific project and all its associated nodes and relationships."""
 
-# --- Example Queries for LLM Prompts ---
+CYPHER_DELETE_ANALYSIS_REPORTS = """
+MATCH (p:Project {name: $project_name})-[:HAS_ANALYSIS]->(r:AnalysisReport)
+OPTIONAL MATCH (r)-[:HAS_METRIC]->(m:AnalysisMetric)
+DETACH DELETE m, r
+"""
+
+CYPHER_DELETE_ANALYSIS_RUNS = """
+MATCH (p:Project {name: $project_name})-[:HAS_RUN]->(run:AnalysisRun)
+OPTIONAL MATCH (run)-[:HAS_ANALYSIS]->(r:AnalysisReport)
+OPTIONAL MATCH (r)-[:HAS_METRIC]->(m:AnalysisMetric)
+DETACH DELETE m, r, run
+"""
+
+CYPHER_GET_LATEST_ANALYSIS_RUN = """
+MATCH (p:Project {name: $project_name})-[:HAS_RUN]->(run:AnalysisRun)
+RETURN run.analysis_timestamp AS analysis_timestamp, run.run_id AS run_id
+ORDER BY run.analysis_timestamp DESC
+LIMIT 1
+"""
+
+CYPHER_GET_LATEST_GIT_HEAD = """
+MATCH (p:Project {name: $project_name})-[:HAS_RUN]->(run:AnalysisRun)
+RETURN run.git_head AS git_head
+ORDER BY run.analysis_timestamp DESC
+LIMIT 1
+"""
+
+CYPHER_GET_LATEST_ANALYSIS_REPORT = """
+MATCH (p:Project {name: $project_name})-[:HAS_ANALYSIS]->(r:AnalysisReport)
+RETURN r.analysis_summary AS analysis_summary,
+       r.analysis_timestamp AS analysis_timestamp,
+       r.analysis_run_id AS run_id
+ORDER BY r.analysis_timestamp DESC
+LIMIT 1
+"""
+
+CYPHER_GET_LATEST_ANALYSIS_REPORTS = """
+MATCH (p:Project)-[:HAS_ANALYSIS]->(r:AnalysisReport)
+WITH p, r ORDER BY r.analysis_timestamp DESC
+WITH p, collect(r)[0] AS latest
+RETURN p.name AS project_name,
+       latest.analysis_timestamp AS analysis_timestamp,
+       latest.analysis_summary AS analysis_summary,
+       latest.analysis_run_id AS run_id
+ORDER BY project_name
+"""
+
+CYPHER_GET_LATEST_METRIC = """
+MATCH (p:Project {name: $project_name})-[:HAS_RUN]->(run:AnalysisRun)
+MATCH (run)-[:HAS_ANALYSIS]->(r:AnalysisReport)-[:HAS_METRIC]->(m:AnalysisMetric)
+WHERE m.metric_name = $metric_name
+RETURN m.metric_value AS metric_value, run.analysis_timestamp AS analysis_timestamp
+ORDER BY run.analysis_timestamp DESC
+LIMIT 1
+"""
+
+CYPHER_GET_METRIC_TIMELINE = """
+MATCH (p:Project {name: $project_name})-[:HAS_RUN]->(run:AnalysisRun)
+MATCH (run)-[:HAS_ANALYSIS]->(r:AnalysisReport)-[:HAS_METRIC]->(m:AnalysisMetric)
+WHERE m.metric_name = $metric_name
+RETURN m.metric_name AS metric_name,
+       run.analysis_timestamp AS analysis_timestamp,
+       m.metric_value AS metric_value,
+       run.run_id AS run_id
+ORDER BY run.analysis_timestamp DESC
+LIMIT $limit
+"""
+
+CYPHER_BACKFILL_ANALYSIS_PROJECTS = """
+MATCH (r:AnalysisReport)
+WHERE r.project_name IS NOT NULL
+MERGE (p:Project {name: r.project_name})
+MERGE (p)-[:HAS_ANALYSIS]->(r)
+"""
+
+CYPHER_BACKFILL_ANALYSIS_RUNS = """
+MATCH (run:AnalysisRun)
+WHERE run.project_name IS NOT NULL
+MERGE (p:Project {name: run.project_name})
+MERGE (p)-[:HAS_RUN]->(run)
+"""
+
+CYPHER_BACKFILL_ANALYSIS_RUN_REPORT = """
+MATCH (run:AnalysisRun)
+WHERE run.analysis_run_id IS NOT NULL
+MATCH (r:AnalysisReport {analysis_run_id: run.analysis_run_id, project_name: run.project_name})
+MERGE (run)-[:HAS_ANALYSIS]->(r)
+"""
+
+CYPHER_BACKFILL_ANALYSIS_METRICS = """
+MATCH (m:AnalysisMetric)
+WHERE m.project_name IS NOT NULL
+MATCH (r:AnalysisReport {analysis_run_id: m.analysis_run_id, project_name: m.project_name})
+MERGE (r)-[:HAS_METRIC]->(m)
+"""
+
+CYPHER_DELETE_MODULE_BY_PATH = """
+MATCH (m:Module {path: $path})
+OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..5]->(defined)
+DETACH DELETE defined
+DETACH DELETE m
+WITH $path AS path
+MATCH (f:File {path: path})
+DETACH DELETE f
+"""
+
+CYPHER_DELETE_DYNAMIC_EDGES_BY_PATH = """
+MATCH (m:Module {path: $path})
+OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..5]->(defined)
+WITH collect(DISTINCT m) + collect(DISTINCT defined) AS nodes
+UNWIND nodes AS node
+MATCH (node)-[r:CALLS|IMPORTS|EXPORTS|EXPORTS_MODULE|IMPLEMENTS_MODULE|INHERITS|IMPLEMENTS|OVERRIDES|RETURNS_TYPE|PARAMETER_TYPE|CAUGHT_BY|THROWS|DECORATES|ANNOTATES|REQUIRES_LIBRARY|DEPENDS_ON|DEPENDS_ON_EXTERNAL|HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|RENDERS_VIEW|USES_MIDDLEWARE|REGISTERS_SERVICE|ELOQUENT_RELATION|HOOKS|REGISTERS_BLOCK|USES_ASSET|USES_UTILITY|RESOLVES_IMPORT|USES_COMPONENT|HANDLES_ERROR|MUTATES_STATE|HAS_PARAMETER|HAS_TYPE_PARAMETER|EMBEDS|REQUESTS_ENDPOINT|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]-()
+DELETE r
+"""
+
 
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = f"""MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
@@ -88,7 +185,6 @@ RETURN m.name AS name, m.qualified_name AS qualified_name, labels(m) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 """Example query to find methods defined by a specific class."""
 
-# --- Data Export and Retrieval Queries ---
 
 CYPHER_EXPORT_NODES = """
 MATCH (n)
@@ -101,6 +197,52 @@ MATCH (a)-[r]->(b)
 RETURN id(a) as from_id, id(b) as to_id, type(r) as type, properties(r) as properties
 """
 """Exports all relationships with their source/target IDs, type, and properties."""
+
+CYPHER_EXPORT_PROJECT_NODES = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(container)
+WITH collect(DISTINCT p) + collect(DISTINCT container) AS seed
+UNWIND seed AS s
+MATCH (s)-[*0..2]-(n)
+RETURN DISTINCT id(n) as node_id, labels(n) as labels, properties(n) as properties
+"""
+
+CYPHER_EXPORT_PROJECT_RELATIONSHIPS = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(container)
+WITH collect(DISTINCT p) + collect(DISTINCT container) AS seed
+UNWIND seed AS s
+MATCH (s)-[*0..2]-(n)
+WITH collect(DISTINCT n) AS nodes
+UNWIND nodes AS n
+MATCH (n)-[r]->(m)
+WHERE m IN nodes
+RETURN id(n) as from_id, id(m) as to_id, type(r) as type, properties(r) as properties
+"""
+
+CYPHER_EXPORT_PROJECT_NODES_PAGED = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(container)
+WITH collect(DISTINCT p) + collect(DISTINCT container) AS seed
+UNWIND seed AS s
+MATCH (s)-[*0..2]-(n)
+RETURN DISTINCT id(n) as node_id, labels(n) as labels, properties(n) as properties
+SKIP $offset LIMIT $limit
+"""
+
+CYPHER_EXPORT_PROJECT_RELATIONSHIPS_PAGED = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(container)
+WITH collect(DISTINCT p) + collect(DISTINCT container) AS seed
+UNWIND seed AS s
+MATCH (s)-[*0..2]-(n)
+WITH collect(DISTINCT n) AS nodes
+UNWIND nodes AS n
+MATCH (n)-[r]->(m)
+WHERE m IN nodes
+RETURN id(n) as from_id, id(m) as to_id, type(r) as type, properties(r) as properties
+SKIP $offset LIMIT $limit
+"""
 
 CYPHER_RETURN_COUNT = "RETURN count(r) as created"
 """A query fragment to return the count of created relationships."""
@@ -123,8 +265,87 @@ LIMIT 1
 """
 """Finds a node by its fully qualified name and returns its details."""
 
+CYPHER_ANALYSIS_USAGE = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(n)
+WITH collect(DISTINCT n) AS nodes
+UNWIND nodes AS node
+WITH node
+MATCH ()-[r:CALLS|USES_COMPONENT|REQUESTS_ENDPOINT|RESOLVES_IMPORT|USES_ASSET|HANDLES_ERROR|MUTATES_STATE]->(node)
+RETURN node.qualified_name AS qualified_name,
+             labels(node)[0] AS label,
+             count(r) AS usage_count
+"""
 
-# --- Dynamic Query Builders ---
+CYPHER_ANALYSIS_USAGE_FILTERED = """
+MATCH (p:Project {name: $project_name})
+OPTIONAL MATCH (p)-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(n)
+WHERE $module_paths IS NULL OR m.path IN $module_paths
+WITH collect(DISTINCT n) AS nodes
+UNWIND nodes AS node
+WITH node
+MATCH ()-[r:CALLS|USES_COMPONENT|REQUESTS_ENDPOINT|RESOLVES_IMPORT|USES_ASSET|HANDLES_ERROR|MUTATES_STATE]->(node)
+RETURN node.qualified_name AS qualified_name,
+             labels(node)[0] AS label,
+             count(r) AS usage_count
+"""
+
+CYPHER_ANALYSIS_DEAD_CODE = """
+MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+WHERE (f:Function OR f:Method)
+    AND NOT (f)<-[:CALLS]-()
+    AND (f.is_exported IS NULL OR f.is_exported = false)
+    AND NOT f.name IN $entry_names
+    AND NOT ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators)
+RETURN f.qualified_name AS qualified_name,
+             f.name AS name,
+             m.path AS path,
+             f.start_line AS start_line
+"""
+
+CYPHER_ANALYSIS_DEAD_CODE_FILTERED = """
+MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+WHERE (f:Function OR f:Method)
+    AND ($module_paths IS NULL OR m.path IN $module_paths)
+    AND NOT (f)<-[:CALLS]-()
+    AND (f.is_exported IS NULL OR f.is_exported = false)
+    AND NOT f.name IN $entry_names
+    AND NOT ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators)
+RETURN f.qualified_name AS qualified_name,
+             f.name AS name,
+             m.path AS path,
+             f.start_line AS start_line
+"""
+
+CYPHER_ANALYSIS_TOTAL_FUNCTIONS = """
+MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+WHERE (f:Function OR f:Method)
+RETURN count(DISTINCT f) AS total_functions
+"""
+
+CYPHER_ANALYSIS_TOTAL_FUNCTIONS_FILTERED = """
+MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+WHERE (f:Function OR f:Method)
+    AND ($module_paths IS NULL OR m.path IN $module_paths)
+RETURN count(DISTINCT f) AS total_functions
+"""
+
+CYPHER_ANALYSIS_UNUSED_IMPORTS = """
+MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES]->(i:Import)
+WHERE NOT (i)-[:RESOLVES_IMPORT]->()
+RETURN m.path AS path,
+             i.import_source AS name,
+             i.qualified_name AS qualified_name
+"""
+
+CYPHER_ANALYSIS_UNUSED_IMPORTS_FILTERED = """
+MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES]->(i:Import)
+WHERE ($module_paths IS NULL OR m.path IN $module_paths)
+    AND NOT (i)-[:RESOLVES_IMPORT]->()
+RETURN m.path AS path,
+             i.import_source AS name,
+             i.qualified_name AS qualified_name
+"""
 
 
 def wrap_with_unwind(query: str) -> str:
@@ -157,6 +378,41 @@ WHERE id(n) IN [{placeholders}]
 RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
        labels(n) AS type, n.name AS name
 ORDER BY n.qualified_name
+"""
+
+
+def build_context_nodes_query(node_ids: list[int]) -> str:
+    placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
+    return f"""
+MATCH (n)
+WHERE id(n) IN [{placeholders}]
+OPTIONAL MATCH (m:Module)-[*0..1]-(n)
+WITH n, collect(DISTINCT m.path) AS paths
+RETURN id(n) AS node_id,
+       n.qualified_name AS qualified_name,
+       labels(n) AS type,
+       n.name AS name,
+       n.docstring AS docstring,
+       n.start_line AS start_line,
+       n.end_line AS end_line,
+       coalesce(n.path, paths[0]) AS path,
+       n.parameters AS parameters
+ORDER BY n.qualified_name
+"""
+
+
+def build_neighbor_nodes_query(
+    node_ids: list[int], hops: int, rel_types: list[str], limit: int
+) -> str:
+    placeholders = ", ".join(f"${i}" for i in range(len(node_ids)))
+    rel_filter = "|".join(rel_types)
+    rel_clause = f":{rel_filter}" if rel_filter else ""
+    return f"""
+MATCH (seed)
+WHERE id(seed) IN [{placeholders}]
+MATCH (seed)-[{rel_clause}*1..{hops}]-(neighbor)
+RETURN DISTINCT id(neighbor) AS node_id
+LIMIT {limit}
 """
 
 

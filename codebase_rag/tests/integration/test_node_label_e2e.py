@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -324,7 +324,7 @@ def get_node_labels(ingestor: MemgraphIngestor) -> set[str]:
     result = ingestor.fetch_all("MATCH (n) RETURN DISTINCT labels(n) AS labels")
     labels: set[str] = set()
     for row in result:
-        for label in row["labels"]:
+        for label in cast(list[str], row["labels"]):
             labels.add(label)
     return labels
 
@@ -335,7 +335,7 @@ def get_nodes_by_label(ingestor: MemgraphIngestor, label: str) -> list[dict]:
 
 def get_relationship_types(ingestor: MemgraphIngestor) -> set[str]:
     result = ingestor.fetch_all("MATCH ()-[r]->() RETURN DISTINCT type(r) AS type")
-    return {row["type"] for row in result}
+    return cast("set[str]", {row["type"] for row in result})
 
 
 @pytest.fixture

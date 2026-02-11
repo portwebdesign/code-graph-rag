@@ -1,22 +1,3 @@
-"""
-This module defines a collection of shared type definitions, protocols, and data
-structures used throughout the application.
-
-It centralizes type hints for complex data shapes, including those for graph data,
-language model configurations, tool arguments, and various API results. Using
-`TypedDict`, `NamedTuple`, `Protocol`, and `dataclass`, it provides static type
-checking support and improves code readability and maintainability.
-
-The definitions include:
--   Basic types for graph properties, node/relationship data, and query results.
--   Protocols for abstracting interfaces like database cursors, caches, and registries.
--   Typed dictionaries for structured data like model configurations, API responses,
-    and parsed code information.
--   Named tuples for simple, immutable data structures.
--   Enumerations for controlled vocabularies like node types.
--   Schema definitions for graph nodes and relationships.
-"""
-
 from __future__ import annotations
 
 from collections import defaultdict
@@ -35,11 +16,20 @@ if TYPE_CHECKING:
 
     from .models import LanguageSpec
 
-# Basic type aliases
 type LanguageLoader = Callable[[], Language] | None
 """A callable that returns a tree-sitter Language object, or None."""
 
-PropertyValue = str | int | float | bool | list[str] | None
+PropertyValue = (
+    str
+    | int
+    | float
+    | bool
+    | list[str]
+    | list[int]
+    | dict[str, "PropertyValue"]
+    | list[dict[str, "PropertyValue"]]
+    | None
+)
 """A type for values that can be stored as properties in the graph."""
 
 PropertyDict = dict[str, PropertyValue]
@@ -48,7 +38,12 @@ PropertyDict = dict[str, PropertyValue]
 type ResultScalar = str | int | float | bool | None
 """A scalar value that can be returned from a database query."""
 
-type ResultValue = ResultScalar | list[ResultScalar] | dict[str, ResultScalar]
+type ResultValue = (
+    ResultScalar
+    | list[ResultScalar]
+    | dict[str, ResultScalar]
+    | list[dict[str, ResultScalar]]
+)
 """A value in a database result row, which can be a scalar, list, or dict."""
 
 type ResultRow = dict[str, ResultValue]
@@ -65,7 +60,6 @@ class FunctionMatch(TypedDict):
     line_number: int
 
 
-# Types for batch database operations
 class NodeBatchRow(TypedDict):
     """A row for batch-creating nodes."""
 
@@ -91,7 +85,6 @@ class BatchWrapper(TypedDict):
     batch: Sequence[BatchParams]
 
 
-# Types for function and name lookups
 type SimpleName = str
 """A simple, unqualified name of a function, class, etc."""
 
@@ -122,7 +115,6 @@ class NodeType(StrEnum):
     UNION = "Union"
 
 
-# Trie and registry types
 type TrieNode = dict[str, TrieNode | QualifiedName | NodeType]
 """A node in the FunctionRegistryTrie."""
 
@@ -130,7 +122,6 @@ type FunctionRegistry = dict[QualifiedName, NodeType]
 """A direct mapping from qualified names to their node types."""
 
 
-# Protocols for structural typing
 class FunctionRegistryTrieProtocol(Protocol):
     """A protocol defining the interface for the function registry."""
 
@@ -149,6 +140,7 @@ class FunctionRegistryTrieProtocol(Protocol):
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]: ...
 
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
+    def __len__(self) -> int: ...
 
 
 class ASTCacheProtocol(Protocol):
@@ -181,10 +173,9 @@ class CursorProtocol(Protocol):
     def execute(
         self,
         query: str,
-        params: dict[str, PropertyValue]
-        | Sequence[BatchParams]
-        | BatchWrapper
-        | None = None,
+        params: (
+            dict[str, PropertyValue] | Sequence[BatchParams] | BatchWrapper | None
+        ) = None,
     ) -> None: ...
     def close(self) -> None: ...
     @property
@@ -209,8 +200,9 @@ class TreeSitterNodeProtocol(Protocol):
     @property
     def text(self) -> bytes: ...
 
+    def child_by_field_name(self, name: str) -> TreeSitterNodeProtocol | None: ...
 
-# Model and tool configuration types
+
 class ModelConfigKwargs(TypedDict, total=False):
     """Keyword arguments for configuring or updating a language model."""
 
@@ -223,7 +215,6 @@ class ModelConfigKwargs(TypedDict, total=False):
     service_account_file: str | None
 
 
-# Graph data structures
 class GraphMetadata(TypedDict):
     """Metadata associated with an exported graph."""
 
@@ -267,7 +258,6 @@ class GraphSummary(TypedDict):
     metadata: GraphMetadata
 
 
-# Search and embedding result types
 class EmbeddingQueryResult(TypedDict):
     """The result of a query for data to be embedded."""
 
@@ -288,7 +278,6 @@ class SemanticSearchResult(TypedDict):
     score: float
 
 
-# Language-specific parsing result types (Java example)
 class JavaClassInfo(TypedDict):
     """Information extracted for a Java class."""
 
@@ -336,7 +325,6 @@ class JavaMethodCallInfo(TypedDict):
     arguments: int
 
 
-# Agent and UI related types
 class CancelledResult(NamedTuple):
     """A result indicating that an operation was cancelled."""
 
@@ -379,7 +367,6 @@ CHAT_LOOP_UI = AgentLoopUI(
 )
 
 
-# Parser and query loading types
 class LanguageImport(NamedTuple):
     """Information needed to import a tree-sitter language grammar."""
 
@@ -389,7 +376,6 @@ class LanguageImport(NamedTuple):
     submodule_name: SupportedLanguage
 
 
-# Tool definition types
 class ToolNames(NamedTuple):
     """Standardized names for tools available to the LLM agent."""
 
@@ -469,7 +455,6 @@ class FunctionNodeProps(TypedDict, total=False):
     docstring: str | None
 
 
-# Types for the Multi-turn Conversation Protocol (MCP)
 MCPToolArguments = dict[str, str | int | None]
 """Arguments for a tool call in the MCP format."""
 
@@ -576,7 +561,6 @@ MCPHandlerType = Callable[..., Awaitable[MCPResultType]]
 """The signature for an MCP tool handler function."""
 
 
-# Graph schema definitions
 class NodeSchema(NamedTuple):
     """Defines the schema for a type of node in the graph."""
 
@@ -593,26 +577,27 @@ class RelationshipSchema(NamedTuple):
 
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
-    NodeSchema(NodeLabel.PROJECT, "{name: string}"),
+    NodeSchema(NodeLabel.PROJECT, "{name: string, path: string, language: string}"),
     NodeSchema(
         NodeLabel.PACKAGE, "{qualified_name: string, name: string, path: string}"
     ),
     NodeSchema(NodeLabel.FOLDER, "{path: string, name: string}"),
     NodeSchema(NodeLabel.FILE, "{path: string, name: string, extension: string}"),
     NodeSchema(
-        NodeLabel.MODULE, "{qualified_name: string, name: string, path: string}"
+        NodeLabel.MODULE,
+        "{qualified_name: string, name: string, path: string, pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(NodeLabel.INTERFACE, "{qualified_name: string, name: string}"),
     NodeSchema(NodeLabel.ENUM, "{qualified_name: string, name: string}"),
@@ -626,7 +611,22 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.MODULE_IMPLEMENTATION,
         "{qualified_name: string, name: string, path: string, implements_module: string}",
     ),
-    NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version_spec: string}"),
+    NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version: string}"),
+    NodeSchema(NodeLabel.LIBRARY, "{name: string, library_id: string}"),
+    NodeSchema(
+        NodeLabel.DOC_CHUNK,
+        "{qualified_name: string, title: string, topic: string, doc_version: string, status: string}",
+    ),
+    NodeSchema(NodeLabel.CONCEPT, "{name: string}"),
+    NodeSchema(NodeLabel.SOURCE, "{name: string}"),
+    NodeSchema(
+        NodeLabel.ANALYSIS_REPORT,
+        "{title: string, type: string, generated_at: string}",
+    ),
+    NodeSchema(NodeLabel.ANALYSIS_METRIC, "{name: string, value: float, unit: string}"),
+    NodeSchema(
+        NodeLabel.ANALYSIS_RUN, "{timestamp: string, status: string, duration: float}"
+    ),
 )
 
 
@@ -707,8 +707,98 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.EXTERNAL_PACKAGE,),
     ),
     RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.CLASS, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.REQUIRES_LIBRARY,
+        (NodeLabel.EXTERNAL_PACKAGE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.CLASS, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.DEPENDS_ON,
+        (NodeLabel.MODULE, NodeLabel.CLASS, NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (NodeLabel.LIBRARY,),
+        RelationshipType.HAS_DOC,
+        (NodeLabel.DOC_CHUNK,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.DOC_CHUNK,),
+        RelationshipType.DESCRIBES,
+        (NodeLabel.CONCEPT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.DOC_CHUNK,),
+        RelationshipType.USED_IN,
+        (NodeLabel.PROJECT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT,),
+        RelationshipType.USES_LIBRARY,
+        (NodeLabel.LIBRARY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.DOC_CHUNK,),
+        RelationshipType.SOURCED_FROM,
+        (NodeLabel.SOURCE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.DOC_CHUNK,),
+        RelationshipType.DOCUMENTS_EXTERNAL,
+        (NodeLabel.EXTERNAL_PACKAGE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.RETURNS_TYPE,
+        (NodeLabel.TYPE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.PARAMETER_TYPE,
+        (NodeLabel.TYPE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.TYPE,),
+        RelationshipType.CAUGHT_BY,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.THROWS,
+        (NodeLabel.TYPE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
+        RelationshipType.DECORATES,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
+        RelationshipType.ANNOTATES,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
+    ),
+    RelationshipSchema(
         (NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.CALLS,
         (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT,),
+        RelationshipType.HAS_METRIC,
+        (NodeLabel.ANALYSIS_METRIC,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT,),
+        RelationshipType.HAS_RUN,
+        (NodeLabel.ANALYSIS_RUN,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ANALYSIS_RUN,),
+        RelationshipType.HAS_REPORT,
+        (NodeLabel.ANALYSIS_REPORT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ANALYSIS_REPORT,),
+        RelationshipType.REQUIRES_DOC,
+        (NodeLabel.DOC_CHUNK,),
     ),
 )

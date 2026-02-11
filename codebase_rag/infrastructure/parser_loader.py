@@ -1,27 +1,6 @@
-"""
-This module is responsible for loading tree-sitter parsers and queries for
-various programming languages.
-
-It dynamically loads the necessary language grammars, either from pre-installed
-`tree-sitter` packages or by attempting to build them from git submodules if
-they are not found. This allows the application to support multiple languages
-for parsing without requiring all grammars to be installed beforehand.
-
-Key functionalities include:
--   Dynamically importing or building tree-sitter language bindings.
--   Creating `tree-sitter.Language` and `tree-sitter.Parser` objects for each
-    supported language.
--   Constructing language-specific `tree-sitter.Query` objects for identifying
-    key code structures like functions, classes, calls, and imports based on
-    definitions in `language_spec.py`.
--   Handling failures gracefully by logging issues and skipping languages that
-    cannot be loaded.
-
-The main entry point is the `load_parsers()` function, which returns dictionaries
-of initialized parsers and queries, ready to be used for code analysis.
-"""
-
+import ctypes
 import importlib
+import os
 import subprocess
 import sys
 from copy import deepcopy
@@ -37,6 +16,7 @@ from codebase_rag.data_models.types_defs import (
     LanguageLoader,
     LanguageQueries,
 )
+from codebase_rag.parsers.query_engine_adapter import apply_scm_query_overrides
 
 from . import exceptions as ex
 from .language_spec import LANGUAGE_SPECS, LanguageSpec
@@ -139,7 +119,7 @@ def _try_import_language(
         module = importlib.import_module(module_path)
         loader: LanguageLoader = getattr(module, attr_name)
         return loader
-    except ImportError:
+    except (ImportError, AttributeError):
         return _try_load_from_submodule(lang_name)
 
 
@@ -206,6 +186,84 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.TreeSitterModule.LUA,
             cs.QUERY_LANGUAGE,
             cs.SupportedLanguage.LUA,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.RUBY,
+            cs.TreeSitterModule.RUBY,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.RUBY,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.KOTLIN,
+            cs.TreeSitterModule.KOTLIN,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.KOTLIN,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.YAML,
+            cs.TreeSitterModule.YAML,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.YAML,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.JSON,
+            cs.TreeSitterModule.JSON,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.JSON,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.PHP,
+            cs.TreeSitterModule.PHP,
+            f"{cs.LANG_ATTR_PREFIX}{cs.SupportedLanguage.PHP}",
+            cs.SupportedLanguage.PHP,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.HTML,
+            cs.TreeSitterModule.HTML,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.HTML,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.CSS,
+            cs.TreeSitterModule.CSS,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.CSS,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.SCSS,
+            cs.TreeSitterModule.SCSS,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.SCSS,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.GRAPHQL,
+            cs.TreeSitterModule.GRAPHQL,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.GRAPHQL,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.DOCKERFILE,
+            cs.TreeSitterModule.DOCKERFILE,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.DOCKERFILE,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.SQL,
+            cs.TreeSitterModule.SQL,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.SQL,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.VUE,
+            cs.TreeSitterModule.VUE,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.VUE,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.SVELTE,
+            cs.TreeSitterModule.SVELTE,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.SVELTE,
         ),
     ]
 
@@ -297,7 +355,9 @@ def _create_optional_query(language: Language, pattern: str | None) -> Query | N
     Returns:
         Query | None: A Query object, or None if the pattern is empty.
     """
-    return Query(language, pattern) if pattern else None
+    if not pattern or not pattern.strip():
+        return None
+    return Query(language, pattern)
 
 
 def _create_locals_query(
@@ -379,13 +439,22 @@ def _process_language(
     Returns:
         bool: True if the language was processed successfully, False otherwise.
     """
+    if _is_windows_unsupported(lang_name):
+        logger.warning(
+            f"Skipping {lang_name} parser on Windows (enable CODEGRAPH_WINDOWS_ALLOW_UNSUPPORTED=1 to force)."
+        )
+        return False
+
     lang_lib = LANGUAGE_LIBRARIES.get(lang_name)
     if not lang_lib:
         logger.debug(ls.LIB_NOT_AVAILABLE.format(lang=lang_name))
         return False
 
     try:
-        language = Language(lang_lib())
+        lang_obj = lang_lib()
+        if isinstance(lang_obj, int):
+            lang_obj = ctypes.c_void_p(lang_obj)
+        language = lang_obj if isinstance(lang_obj, Language) else Language(lang_obj)
         parser = Parser(language)
         parsers[lang_name] = parser
         queries[lang_name] = _create_language_queries(
@@ -396,6 +465,23 @@ def _process_language(
     except Exception as e:
         logger.warning(ls.GRAMMAR_LOAD_FAILED.format(lang=lang_name, error=e))
         return False
+
+
+def _is_windows_unsupported(lang_name: cs.SupportedLanguage) -> bool:
+    if os.name != "nt":
+        return False
+
+    allow_unsupported = os.getenv(
+        "CODEGRAPH_WINDOWS_ALLOW_UNSUPPORTED", ""
+    ).lower() in {"1", "true", "yes"}
+
+    if allow_unsupported:
+        return False
+
+    return lang_name in {
+        cs.SupportedLanguage.GRAPHQL,
+        cs.SupportedLanguage.VUE,
+    }
 
 
 def load_parsers() -> tuple[
@@ -427,5 +513,31 @@ def load_parsers() -> tuple[
     if not available_languages:
         raise RuntimeError(ex.NO_LANGUAGES)
 
+    queries = apply_scm_query_overrides(parsers, queries)
+
     logger.info(ls.INITIALIZED_PARSERS.format(languages=", ".join(available_languages)))
     return parsers, queries
+
+
+def get_parser_and_language(
+    language: cs.SupportedLanguage | str,
+) -> tuple[Parser | None, Language | None]:
+    if isinstance(language, str):
+        try:
+            language = cs.SupportedLanguage(language)
+        except ValueError:
+            return None, None
+
+    if _is_windows_unsupported(language):
+        return None, None
+
+    lang_loader = LANGUAGE_LIBRARIES.get(language)
+    if not lang_loader:
+        return None, None
+
+    try:
+        lang_obj = Language(lang_loader())
+        parser = Parser(lang_obj)
+        return parser, lang_obj
+    except Exception:
+        return None, None

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -120,7 +120,7 @@ class TestDeleteProject:
         project2_nodes = memgraph_ingestor.fetch_all(
             "MATCH (n) WHERE n.qualified_name STARTS WITH 'project2.' RETURN count(n) AS count"
         )
-        assert project2_nodes[0]["count"] > 0
+        assert cast(int, project2_nodes[0]["count"]) > 0
 
     def test_delete_project_removes_files_and_folders(
         self, memgraph_ingestor: MemgraphIngestor, project1_path: Path
@@ -130,7 +130,7 @@ class TestDeleteProject:
         files_before = memgraph_ingestor.fetch_all(
             "MATCH (f:File) RETURN count(f) AS count"
         )
-        assert files_before[0]["count"] > 0
+        assert cast(int, files_before[0]["count"]) > 0
 
         memgraph_ingestor.delete_project("project1")
 
@@ -170,9 +170,9 @@ class TestMultiProjectIsolation:
             "RETURN f.qualified_name AS name"
         )
 
-        assert sorted([f["name"] for f in project2_functions_before]) == sorted(
-            [f["name"] for f in project2_functions_after]
-        )
+        assert sorted(
+            [cast(str, f["name"]) for f in project2_functions_before]
+        ) == sorted([cast(str, f["name"]) for f in project2_functions_after])
 
     def test_projects_have_separate_namespaces(
         self,

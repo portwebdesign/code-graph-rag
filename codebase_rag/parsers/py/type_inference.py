@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as lg
 from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
     SimpleNameLookup,
 )
 
-from ...core import constants as cs
-from ...core import logs as lg
 from ..import_processor import ImportProcessor
 from .ast_analyzer import PythonAstAnalyzerMixin
 from .expression_analyzer import PythonExpressionAnalyzerMixin
@@ -31,6 +31,13 @@ class PythonTypeInferenceEngine(
     PythonAstAnalyzerMixin,
     PythonVariableAnalyzerMixin,
 ):
+    """
+    Main engine for inferring types in Python ASTs.
+
+    Inherits from expression, AST, and variable analyzer mixins to provide comprehensive
+    type inference capabilities.
+    """
+
     def __init__(
         self,
         import_processor: ImportProcessor,
@@ -61,6 +68,16 @@ class PythonTypeInferenceEngine(
     def build_local_variable_type_map(
         self, caller_node: Node, module_qn: str
     ) -> dict[str, str]:
+        """
+        Build a map of local variable names to their inferred types.
+
+        Args:
+            caller_node: The AST node representing the scope (e.g. function body).
+            module_qn: The module qualified name.
+
+        Returns:
+            Dictionary mapping variable names to inferred type strings.
+        """
         local_var_types: dict[str, str] = {}
 
         try:

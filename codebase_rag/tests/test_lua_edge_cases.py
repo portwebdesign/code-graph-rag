@@ -14,7 +14,7 @@ from codebase_rag.tests.conftest import create_and_run_updater
         ("local ok, json = pcall(require, 'json')", True),
         ("-- require commented out\n-- local x = require 'x'", False),
     ],
-)  # type: ignore
+)
 def test_lua_require_edge_cases(
     temp_repo: Path, snippet: str, present: bool, mock_ingestor: MagicMock
 ) -> None:

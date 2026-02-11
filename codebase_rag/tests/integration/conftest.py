@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import time
 from collections.abc import Generator
@@ -10,12 +11,16 @@ import pytest
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 if TYPE_CHECKING:
-    import mgclient
+    import mgclient  # ty: ignore[unresolved-import]
 
 
 @pytest.fixture(scope="session")
 def memgraph_container() -> Generator[dict[str, str | int], None, None]:
     pytest.importorskip("testcontainers")
+    if os.getenv("CODEGRAPH_SKIP_INTEGRATION") == "1":
+        pytest.skip("Integration tests disabled via CODEGRAPH_SKIP_INTEGRATION")
+    if os.name == "nt" and not os.path.exists(r"\\.\pipe\docker_engine"):
+        pytest.skip("Docker engine not available on this host")
     import time
 
     from testcontainers.core.container import DockerContainer

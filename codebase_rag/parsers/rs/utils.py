@@ -1,28 +1,13 @@
-"""
-This module provides utility functions specifically for parsing Rust source code.
-
-It contains helpers for handling Rust's complex module and import (`use`) system,
-as well as its trait implementation (`impl`) blocks.
-
-Key functionalities:
--   `extract_use_imports`: Recursively parses a `use` declaration to extract all
-    imported items, including aliases, wildcards, and nested groups.
--   `extract_impl_target`: Finds the name of the trait or struct that an `impl`
-    block is for.
--   `build_module_path`: Traverses up the AST from a given node to construct its
-    module path based on parent `mod` items.
-"""
-
 from collections.abc import Sequence
 
 from tree_sitter import Node
 
-from ...core import constants as cs
+from codebase_rag.core import constants as cs
+
 from ..utils import safe_decode_text
 
 
 def _collect_path_parts(node: Node, parts: list[str]) -> None:
-    """Recursively collects parts of a qualified path."""
     match node.type:
         case cs.TS_IDENTIFIER | cs.TS_TYPE_IDENTIFIER:
             if part := safe_decode_text(node):
@@ -37,7 +22,6 @@ def _collect_path_parts(node: Node, parts: list[str]) -> None:
 
 
 def _extract_path_from_node(node: Node) -> str:
-    """Extracts a full path string (e.g., `std::collections::HashMap`) from a node."""
     match node.type:
         case cs.TS_IDENTIFIER | cs.TS_TYPE_IDENTIFIER:
             return safe_decode_text(node) or ""
@@ -52,7 +36,6 @@ def _extract_path_from_node(node: Node) -> str:
 
 
 def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> None:
-    """Recursively processes a `use` tree to extract all imports."""
     match node.type:
         case cs.TS_IDENTIFIER | cs.TS_TYPE_IDENTIFIER:
             if name := safe_decode_text(node):
@@ -93,7 +76,6 @@ def _process_use_tree(node: Node, base_path: str, imports: dict[str, str]) -> No
 
 
 def _process_use_as_clause(node: Node, base_path: str, imports: dict[str, str]) -> None:
-    """Processes a `use ... as ...` alias clause."""
     original_path = ""
     alias_name = ""
 
@@ -117,7 +99,6 @@ def _process_use_as_clause(node: Node, base_path: str, imports: dict[str, str]) 
 
 
 def _process_use_wildcard(node: Node, base_path: str, imports: dict[str, str]) -> None:
-    """Processes a wildcard `*` import."""
     if wildcard_base := next(
         (
             _extract_path_from_node(child)
@@ -136,7 +117,6 @@ def _process_use_wildcard(node: Node, base_path: str, imports: dict[str, str]) -
 def _process_scoped_use_list(
     node: Node, base_path: str, imports: dict[str, str]
 ) -> None:
-    """Processes a scoped use list, e.g., `std::{collections, io}`."""
     new_base_path = ""
 
     for child in node.children:
@@ -159,15 +139,6 @@ def _process_scoped_use_list(
 
 
 def extract_impl_target(impl_node: Node) -> str | None:
-    """
-    Extracts the target struct or trait from a Rust `impl` block.
-
-    Args:
-        impl_node (Node): The `impl_item` AST node.
-
-    Returns:
-        str | None: The name of the struct or trait being implemented.
-    """
     if impl_node.type != cs.TS_IMPL_ITEM:
         return None
 
@@ -193,15 +164,6 @@ def extract_impl_target(impl_node: Node) -> str | None:
 
 
 def extract_use_imports(use_node: Node) -> dict[str, str]:
-    """
-    Extracts all imports from a Rust `use` declaration.
-
-    Args:
-        use_node (Node): The `use_declaration` AST node.
-
-    Returns:
-        dict[str, str]: A dictionary mapping local names to their full import paths.
-    """
     if use_node.type != cs.TS_USE_DECLARATION:
         return {}
 
@@ -220,18 +182,6 @@ def build_module_path(
     include_classes: bool = False,
     class_node_types: Sequence[str] | None = None,
 ) -> list[str]:
-    """
-    Builds a module path for a node by traversing up its ancestor `mod` items.
-
-    Args:
-        node (Node): The starting node.
-        include_impl_targets (bool): Whether to include `impl` targets in the path.
-        include_classes (bool): Whether to include class-like structures in the path.
-        class_node_types (Sequence[str] | None): The node types to consider as classes.
-
-    Returns:
-        list[str]: A list of path parts representing the module hierarchy.
-    """
     path_parts: list[str] = []
     current = node.parent
 

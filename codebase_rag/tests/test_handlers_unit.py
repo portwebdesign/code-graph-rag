@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from tree_sitter import Language, Parser
 
 from codebase_rag.core import constants as cs
+from codebase_rag.data_models.types_defs import ASTNode
 from codebase_rag.infrastructure.language_spec import LANGUAGE_SPECS
 from codebase_rag.parsers.handlers.base import BaseLanguageHandler
 from codebase_rag.parsers.handlers.cpp import CppHandler
@@ -18,7 +19,12 @@ from codebase_rag.parsers.handlers.rust import RustHandler
 from codebase_rag.tests.conftest import create_mock_node
 
 if TYPE_CHECKING:
-    from codebase_rag.data_models.types_defs import ASTNode
+    pass
+
+
+def _as_ast(node: object) -> ASTNode:
+    return cast(ASTNode, node)
+
 
 try:
     import tree_sitter_javascript as tsjs
@@ -115,17 +121,17 @@ class TestBaseLanguageHandler:
     def test_is_inside_method_with_object_literals_returns_false(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
-        assert handler.is_inside_method_with_object_literals(node) is False
+        assert handler.is_inside_method_with_object_literals(_as_ast(node)) is False
 
     def test_is_class_method_returns_false(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_METHOD_DEFINITION)
-        assert handler.is_class_method(node) is False
+        assert handler.is_class_method(_as_ast(node)) is False
 
     def test_is_export_inside_function_returns_false(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_EXPORT_STATEMENT)
-        assert handler.is_export_inside_function(node) is False
+        assert handler.is_export_inside_function(_as_ast(node)) is False
 
     def test_extract_function_name_with_name_field(self) -> None:
         handler = BaseLanguageHandler()
@@ -134,18 +140,18 @@ class TestBaseLanguageHandler:
             cs.TS_FUNCTION_DECLARATION,
             fields={cs.TS_FIELD_NAME: name_node},
         )
-        assert handler.extract_function_name(node) == "myFunction"
+        assert handler.extract_function_name(_as_ast(node)) == "myFunction"
 
     def test_extract_function_name_without_name_returns_none(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
-        assert handler.extract_function_name(node) is None
+        assert handler.extract_function_name(_as_ast(node)) is None
 
     def test_build_function_qualified_name_simple(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
         result = handler.build_function_qualified_name(
-            node=node,
+            node=_as_ast(node),
             module_qn="project.module",
             func_name="myFunc",
             lang_config=None,
@@ -158,17 +164,17 @@ class TestBaseLanguageHandler:
     def test_is_function_exported_returns_false(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
-        assert handler.is_function_exported(node) is False
+        assert handler.is_function_exported(_as_ast(node)) is False
 
     def test_should_process_as_impl_block_returns_false(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_IMPL_ITEM)
-        assert handler.should_process_as_impl_block(node) is False
+        assert handler.should_process_as_impl_block(_as_ast(node)) is False
 
     def test_extract_impl_target_returns_none(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_IMPL_ITEM)
-        assert handler.extract_impl_target(node) is None
+        assert handler.extract_impl_target(_as_ast(node)) is None
 
     def test_build_method_qualified_name_simple(self) -> None:
         handler = BaseLanguageHandler()
@@ -176,24 +182,24 @@ class TestBaseLanguageHandler:
         result = handler.build_method_qualified_name(
             class_qn="project.module.MyClass",
             method_name="myMethod",
-            method_node=node,
+            method_node=_as_ast(node),
         )
         assert result == "project.module.MyClass.myMethod"
 
     def test_extract_base_class_name_with_text(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_IDENTIFIER, text="BaseClass")
-        assert handler.extract_base_class_name(node) == "BaseClass"
+        assert handler.extract_base_class_name(_as_ast(node)) == "BaseClass"
 
     def test_extract_base_class_name_without_text_returns_none(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_IDENTIFIER, text="")
-        assert handler.extract_base_class_name(node) is None
+        assert handler.extract_base_class_name(_as_ast(node)) is None
 
     def test_extract_decorators_returns_empty_list(self) -> None:
         handler = BaseLanguageHandler()
         node = create_mock_node(cs.TS_FUNCTION_DECLARATION)
-        assert handler.extract_decorators(node) == []
+        assert handler.extract_decorators(_as_ast(node)) == []
 
     @pytest.mark.skipif(not PYTHON_AVAILABLE, reason="Python parser not available")
     def test_build_nested_function_qn_with_parent_functions(
@@ -208,6 +214,7 @@ def outer():
         tree = python_parser.parse(code)
         outer_func = tree.root_node.children[0]
         body = outer_func.child_by_field_name("body")
+        assert body is not None
         inner_func = body.children[0]
 
         result = handler.build_nested_function_qn(
@@ -232,8 +239,10 @@ class MyClass:
         tree = python_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method = class_body.children[0]
         method_body = method.child_by_field_name("body")
+        assert method_body is not None
         nested_func = method_body.children[0]
 
         result = handler.build_nested_function_qn(
@@ -262,8 +271,10 @@ class MyClass {
 """
         tree = js_parser.parse(code)
         class_body = tree.root_node.children[0].child_by_field_name("body")
+        assert class_body is not None
         method_def = class_body.children[1]
         method_body = method_def.child_by_field_name("body")
+        assert method_body is not None
         return_stmt = method_body.children[1]
         obj = return_stmt.children[1]
         pair = obj.children[1]
@@ -284,6 +295,7 @@ const obj = {
         var_decl = tree.root_node.children[0]
         declarator = var_decl.children[1]
         obj = declarator.child_by_field_name("value")
+        assert obj is not None
         pair = obj.children[1]
 
         assert handler.is_inside_method_with_object_literals(pair) is False
@@ -299,6 +311,7 @@ class MyClass {
 """
         tree = js_parser.parse(code)
         class_body = tree.root_node.children[0].child_by_field_name("body")
+        assert class_body is not None
         method_def = class_body.children[1]
 
         assert handler.is_inside_method_with_object_literals(method_def) is False
@@ -312,6 +325,7 @@ class MyClass {
 """
         tree = js_parser.parse(code)
         class_body = tree.root_node.children[0].child_by_field_name("body")
+        assert class_body is not None
         method_node = class_body.children[1]
 
         assert handler.is_class_method(method_node) is True
@@ -342,6 +356,7 @@ function outer() {
         tree = js_parser.parse(code)
         func_node = tree.root_node.children[0]
         body = func_node.child_by_field_name("body")
+        assert body is not None
         expr_stmt = body.children[1]
 
         assert handler.is_export_inside_function(expr_stmt) is True
@@ -355,6 +370,7 @@ function outer() {
         var_decl = tree.root_node.children[0]
         declarator = var_decl.children[1]
         arrow_node = declarator.child_by_field_name("value")
+        assert arrow_node is not None
 
         result = handler.extract_function_name(arrow_node)
         assert result == "myArrow"
@@ -366,6 +382,7 @@ function outer() {
         expr_stmt = tree.root_node.children[0]
         call = expr_stmt.children[0]
         args = call.child_by_field_name("arguments")
+        assert args is not None
         arrow_node = args.children[1]
 
         result = handler.extract_function_name(arrow_node)
@@ -395,8 +412,10 @@ class MyClass {
 """
         tree = js_parser.parse(code)
         class_body = tree.root_node.children[0].child_by_field_name("body")
+        assert class_body is not None
         method_def = class_body.children[1]
         method_body = method_def.child_by_field_name("body")
+        assert method_body is not None
         return_stmt = method_body.children[1]
         obj = return_stmt.children[1]
         pair = obj.children[1]
@@ -426,8 +445,10 @@ class MyClass {
 """
         tree = js_parser.parse(code)
         class_body = tree.root_node.children[0].child_by_field_name("body")
+        assert class_body is not None
         method_def = class_body.children[1]
         method_body = method_def.child_by_field_name("body")
+        assert method_body is not None
         nested_func = method_body.children[1]
 
         result = handler.build_nested_function_qn(
@@ -782,6 +803,7 @@ class MyClass {
         tree = java_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method_node = class_body.children[1]
 
         result = handler.build_method_qualified_name(
@@ -805,6 +827,7 @@ class MyClass {
         tree = java_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method_node = class_body.children[1]
 
         result = handler.build_method_qualified_name(
@@ -827,6 +850,7 @@ class MyClass {
         tree = java_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method1 = class_body.children[1]
         method2 = class_body.children[2]
 
@@ -855,6 +879,7 @@ class MyClass {
         tree = java_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method_node = class_body.children[1]
 
         result = handler.extract_decorators(method_node)
@@ -872,6 +897,7 @@ class MyClass {
         tree = java_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method_node = class_body.children[1]
 
         result = handler.extract_decorators(method_node)
@@ -892,6 +918,7 @@ class MyClass {
         tree = java_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method_node = class_body.children[1]
 
         result = handler.extract_decorators(method_node)
@@ -919,6 +946,7 @@ class MyClass {
         tree = java_parser.parse(code)
         class_node = tree.root_node.children[0]
         class_body = class_node.child_by_field_name("body")
+        assert class_body is not None
         method_node = class_body.children[1]
 
         result = handler.extract_decorators(method_node)

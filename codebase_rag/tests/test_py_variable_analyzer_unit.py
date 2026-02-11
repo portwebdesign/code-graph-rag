@@ -1,14 +1,19 @@
 from collections import defaultdict
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.core import constants as cs
-from codebase_rag.data_models.types_defs import NodeType
+from codebase_rag.data_models.types_defs import ASTNode, NodeType
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.py.type_inference import PythonTypeInferenceEngine
 from codebase_rag.tests.conftest import create_mock_node
+
+
+def _as_ast(node: object) -> ASTNode:
+    return cast(ASTNode, node)
 
 
 @pytest.fixture
@@ -118,21 +123,21 @@ class TestFindBestClassMatch:
 class TestExtractVariableName:
     def test_extracts_identifier(self, engine: PythonTypeInferenceEngine) -> None:
         node = create_mock_node(cs.TS_PY_IDENTIFIER, "my_var")
-        result = engine._extract_variable_name(node)
+        result = engine._extract_variable_name(_as_ast(node))
         assert result == "my_var"
 
     def test_returns_none_for_non_identifier(
         self, engine: PythonTypeInferenceEngine
     ) -> None:
         node = create_mock_node("some_other_type", "text")
-        result = engine._extract_variable_name(node)
+        result = engine._extract_variable_name(_as_ast(node))
         assert result is None
 
     def test_returns_none_for_empty_text(
         self, engine: PythonTypeInferenceEngine
     ) -> None:
         node = create_mock_node(cs.TS_PY_IDENTIFIER, "")
-        result = engine._extract_variable_name(node)
+        result = engine._extract_variable_name(_as_ast(node))
         assert result is None
 
 
@@ -147,7 +152,7 @@ class TestProcessTypedParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_typed_parameter(param, local_var_types)
+        engine._process_typed_parameter(_as_ast(param), local_var_types)
 
         assert local_var_types["user_id"] == "int"
 
@@ -160,7 +165,7 @@ class TestProcessTypedParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_typed_parameter(param, local_var_types)
+        engine._process_typed_parameter(_as_ast(param), local_var_types)
 
         assert local_var_types == {}
 
@@ -172,7 +177,7 @@ class TestProcessTypedParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_typed_parameter(param, local_var_types)
+        engine._process_typed_parameter(_as_ast(param), local_var_types)
 
         assert local_var_types == {}
 
@@ -184,7 +189,7 @@ class TestProcessParameter:
         param = create_mock_node(cs.TS_PY_IDENTIFIER, "user")
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(_as_ast(param), local_var_types, "test.module")
 
         assert local_var_types == {}
 
@@ -198,7 +203,7 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(_as_ast(param), local_var_types, "test.module")
 
         assert local_var_types["count"] == "int"
 
@@ -213,7 +218,7 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(param, local_var_types, "test.module")
+        engine._process_parameter(_as_ast(param), local_var_types, "test.module")
 
         assert local_var_types["count"] == "int"
 
@@ -229,7 +234,7 @@ class TestInferListElementType:
         )
         list_node = create_mock_node(cs.TS_PY_LIST, children=[call_node])
 
-        result = engine._infer_list_element_type(list_node)
+        result = engine._infer_list_element_type(_as_ast(list_node))
 
         assert result == "User"
 
@@ -241,7 +246,7 @@ class TestInferListElementType:
         )
         list_node = create_mock_node(cs.TS_PY_LIST, children=[call_node])
 
-        result = engine._infer_list_element_type(list_node)
+        result = engine._infer_list_element_type(_as_ast(list_node))
 
         assert result is None
 
@@ -250,7 +255,7 @@ class TestInferListElementType:
     ) -> None:
         list_node = create_mock_node(cs.TS_PY_LIST, children=[])
 
-        result = engine._infer_list_element_type(list_node)
+        result = engine._infer_list_element_type(_as_ast(list_node))
 
         assert result is None
 
@@ -272,7 +277,7 @@ class TestAnalyzeForClause:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_for_clause(for_node, local_var_types, "test.module")
+        engine._analyze_for_clause(_as_ast(for_node), local_var_types, "test.module")
 
         assert local_var_types.get("item") == "Product"
 
@@ -284,7 +289,7 @@ class TestAnalyzeForClause:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_for_clause(for_node, local_var_types, "test.module")
+        engine._analyze_for_clause(_as_ast(for_node), local_var_types, "test.module")
 
         assert local_var_types == {}
 

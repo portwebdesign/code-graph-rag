@@ -1,19 +1,10 @@
-"""
-This module defines the `RustHandler`, a language-specific handler for Rust.
-
-It implements the `BaseLanguageHandler` protocol to provide Rust-specific logic
-for tasks like extracting attributes (which function as decorators), building
-fully qualified names considering Rust's module system, and handling `impl`
-blocks.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from codebase_rag.core import constants as cs
 from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS
 
-from ...core import constants as cs
 from ...utils.fqn_resolver import resolve_fqn_from_ast
 from ..rs import utils as rs_utils
 from ..utils import safe_decode_text
@@ -27,17 +18,17 @@ if TYPE_CHECKING:
 
 
 class RustHandler(BaseLanguageHandler):
-    """Language handler for Rust."""
+    """Handler for Rust specific AST operations."""
 
     def extract_decorators(self, node: ASTNode) -> list[str]:
         """
-        Extracts attributes (`#[...]` and `#![...]`) from a Rust node.
+        Extract attributes (decorators) from a node.
 
         Args:
-            node (ASTNode): The AST node to extract attributes from.
+            node: The AST node.
 
         Returns:
-            list[str]: A list of attribute strings.
+            A list of attribute strings.
         """
         outer_decorators: list[str] = []
         sibling = node.prev_named_sibling
@@ -73,22 +64,19 @@ class RustHandler(BaseLanguageHandler):
         project_name: str,
     ) -> str:
         """
-        Builds the fully qualified name for a Rust function.
-
-        It first attempts to use the precise FQN resolver and falls back to a
-        heuristic-based builder that considers `mod` blocks.
+        Build the qualified name for a function.
 
         Args:
-            node (ASTNode): The function's AST node.
-            module_qn (str): The FQN of the containing file-as-a-module.
-            func_name (str): The simple name of the function.
-            lang_config (LanguageSpec | None): The language specification.
-            file_path (Path | None): The path to the source file.
-            repo_path (Path): The root path of the repository.
-            project_name (str): The name of the project.
+            node: The function node.
+            module_qn: The module qualified name.
+            func_name: The function name.
+            lang_config: The language configuration.
+            file_path: The file path (required for FQN resolution).
+            repo_path: The repository root.
+            project_name: The project name.
 
         Returns:
-            str: The constructed fully qualified name.
+            The fully qualified function name.
         """
         if (
             fqn_config := LANGUAGE_FQN_SPECS.get(cs.SupportedLanguage.RUST)
@@ -104,24 +92,24 @@ class RustHandler(BaseLanguageHandler):
 
     def should_process_as_impl_block(self, node: ASTNode) -> bool:
         """
-        Determines if a node should be treated as a Rust `impl` block.
+        Check if the node should be processed as an impl block.
 
         Args:
-            node (ASTNode): The node to check.
+            node: The AST node.
 
         Returns:
-            bool: True if the node is an `impl_item`.
+            True if it is an impl block, False otherwise.
         """
         return node.type == cs.TS_IMPL_ITEM
 
     def extract_impl_target(self, node: ASTNode) -> str | None:
         """
-        Extracts the target struct or trait from a Rust `impl` block.
+        Extract the target (type) of an impl block.
 
         Args:
-            node (ASTNode): The `impl_item` AST node.
+            node: The impl block AST node.
 
         Returns:
-            str | None: The name of the struct or trait being implemented.
+            The target type name, or None if not found.
         """
         return rs_utils.extract_impl_target(node)

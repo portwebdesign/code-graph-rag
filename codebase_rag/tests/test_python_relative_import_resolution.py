@@ -1,10 +1,13 @@
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.data_models.types_defs import ASTNode
 from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure.parser_loader import load_parsers
+from codebase_rag.parsers.import_processor import ImportProcessor
 
 
 class TestRelativeImportResolution:
@@ -23,7 +26,16 @@ class TestRelativeImportResolution:
         )
         return updater
 
-    def test_single_dot_relative_import(self, mock_updater: GraphUpdater) -> None:
+    @pytest.fixture
+    def import_processor(self, mock_updater: GraphUpdater) -> ImportProcessor:
+        return cast(ImportProcessor, mock_updater.factory.import_processor)
+
+    def _as_ast(self, node: object) -> ASTNode:
+        return cast(ASTNode, node)
+
+    def test_single_dot_relative_import(
+        self, import_processor: ImportProcessor
+    ) -> None:
         """Test single dot relative import (from .) goes to parent package."""
         module_qn = "myproject.pkg.sub1.sub2.current"
 
@@ -38,15 +50,16 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node,  # ty: ignore[invalid-argument-type]
-            module_qn,
+        result = import_processor._resolve_relative_import(
+            self._as_ast(mock_relative_node), module_qn
         )
 
         expected = "pkg.sub1.sub2.utils"
         assert result == expected
 
-    def test_double_dot_relative_import(self, mock_updater: GraphUpdater) -> None:
+    def test_double_dot_relative_import(
+        self, import_processor: ImportProcessor
+    ) -> None:
         """Test double dot relative import (from ..) goes up two levels."""
         module_qn = "myproject.pkg.sub1.sub2.current"
 
@@ -61,15 +74,16 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node,  # ty: ignore[invalid-argument-type]
-            module_qn,
+        result = import_processor._resolve_relative_import(
+            self._as_ast(mock_relative_node), module_qn
         )
 
         expected = "pkg.sub1.shared"
         assert result == expected
 
-    def test_triple_dot_relative_import(self, mock_updater: GraphUpdater) -> None:
+    def test_triple_dot_relative_import(
+        self, import_processor: ImportProcessor
+    ) -> None:
         """Test triple dot relative import (from ...) goes up three levels."""
         module_qn = "myproject.pkg.sub1.sub2.current"
 
@@ -84,15 +98,16 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node,  # ty: ignore[invalid-argument-type]
-            module_qn,
+        result = import_processor._resolve_relative_import(
+            self._as_ast(mock_relative_node), module_qn
         )
 
         expected = "pkg.common"
         assert result == expected
 
-    def test_relative_import_to_package_root(self, mock_updater: GraphUpdater) -> None:
+    def test_relative_import_to_package_root(
+        self, import_processor: ImportProcessor
+    ) -> None:
         """Test relative import that goes to package root."""
         module_qn = "myproject.pkg.sub1.current"
 
@@ -107,16 +122,15 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node,  # ty: ignore[invalid-argument-type]
-            module_qn,
+        result = import_processor._resolve_relative_import(
+            self._as_ast(mock_relative_node), module_qn
         )
 
         expected = "config"
         assert result == expected
 
     def test_relative_import_without_module_name(
-        self, mock_updater: GraphUpdater
+        self, import_processor: ImportProcessor
     ) -> None:
         """Test relative import without additional module name (from . or from ..)."""
         module_qn = "myproject.pkg.sub1.sub2.current"
@@ -128,16 +142,15 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node,  # ty: ignore[invalid-argument-type]
-            module_qn,
+        result = import_processor._resolve_relative_import(
+            self._as_ast(mock_relative_node), module_qn
         )
 
         expected = "pkg.sub1"
         assert result == expected
 
     def test_relative_import_edge_case_shallow_module(
-        self, mock_updater: GraphUpdater
+        self, import_processor: ImportProcessor
     ) -> None:
         """Test relative import from a shallow module path."""
         module_qn = "myproject.pkg.current"
@@ -153,16 +166,15 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node,  # ty: ignore[invalid-argument-type]
-            module_qn,
+        result = import_processor._resolve_relative_import(
+            self._as_ast(mock_relative_node), module_qn
         )
 
         expected = "other"
         assert result == expected
 
     def test_relative_import_complex_module_path(
-        self, mock_updater: GraphUpdater
+        self, import_processor: ImportProcessor
     ) -> None:
         """Test relative import with complex nested module path."""
         module_qn = "myproject.pkg.sub1.sub2.current"
@@ -178,9 +190,8 @@ class TestRelativeImportResolution:
 
         mock_relative_node.children = [mock_import_prefix, mock_dotted_name]
 
-        result = mock_updater.factory.import_processor._resolve_relative_import(
-            mock_relative_node,  # ty: ignore[invalid-argument-type]
-            module_qn,
+        result = import_processor._resolve_relative_import(
+            self._as_ast(mock_relative_node), module_qn
         )
 
         expected = "pkg.sub1.sub2.helpers.database.models"

@@ -67,11 +67,11 @@ def integration_client(
         collection_name="code_embeddings",
         vectors_config=VectorParams(size=768, distance=Distance.COSINE),
     )
-    vs._CLIENT = client  # ty: ignore[invalid-assignment]
+    vs._CLIENT = client
 
     yield client
 
-    vs._CLIENT = None  # ty: ignore[invalid-assignment]
+    vs._CLIENT = None
     try:
         client.close()
     except Exception:

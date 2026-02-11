@@ -1,5 +1,6 @@
 from importlib.util import find_spec
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,6 +35,10 @@ def definition_processor(temp_repo: Path, mock_ingestor: MagicMock) -> GraphUpda
         queries=queries,
     )
     return updater
+
+
+def _as_mock_ingestor(updater: GraphUpdater) -> MagicMock:
+    return cast(MagicMock, updater.ingestor)
 
 
 @pytest.mark.skipif(not PY_AVAILABLE, reason="tree-sitter-python not available")
@@ -180,6 +185,7 @@ def my_func():
             if child.type == "function_definition":
                 func_node = child
                 break
+        assert func_node is not None
 
         from codebase_rag.parsers.handlers.python import PythonHandler
 
@@ -202,6 +208,7 @@ def my_func():
             if child.type == "function_definition":
                 func_node = child
                 break
+        assert func_node is not None
 
         from codebase_rag.parsers.handlers.python import PythonHandler
 
@@ -224,6 +231,7 @@ def my_func():
             if child.type == "function_definition":
                 func_node = child
                 break
+        assert func_node is not None
 
         from codebase_rag.parsers.handlers.python import PythonHandler
 
@@ -244,6 +252,7 @@ def my_func():
             if child.type == "function_definition":
                 func_node = child
                 break
+        assert func_node is not None
 
         from codebase_rag.parsers.handlers.python import PythonHandler
 
@@ -278,6 +287,7 @@ class MyClass:
             if child.type == "class_definition":
                 class_node = child
                 break
+        assert class_node is not None
 
         from codebase_rag.parsers.handlers.python import PythonHandler
 
@@ -342,7 +352,8 @@ dev = ["pytest>=7.0", "ruff"]
         )
         definition_processor.ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        ingestor = cast(MagicMock, definition_processor.ingestor)
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -372,9 +383,10 @@ flask[async]>=2.0
         definition_processor.factory.definition_processor.process_dependencies(
             requirements
         )
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -407,9 +419,10 @@ flask[async]>=2.0
         definition_processor.factory.definition_processor.process_dependencies(
             package_json
         )
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -441,9 +454,10 @@ criterion = "0.5"
         )
 
         definition_processor.factory.definition_processor.process_dependencies(cargo)
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -474,9 +488,10 @@ require github.com/sirupsen/logrus v1.9.0
         )
 
         definition_processor.factory.definition_processor.process_dependencies(go_mod)
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -502,9 +517,10 @@ gem 'redis', '~> 5.0'
         )
 
         definition_processor.factory.definition_processor.process_dependencies(gemfile)
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -534,9 +550,10 @@ gem 'redis', '~> 5.0'
         )
 
         definition_processor.factory.definition_processor.process_dependencies(composer)
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -567,9 +584,10 @@ gem 'redis', '~> 5.0'
         )
 
         definition_processor.factory.definition_processor.process_dependencies(csproj)
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [
             c[0][1]["name"] for c in node_calls if c[0][0] == "ExternalPackage"
         ]
@@ -586,17 +604,16 @@ class TestAddDependency:
         definition_processor.factory.definition_processor._add_dependency(
             "test-package", ">=1.0.0"
         )
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
 
         assert len(external_packages) >= 1
         assert external_packages[0][0][1]["name"] == "test-package"
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
+        rel_calls = ingestor.ensure_relationship_batch.call_args_list
         depends_on = [c for c in rel_calls if c[0][1] == "DEPENDS_ON_EXTERNAL"]
 
         assert len(depends_on) >= 1
@@ -607,11 +624,10 @@ class TestAddDependency:
         definition_processor.factory.definition_processor._add_dependency(
             "dev-package", "^2.0.0", {"group": "dev"}
         )
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
+        rel_calls = ingestor.ensure_relationship_batch.call_args_list
         depends_on = [c for c in rel_calls if c[0][1] == "DEPENDS_ON_EXTERNAL"]
 
         assert len(depends_on) >= 1
@@ -622,14 +638,16 @@ class TestAddDependency:
     def test_add_dependency_skips_python(
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
-        definition_processor.ingestor.reset_mock()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.reset_mock()
 
         definition_processor.factory.definition_processor._add_dependency(
             "python", ">=3.8"
         )
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
 
         assert len(external_packages) == 0
@@ -637,14 +655,16 @@ class TestAddDependency:
     def test_add_dependency_skips_php(
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
-        definition_processor.ingestor.reset_mock()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.reset_mock()
 
         definition_processor.factory.definition_processor._add_dependency(
             "php", ">=8.0"
         )
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
 
         assert len(external_packages) == 0
@@ -652,12 +672,14 @@ class TestAddDependency:
     def test_add_dependency_skips_empty_name(
         self, temp_repo: Path, definition_processor: GraphUpdater
     ) -> None:
-        definition_processor.ingestor.reset_mock()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.reset_mock()
 
         definition_processor.factory.definition_processor._add_dependency("", "1.0.0")
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
 
         assert len(external_packages) == 0
@@ -668,17 +690,16 @@ class TestAddDependency:
         definition_processor.factory.definition_processor._add_dependency(
             "unversioned-package", ""
         )
-        definition_processor.ingestor.flush_all()
+        ingestor = _as_mock_ingestor(definition_processor)
+        ingestor.flush_all()
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        node_calls = ingestor.ensure_node_batch.call_args_list
         external_packages = [c for c in node_calls if c[0][0] == "ExternalPackage"]
 
         assert len(external_packages) >= 1
         assert external_packages[-1][0][1]["name"] == "unversioned-package"
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
+        rel_calls = ingestor.ensure_relationship_batch.call_args_list
         depends_on = [c for c in rel_calls if c[0][1] == "DEPENDS_ON_EXTERNAL"]
         last_dep = depends_on[-1]
         props = last_dep.kwargs.get("properties", {})
@@ -706,7 +727,8 @@ class TestProcessFile:
         root_node, language = result
         assert language == SupportedLanguage.PYTHON
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        ingestor = _as_mock_ingestor(definition_processor)
+        node_calls = ingestor.ensure_node_batch.call_args_list
         module_nodes = [c for c in node_calls if c[0][0] == "Module"]
 
         assert len(module_nodes) >= 1
@@ -734,7 +756,8 @@ class TestProcessFile:
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        ingestor = _as_mock_ingestor(definition_processor)
+        node_calls = ingestor.ensure_node_batch.call_args_list
         module_nodes = [c for c in node_calls if c[0][0] == "Module"]
 
         assert len(module_nodes) >= 1
@@ -762,7 +785,8 @@ class TestProcessFile:
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        ingestor = _as_mock_ingestor(definition_processor)
+        node_calls = ingestor.ensure_node_batch.call_args_list
         module_nodes = [c for c in node_calls if c[0][0] == "Module"]
 
         assert len(module_nodes) >= 1
@@ -804,9 +828,8 @@ class TestProcessFile:
             {},
         )
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
+        ingestor = _as_mock_ingestor(definition_processor)
+        rel_calls = ingestor.ensure_relationship_batch.call_args_list
         contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
 
         assert len(contains_module) >= 1
@@ -835,9 +858,8 @@ class TestProcessFile:
             structural_elements,
         )
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
+        ingestor = _as_mock_ingestor(definition_processor)
+        rel_calls = ingestor.ensure_relationship_batch.call_args_list
         contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
 
         assert len(contains_module) >= 1
@@ -863,9 +885,8 @@ class TestProcessFile:
             {},
         )
 
-        rel_calls = (
-            definition_processor.ingestor.ensure_relationship_batch.call_args_list
-        )
+        ingestor = _as_mock_ingestor(definition_processor)
+        rel_calls = ingestor.ensure_relationship_batch.call_args_list
         contains_module = [c for c in rel_calls if c[0][1] == "CONTAINS_MODULE"]
 
         assert len(contains_module) >= 1
@@ -926,7 +947,8 @@ def standalone():
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        ingestor = _as_mock_ingestor(definition_processor)
+        node_calls = ingestor.ensure_node_batch.call_args_list
         node_types = {c[0][0] for c in node_calls}
 
         assert "Module" in node_types
@@ -966,7 +988,8 @@ def standalone():
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        ingestor = _as_mock_ingestor(definition_processor)
+        node_calls = ingestor.ensure_node_batch.call_args_list
         module_nodes = [c for c in node_calls if c[0][0] == "Module"]
         assert len(module_nodes) >= 1
 
@@ -998,7 +1021,8 @@ class TestProcessFileRust:
 
         assert result is not None
 
-        node_calls = definition_processor.ingestor.ensure_node_batch.call_args_list
+        ingestor = _as_mock_ingestor(definition_processor)
+        node_calls = ingestor.ensure_node_batch.call_args_list
         module_nodes = [c for c in node_calls if c[0][0] == "Module"]
 
         assert len(module_nodes) >= 1

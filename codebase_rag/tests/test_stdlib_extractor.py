@@ -5,8 +5,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codebase_rag.core import constants as cs
+from codebase_rag.data_models.types_defs import NodeType
 from codebase_rag.parsers import stdlib_extractor as se
 from codebase_rag.parsers.stdlib_extractor import StdlibExtractor
+from codebase_rag.state.registry_cache import FunctionRegistryTrie
 
 
 @pytest.fixture(autouse=True)
@@ -148,11 +150,10 @@ class TestStdlibExtractorExtractModulePath:
 
     @pytest.fixture
     def extractor_with_registry(self) -> StdlibExtractor:
-        registry = {
-            "myproject.models.User": "Class",
-            "myproject.utils.helper": "Function",
-            "myproject.services.api.get": "Method",
-        }
+        registry = FunctionRegistryTrie()
+        registry["myproject.models.User"] = NodeType.CLASS
+        registry["myproject.utils.helper"] = NodeType.FUNCTION
+        registry["myproject.services.api.get"] = NodeType.METHOD
         return StdlibExtractor(function_registry=registry)
 
     def test_returns_module_for_registered_class(
@@ -360,7 +361,8 @@ class TestEdgeCases:
         assert result == "module"
 
     def test_function_registry_entity_not_found(self) -> None:
-        registry = {"other.Module": "Class"}
+        registry = FunctionRegistryTrie()
+        registry["other.Module"] = NodeType.CLASS
         extractor = StdlibExtractor(function_registry=registry)
 
         result = extractor.extract_module_path(

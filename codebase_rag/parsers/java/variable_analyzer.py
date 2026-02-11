@@ -1,33 +1,12 @@
-"""
-This module defines the `JavaVariableAnalyzerMixin`, a component responsible for
-analyzing and inferring the types of local variables, parameters, and fields
-within a Java code scope.
-
-It traverses the AST within a given scope (like a method body) to find variable
-declarations, assignments, and other constructs that provide type information.
-This information is crucial for the `CallResolver` to accurately resolve method
-calls on objects.
-
-Key functionalities:
--   Analyzing method parameters and their declared types.
--   Processing local variable declarations, inferring types from initializers
-    where possible.
--   Analyzing class fields to determine their types.
--   Tracking assignments to update the known type of a variable.
--   Handling special constructs like enhanced for-loops.
-"""
-
-from __future__ import annotations
-
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import ASTNode
 
-from ...core import constants as cs
-from ...core import logs as ls
 from ..utils import safe_decode_text
 from .utils import (
     extract_class_info,
@@ -44,48 +23,44 @@ if TYPE_CHECKING:
 
 class JavaVariableAnalyzerMixin:
     """
-    A mixin providing methods to analyze variables and infer their types in Java.
+    Mixin for analyzing Java variables and scopes.
+
+    Handles analysis of parameters, local variables, class fields, and loop variables.
     """
 
-    ast_cache: ASTCacheProtocol
-    module_qn_to_file_path: dict[str, Path]
+    ast_cache: "ASTCacheProtocol"
+    module_qn_to_file_path: dict[str, "Path"]
     _lookup_cache: dict[str, str | None]
     _lookup_in_progress: set[str]
 
     @abstractmethod
-    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str:
-        """Abstract method to resolve a Java type name to its FQN."""
-        ...
+    def _resolve_java_type_name(self, type_name: str, module_qn: str) -> str: ...
 
     @abstractmethod
     def _resolve_java_method_return_type(
         self, method_call: str, module_qn: str
-    ) -> str | None:
-        """Abstract method to resolve the return type of a method call."""
-        ...
+    ) -> str | None: ...
 
     @abstractmethod
-    def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None:
-        """Abstract method to find the containing class for a node."""
-        ...
+    def _find_containing_java_class(self, node: ASTNode) -> ASTNode | None: ...
 
     @abstractmethod
     def build_variable_type_map(
         self, scope_node: ASTNode, module_qn: str
-    ) -> dict[str, str]:
-        """Abstract method to build the complete variable type map for a scope."""
-        ...
+    ) -> dict[str, str]: ...
 
     def _collect_all_variable_types(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """
-        Collects all variable type information within a given scope.
+        Collect all variable types defined in a given scope.
+
+        Aggregates parameters, local vars, class fields, and loop variables.
 
         Args:
-            scope_node (ASTNode): The node representing the scope to analyze.
-            local_var_types (dict[str, str]): The dictionary to populate with variable types.
-            module_qn (str): The qualified name of the module.
+            scope_node: The scope AST node.
+            local_var_types: Map to populate with variable types.
+            module_qn: Current module QN.
         """
         self._analyze_java_parameters(scope_node, local_var_types, module_qn)
         self._analyze_java_local_variables(scope_node, local_var_types, module_qn)
@@ -98,7 +73,14 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_parameters(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Analyzes method or constructor parameters to extract their types."""
+        """
+        Analyze method parameters and add them to variable type map.
+
+        Args:
+            scope_node: The scope node (usually method definition).
+            local_var_types: Variable type map.
+            module_qn: Module QN.
+        """
         params_node = scope_node.child_by_field_name(cs.FIELD_PARAMETERS)
         if not params_node:
             return
@@ -113,7 +95,6 @@ class JavaVariableAnalyzerMixin:
     def _process_formal_parameter(
         self, param_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes a single formal parameter."""
         param_name_node = param_node.child_by_field_name(cs.FIELD_NAME)
         param_type_node = param_node.child_by_field_name(cs.FIELD_TYPE)
 
@@ -131,7 +112,6 @@ class JavaVariableAnalyzerMixin:
     def _process_spread_parameter(
         self, param_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes a spread (varargs) parameter."""
         param_name = None
         param_type = None
 
@@ -153,13 +133,19 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_local_variables(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Traverses the AST to find and analyze local variable declarations."""
+        """
+        Analyze local variable declarations recursively in scope.
+
+        Args:
+            scope_node: The scope node.
+            local_var_types: Variable type map.
+            module_qn: Module QN.
+        """
         self._traverse_for_local_variables(scope_node, local_var_types, module_qn)
 
     def _traverse_for_local_variables(
         self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Recursively traverses nodes to find local variable declarations."""
         if node.type == cs.TS_LOCAL_VARIABLE_DECLARATION:
             self._process_java_variable_declaration(node, local_var_types, module_qn)
 
@@ -169,7 +155,6 @@ class JavaVariableAnalyzerMixin:
     def _process_java_variable_declaration(
         self, decl_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes a `local_variable_declaration` node."""
         if not (type_node := decl_node.child_by_field_name(cs.FIELD_TYPE)):
             return
 
@@ -197,7 +182,6 @@ class JavaVariableAnalyzerMixin:
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
-        """Processes a single `variable_declarator` node."""
         if not (name_node := declarator_node.child_by_field_name(cs.FIELD_NAME)):
             return
 
@@ -224,7 +208,14 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_class_fields(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Analyzes the fields of the containing class to add their types."""
+        """
+        Analyze class fields accessible in the scope (via explicit 'this' or implicit).
+
+        Args:
+            scope_node: The scope node.
+            local_var_types: Variable type map.
+            module_qn: Module QN.
+        """
         if not (containing_class := self._find_containing_java_class(scope_node)):
             return
 
@@ -255,13 +246,19 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_constructor_assignments(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Traverses the AST to find and analyze assignments."""
+        """
+        Analyze assignments in constructors to infer field types if needed.
+
+        Args:
+            scope_node: The scope node.
+            local_var_types: Variable type map.
+            module_qn: Module QN.
+        """
         self._traverse_for_assignments(scope_node, local_var_types, module_qn)
 
     def _traverse_for_assignments(
         self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Recursively traverses nodes to find assignment expressions."""
         if node.type == cs.TS_ASSIGNMENT_EXPRESSION:
             self._process_java_assignment(node, local_var_types, module_qn)
 
@@ -271,7 +268,6 @@ class JavaVariableAnalyzerMixin:
     def _process_java_assignment(
         self, assignment_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes an `assignment_expression` node to infer a variable's type."""
         left_node = assignment_node.child_by_field_name(cs.FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.FIELD_RIGHT)
 
@@ -289,7 +285,6 @@ class JavaVariableAnalyzerMixin:
             logger.debug(ls.JAVA_ASSIGNMENT.format(name=var_name, type=resolved_type))
 
     def _extract_java_variable_reference(self, node: ASTNode) -> str | None:
-        """Extracts a variable reference string from a node (e.g., 'this.myField')."""
         match node.type:
             case cs.TS_IDENTIFIER:
                 return safe_decode_text(node)
@@ -311,13 +306,19 @@ class JavaVariableAnalyzerMixin:
     def _analyze_java_enhanced_for_loops(
         self, scope_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Traverses the AST to find and analyze enhanced for-loops."""
+        """
+        Analyze variables defined in enhanced for-loops.
+
+        Args:
+            scope_node: The scope node.
+            local_var_types: Variable type map.
+            module_qn: Module QN.
+        """
         self._traverse_for_enhanced_for_loops(scope_node, local_var_types, module_qn)
 
     def _traverse_for_enhanced_for_loops(
         self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Recursively traverses nodes to find enhanced for-loop statements."""
         if node.type == cs.TS_ENHANCED_FOR_STATEMENT:
             self._process_enhanced_for_statement(node, local_var_types, module_qn)
 
@@ -327,7 +328,6 @@ class JavaVariableAnalyzerMixin:
     def _process_enhanced_for_statement(
         self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes an `enhanced_for_statement` to extract the loop variable's type."""
         type_node = for_node.child_by_field_name(cs.FIELD_TYPE)
         name_node = for_node.child_by_field_name(cs.FIELD_NAME)
 
@@ -347,7 +347,6 @@ class JavaVariableAnalyzerMixin:
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
-        """Registers the type of a for-loop variable."""
         if (var_type := safe_decode_text(type_node)) and (
             var_name := safe_decode_text(name_node)
         ):
@@ -360,7 +359,6 @@ class JavaVariableAnalyzerMixin:
     def _extract_for_loop_variable_from_children(
         self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Alternative way to extract for-loop variable info from child nodes."""
         for child in for_node.children:
             if child.type != cs.TS_VARIABLE_DECLARATOR:
                 continue
@@ -392,14 +390,14 @@ class JavaVariableAnalyzerMixin:
         self, expr_node: ASTNode, module_qn: str
     ) -> str | None:
         """
-        Infers the type of a variable from its assignment expression.
+        Attempt to infer the type of an expression AST node.
 
         Args:
-            expr_node (ASTNode): The expression node on the right side of an assignment.
-            module_qn (str): The FQN of the current module.
+            expr_node: The expression node.
+            module_qn: Module QN.
 
         Returns:
-            str | None: The inferred type name, or None.
+            Inferred type string, or None.
         """
         match expr_node.type:
             case cs.TS_OBJECT_CREATION_EXPRESSION:
@@ -441,7 +439,6 @@ class JavaVariableAnalyzerMixin:
     def _infer_java_method_return_type(
         self, method_call_node: ASTNode, module_qn: str
     ) -> str | None:
-        """Infers the return type of a method call."""
         call_info = extract_method_call_info(method_call_node)
         if not call_info:
             return None
@@ -461,7 +458,6 @@ class JavaVariableAnalyzerMixin:
     def _infer_java_field_access_type(
         self, field_access_node: ASTNode, module_qn: str
     ) -> str | None:
-        """Infers the type of a field access expression."""
         object_node = field_access_node.child_by_field_name(cs.FIELD_OBJECT)
         field_node = field_access_node.child_by_field_name(cs.FIELD_FIELD)
 
@@ -479,7 +475,18 @@ class JavaVariableAnalyzerMixin:
         return None
 
     def _lookup_variable_type(self, var_name: str, module_qn: str) -> str | None:
-        """Looks up the type of a variable, using a cache."""
+        """
+        Lookup the type of a variable by name in the current module context.
+
+        Uses caching to avoid redundant lookups and infinite recursion.
+
+        Args:
+            var_name: Variable name.
+            module_qn: Module QN.
+
+        Returns:
+            Resolved variable type qualified name, or None.
+        """
         if not var_name or not module_qn:
             return None
 
@@ -501,7 +508,6 @@ class JavaVariableAnalyzerMixin:
             self._lookup_in_progress.discard(cache_key)
 
     def _do_variable_type_lookup(self, var_name: str, module_qn: str) -> str | None:
-        """Performs the actual lookup of a variable's type by building the type map."""
         root_node = get_root_node_from_module_qn(
             module_qn, self.module_qn_to_file_path, self.ast_cache
         )
@@ -516,7 +522,6 @@ class JavaVariableAnalyzerMixin:
     def _lookup_java_field_type(
         self, class_type: str, field_name: str, module_qn: str
     ) -> str | None:
-        """Looks up the type of a specific field within a given class."""
         if not class_type or not field_name:
             return None
 
@@ -548,7 +553,6 @@ class JavaVariableAnalyzerMixin:
     def _find_field_type_in_class(
         self, root_node: ASTNode, class_name: str, field_name: str, module_qn: str
     ) -> str | None:
-        """Recursively searches the AST for a class and then for a field within it."""
         for child in root_node.children:
             if child.type == cs.TS_CLASS_DECLARATION:
                 class_info = extract_class_info(child)

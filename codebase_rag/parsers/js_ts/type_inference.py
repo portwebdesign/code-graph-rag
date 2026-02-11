@@ -2,20 +2,27 @@ from collections.abc import Callable
 
 from loguru import logger
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
 )
 
-from ...core import constants as cs
-from ...core import logs as ls
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
 from . import utils as ut
 
 
 class JsTypeInferenceEngine:
+    """
+    Engine for inferring types in JavaScript/TypeScript code.
+
+    Infers local variable types from assignments and infers return types of method calls
+    by tracing them to their definitions.
+    """
+
     def __init__(
         self,
         import_processor: ImportProcessor,
@@ -31,6 +38,16 @@ class JsTypeInferenceEngine:
     def build_local_variable_type_map(
         self, caller_node: ASTNode, module_qn: str
     ) -> dict[str, str]:
+        """
+        Build a map of local variables to their inferred types.
+
+        Args:
+            caller_node: The function/method AST node representing the scope.
+            module_qn: The module qualified name.
+
+        Returns:
+            Dictionary mapping variable names to their inferred type strings.
+        """
         local_var_types: dict[str, str] = {}
 
         stack: list[ASTNode] = [caller_node]
@@ -82,6 +99,16 @@ class JsTypeInferenceEngine:
     def _infer_js_variable_type_from_value(
         self, value_node: ASTNode, module_qn: str
     ) -> str | None:
+        """
+        Infer the type of a variable based on its assigned value.
+
+        Args:
+            value_node: The AST node representing the assigned value.
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred type string, or None.
+        """
         logger.debug(ls.JS_INFER_VALUE_NODE.format(node_type=value_node.type))
 
         if value_node.type == cs.TS_NEW_EXPRESSION:
@@ -127,6 +154,16 @@ class JsTypeInferenceEngine:
     def _infer_js_method_return_type(
         self, method_call: str, module_qn: str
     ) -> str | None:
+        """
+        Infer the return type of a method call.
+
+        Args:
+            method_call: The method call string (e.g. "obj.method").
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred return type, or None.
+        """
         parts = method_call.split(cs.SEPARATOR_DOT)
         if len(parts) != 2:
             logger.debug(ls.JS_METHOD_CALL_INVALID.format(method_call=method_call))
@@ -162,6 +199,16 @@ class JsTypeInferenceEngine:
         return return_type
 
     def _resolve_js_class_name(self, class_name: str, module_qn: str) -> str | None:
+        """
+        Resolve a class name to its fully qualified name.
+
+        Args:
+            class_name: The simple class name.
+            module_qn: The module qualified name.
+
+        Returns:
+            The fully qualified name, or None.
+        """
         if module_qn in self.import_processor.import_mapping:
             import_map = self.import_processor.import_mapping[module_qn]
             if class_name in import_map:
@@ -188,6 +235,16 @@ class JsTypeInferenceEngine:
     def _analyze_return_statements(
         self, method_node: ASTNode, method_qn: str
     ) -> str | None:
+        """
+        Analyze return statements of a method to infer its return type.
+
+        Args:
+            method_node: The method's AST node.
+            method_qn: The method's qualified name.
+
+        Returns:
+            The inferred return type, or None.
+        """
         return_nodes: list[ASTNode] = []
         ut.find_return_statements(method_node, return_nodes)
 

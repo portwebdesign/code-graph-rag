@@ -1,15 +1,3 @@
-"""
-This module centralizes all logging message templates used throughout the application.
-
-By defining log strings in one place, it ensures consistency in logging and
-simplifies maintenance. The messages are organized by the component or process
-they relate to, such as graph loading, parsing passes, tool execution, and
-database interactions.
-
-These constants are designed to be used with `loguru.logger`'s formatting
-capabilities (e.g., `logger.info(logs.SOME_LOG, value=123)`).
-"""
-
 # (H) Provider logs
 PROVIDER_REGISTERED = "Registered provider: {name}"
 
@@ -196,6 +184,10 @@ MG_NODES_SKIPPED = (
 )
 MG_CALLS_FAILED = "Failed to create {count} CALLS relationships - nodes may not exist"
 MG_CALLS_SAMPLE = "  Sample {index}: {from_label}.{from_val} -> {to_label}.{to_val}"
+MG_REL_ENDPOINT_MISSING = (
+    "Relationship endpoints missing: {from_label}.{from_key}={from_val} (exists={from_exists}), "
+    "{to_label}.{to_key}={to_val} (exists={to_exists})"
+)
 MG_RELS_FLUSHED = (
     "Flushed {total} relationships ({success} successful, {failed} failed)."
 )

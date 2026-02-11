@@ -1,75 +1,78 @@
-"""
-This module defines the `CallResolver`, a class dedicated to resolving function
-and method calls found in the source code.
-
-It uses various strategies to determine the fully qualified name (FQN) of a
-callee, including:
--   Checking direct imports within the current module.
--   Using type inference information for variables and class instances.
--   Resolving methods on objects, including inherited methods.
--   Handling special cases like `super()` calls and chained method calls.
--   Falling back to a trie-based search of the entire function registry.
-
-The resolver is a key component of the `CallProcessor` and relies on data
-structures like the function registry, import maps, and type inference results
-to perform its work.
-"""
-
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import FunctionRegistryTrieProtocol, NodeType
 
-from ..core import constants as cs
-from ..core import logs as ls
 from .import_processor import ImportProcessor
 from .py import resolve_class_name
-from .type_inference import TypeInferenceEngine
+from .utils import safe_decode_text
+
+if TYPE_CHECKING:
+    from .type_inference import TypeInferenceEngine
 
 
 class CallResolver:
     """
     Resolves function and method calls to their fully qualified names.
+
+    This class handles the complexity of resolving calls by checking multiple sources:
+    - IIFE (Immediately Invoked Function Expressions)
+    - Super class method calls
+    - Instance method calls (using local variable type inference)
+    - Chained method calls
+    - Imported paths
+    - Internal/Self-module calls
+    - Fuzzy matching via a Trie as a fallback
+
+    Attributes:
+        function_registry (FunctionRegistryTrieProtocol): Registry of known functions/classes.
+        import_processor (ImportProcessor): Processor handling import statements.
+        class_inheritance (dict[str, list[str]]): Mapping of class QNs to parent class QNs.
+        type_inference (TypeInferenceEngine | None): Optional engine for type inference.
     """
 
     def __init__(
         self,
         function_registry: FunctionRegistryTrieProtocol,
         import_processor: ImportProcessor,
-        type_inference: TypeInferenceEngine,
         class_inheritance: dict[str, list[str]],
+        type_inference: TypeInferenceEngine | None = None,
     ) -> None:
         """
-        Initializes the CallResolver.
+        Initialize the CallResolver.
 
         Args:
-            function_registry (FunctionRegistryTrieProtocol): The registry of all known functions.
-            import_processor (ImportProcessor): The processor for handling imports.
-            type_inference (TypeInferenceEngine): The engine for inferring variable types.
-            class_inheritance (dict[str, list[str]]): A dictionary mapping classes to their parents.
+            function_registry (FunctionRegistryTrieProtocol): Registry of known functions.
+            import_processor (ImportProcessor): Import processor.
+            class_inheritance (dict[str, list[str]]): Class inheritance map.
+            type_inference (TypeInferenceEngine | None): Type inference engine. Defaults to None.
         """
         self.function_registry = function_registry
         self.import_processor = import_processor
-        self.type_inference = type_inference
         self.class_inheritance = class_inheritance
+        self.type_inference = type_inference
 
     def _resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
     ) -> str:
         """
-        Resolves a simple type name to a fully qualified class name.
+        Resolves the fully qualified name of a class based on its type string.
 
         Args:
-            var_type (str): The simple type name (e.g., 'MyClass').
-            import_map (dict[str, str]): The import map for the current module.
-            module_qn (str): The qualified name of the current module.
+            var_type (str): The type string (e.g., "MyClass" or "module.MyClass").
+            import_map (dict[str, str]): The import mapping for the current scope.
+            module_qn (str): The fully qualified name of the current module.
 
         Returns:
-            str: The resolved fully qualified name of the class, or an empty string.
+            str: The fully qualified name of the class, or the input type if already qualified,
+                 or an empty string if resolution fails.
         """
         if cs.SEPARATOR_DOT in var_type:
             return var_type
@@ -81,15 +84,16 @@ class CallResolver:
         self, class_qn: str, method_name: str, separator: str = cs.SEPARATOR_DOT
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a method on a class, including inherited methods.
+        Attempts to resolve a method name on a specific class.
 
         Args:
             class_qn (str): The fully qualified name of the class.
-            method_name (str): The name of the method.
-            separator (str): The separator used in the method call.
+            method_name (str): The name of the method to resolve.
+            separator (str): The separator used between class and method (default is ".").
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: A tuple containing the node label and fully qualified name if found,
+                                    otherwise None.
         """
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
@@ -107,19 +111,32 @@ class CallResolver:
         Main entry point for resolving a function or method call.
 
         Args:
-            call_name (str): The name of the function/method as it appears in the code.
-            module_qn (str): The qualified name of the module where the call occurs.
-            local_var_types (dict | None): A map of local variables to their inferred types.
-            class_context (str | None): The FQN of the class if the call is within a method.
+            call_name (str): The raw name of the call (e.g., "obj.method", "func").
+            module_qn (str): The fully qualified name of the module where the call occurs.
+            local_var_types (dict[str, str] | None): A dictionary mapping variable names to their inferred types.
+            class_context (str | None): The fully qualified name of the class if the call is inside a class method.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: A tuple containing the node label and fully qualified name if resolved,
+                                    otherwise None.
         """
         if result := self._try_resolve_iife(call_name, module_qn):
             return result
 
         if self._is_super_call(call_name):
             return self._resolve_super_call(call_name, class_context)
+
+        if class_context:
+            method_name = None
+            if call_name.startswith(f"this{cs.SEPARATOR_DOT}"):
+                method_name = call_name.split(cs.SEPARATOR_DOT, 1)[1]
+            elif call_name.startswith(f"{cs.KEYWORD_SELF}{cs.SEPARATOR_DOT}"):
+                method_name = call_name.split(cs.SEPARATOR_DOT, 1)[1]
+            if method_name:
+                if resolved := self._try_resolve_method(class_context, method_name):
+                    return resolved
+            if resolved := self._try_resolve_method(class_context, call_name):
+                return resolved
 
         if cs.SEPARATOR_DOT in call_name and self._is_method_chain(call_name):
             return self._resolve_chained_call(call_name, module_qn, local_var_types)
@@ -138,14 +155,15 @@ class CallResolver:
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve an Immediately Invoked Function Expression (IIFE).
+        Attempts to resolve an IIFE (Immediately Invoked Function Expression).
 
         Args:
-            call_name (str): The generated name of the IIFE.
-            module_qn (str): The qualified name of the module.
+            call_name (str): The call name to check.
+            module_qn (str): The current module's qualified name.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: A tuple containing the node label and qualified name if it matches an IIFE pattern,
+                                    otherwise None.
         """
         if not call_name:
             return None
@@ -160,7 +178,15 @@ class CallResolver:
         return None
 
     def _is_super_call(self, call_name: str) -> bool:
-        """Checks if a call name refers to `super()`."""
+        """
+        Checks if the call is a superclass method call.
+
+        Args:
+            call_name (str): The call name to check.
+
+        Returns:
+            bool: True if it is a super call, False otherwise.
+        """
         return (
             call_name == cs.KEYWORD_SUPER
             or call_name.startswith(f"{cs.KEYWORD_SUPER}.")
@@ -174,15 +200,15 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a call using the import map of the current module.
+        Attempts to resolve a call using the module's import statements.
 
         Args:
-            call_name (str): The name of the call.
-            module_qn (str): The qualified name of the module.
-            local_var_types (dict | None): A map of local variables to their types.
+            call_name (str): The call name.
+            module_qn (str): The current module's qualified name.
+            local_var_types (dict[str, str] | None): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         if module_qn not in self.import_processor.import_mapping:
             return None
@@ -203,14 +229,14 @@ class CallResolver:
         self, call_name: str, import_map: dict[str, str]
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a call that matches a direct import.
+        Attempts to resolve a call that directly matches an imported name.
 
         Args:
-            call_name (str): The name of the call.
-            import_map (dict[str, str]): The import map for the module.
+            call_name (str): The call name.
+            import_map (dict[str, str]): The module's import map.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         if call_name not in import_map:
             return None
@@ -220,6 +246,13 @@ class CallResolver:
                 ls.CALL_DIRECT_IMPORT.format(call_name=call_name, qn=imported_qn)
             )
             return self.function_registry[imported_qn], imported_qn
+        if not imported_qn.endswith(f"{cs.SEPARATOR_DOT}{call_name}"):
+            candidate_qn = f"{imported_qn}{cs.SEPARATOR_DOT}{call_name}"
+            if candidate_qn in self.function_registry:
+                logger.debug(
+                    ls.CALL_DIRECT_IMPORT.format(call_name=call_name, qn=candidate_qn)
+                )
+                return self.function_registry[candidate_qn], candidate_qn
         return None
 
     def _try_resolve_qualified_call(
@@ -230,16 +263,16 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a qualified call (e.g., `module.function()`).
+        Attempts to resolve a qualified call (e.g., "module.func" or "obj.method").
 
         Args:
-            call_name (str): The qualified call name.
-            import_map (dict[str, str]): The import map for the module.
-            module_qn (str): The qualified name of the module.
-            local_var_types (dict | None): A map of local variables to their types.
+            call_name (str): The call name.
+            import_map (dict[str, str]): The module's import map.
+            module_qn (str): The current module's qualified name.
+            local_var_types (dict[str, str] | None): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         if not self._has_separator(call_name):
             return None
@@ -263,7 +296,15 @@ class CallResolver:
         )
 
     def _has_separator(self, call_name: str) -> bool:
-        """Checks if the call name contains a namespace separator."""
+        """
+        Checks if the call name contains any known separator (dot or colons).
+
+        Args:
+            call_name (str): The call name.
+
+        Returns:
+            bool: True if a separator is present.
+        """
         return (
             cs.SEPARATOR_DOT in call_name
             or cs.SEPARATOR_DOUBLE_COLON in call_name
@@ -271,7 +312,15 @@ class CallResolver:
         )
 
     def _get_separator(self, call_name: str) -> str:
-        """Gets the namespace separator used in the call name."""
+        """
+        Determines the separator used in the call name.
+
+        Args:
+            call_name (str): The call name.
+
+        Returns:
+            str: The separator string found in the call name.
+        """
         if cs.SEPARATOR_DOUBLE_COLON in call_name:
             return cs.SEPARATOR_DOUBLE_COLON
         if cs.SEPARATOR_COLON in call_name:
@@ -282,14 +331,14 @@ class CallResolver:
         self, call_name: str, import_map: dict[str, str]
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a call using wildcard imports (`from module import *`).
+        Attempts to resolve the call name against wildcard (star) imports.
 
         Args:
-            call_name (str): The name of the call.
-            import_map (dict[str, str]): The import map for the module.
+            call_name (str): The call name.
+            import_map (dict[str, str]): The module's import map.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         for local_name, imported_qn in import_map.items():
             if not local_name.startswith("*"):
@@ -302,14 +351,14 @@ class CallResolver:
         self, call_name: str, imported_qn: str
     ) -> tuple[str, str] | None:
         """
-        Checks potential FQNs based on a wildcard import.
+        Checks potential qualified names for a wildcard import match.
 
         Args:
-            call_name (str): The name of the call.
-            imported_qn (str): The qualified name of the wildcard-imported module.
+            call_name (str): The call name.
+            imported_qn (str): The qualified name of the matching wildcard import.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         potential_qns = []
         if cs.SEPARATOR_DOUBLE_COLON not in imported_qn:
@@ -328,14 +377,14 @@ class CallResolver:
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a call to a function defined in the same module.
+        Attempts to resolve the call assuming it is defined in the same module.
 
         Args:
-            call_name (str): The name of the call.
-            module_qn (str): The qualified name of the module.
+            call_name (str): The call name.
+            module_qn (str): The current module's qualified name.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         same_module_func_qn = f"{module_qn}.{call_name}"
         if same_module_func_qn in self.function_registry:
@@ -349,14 +398,15 @@ class CallResolver:
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         """
-        A fallback strategy to find a call target by searching the function registry trie.
+        Attempts to resolve the call using a fuzzy or suffix match via the function registry trie.
+        This is a fallback method.
 
         Args:
-            call_name (str): The name of the call.
-            module_qn (str): The qualified name of the module.
+            call_name (str): The call name.
+            module_qn (str): The current module's qualified name.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         search_name = re.split(r"[.:]|::", call_name)[-1]
         possible_matches = self.function_registry.find_ending_with(search_name)
@@ -383,18 +433,18 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         """
-        Resolves a two-part qualified call (e.g., `obj.method()`).
+        Resolves a call split into two parts (e.g., "object.method").
 
         Args:
-            parts (list[str]): The parts of the call name.
+            parts (list[str]): The call name split by separator.
             call_name (str): The full call name.
             separator (str): The separator used.
-            import_map (dict): The import map for the module.
-            module_qn (str): The qualified name of the module.
-            local_var_types (dict | None): A map of local variables to their types.
+            import_map (dict[str, str]): Import mapping.
+            module_qn (str): Current module qualified name.
+            local_var_types (dict[str, str] | None): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         object_name, method_name = parts
 
@@ -427,19 +477,19 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a method call based on the inferred type of a local variable.
+        Attempts to resolve a call by inferring the type of the local variable (object_name).
 
         Args:
-            object_name (str): The name of the object/variable.
-            method_name (str): The name of the method being called.
-            separator (str): The separator used.
+            object_name (str): The variable/object name.
+            method_name (str): The method name being called.
+            separator (str): The separator.
             call_name (str): The full call name.
-            import_map (dict): The import map for the module.
-            module_qn (str): The qualified name of the module.
-            local_var_types (dict | None): A map of local variables to their types.
+            import_map (dict[str, str]): Import mapping.
+            module_qn (str): Current module qualified name.
+            local_var_types (dict[str, str] | None): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         if not local_var_types or object_name not in local_var_types:
             return None
@@ -471,18 +521,18 @@ class CallResolver:
         var_type: str,
     ) -> tuple[str, str] | None:
         """
-        Tries to find a method on a class, including inherited methods.
+        Checks if a method exists on a given class or its ancestors.
 
         Args:
-            class_qn (str): The FQN of the class.
-            method_name (str): The name of the method.
-            separator (str): The separator used.
-            call_name (str): The full call name.
-            object_name (str): The name of the object instance.
-            var_type (str): The inferred type of the object.
+            class_qn (str): The fully qualified name of the class.
+            method_name (str): The method name.
+            separator (str): The separator.
+            call_name (str): The full call name (for logging).
+            object_name (str): The object name (for logging).
+            var_type (str): The inferred type (for logging).
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         method_qn = f"{class_qn}{separator}{method_name}"
         if method_qn in self.function_registry:
@@ -517,17 +567,17 @@ class CallResolver:
         import_map: dict[str, str],
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a static method call on an imported class/module.
+        Attempts to resolve a call where the object is an import.
 
         Args:
-            object_name (str): The name of the imported object/module.
-            method_name (str): The name of the method.
-            separator (str): The separator used.
+            object_name (str): The imported object name.
+            method_name (str): The method name.
+            separator (str): The separator.
             call_name (str): The full call name.
-            import_map (dict): The import map for the module.
+            import_map (dict[str, str]): Import mapping.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         if object_name not in import_map:
             return None
@@ -556,16 +606,16 @@ class CallResolver:
         separator: str,
     ) -> str:
         """
-        Resolves the FQN of an imported class, handling language-specific cases.
+        Refines the qualified name of an imported class, handling cases like Rust modules.
 
         Args:
-            class_qn (str): The potential FQN from the import map.
-            object_name (str): The name of the object in the call.
-            method_name (str): The name of the method.
-            separator (str): The separator used.
+            class_qn (str): The initial qualified name from import.
+            object_name (str): The object name.
+            method_name (str): The method name.
+            separator (str): The separator.
 
         Returns:
-            str: The resolved class FQN.
+            str: The potentially refined qualified name.
         """
         if cs.SEPARATOR_DOUBLE_COLON in class_qn:
             class_qn = self._resolve_rust_class_qn(class_qn)
@@ -578,13 +628,13 @@ class CallResolver:
 
     def _resolve_rust_class_qn(self, class_qn: str) -> str:
         """
-        Resolves a Rust class FQN, which might be ambiguous due to `::`.
+        Specific logic to resolve Rust class qualified names involving double colons.
 
         Args:
-            class_qn (str): The class FQN containing `::`.
+            class_qn (str): The qualified name to resolve.
 
         Returns:
-            str: The best-guess resolved FQN.
+            str: Resolved qualified name.
         """
         rust_parts = class_qn.split(cs.SEPARATOR_DOUBLE_COLON)
         class_name = rust_parts[-1]
@@ -603,15 +653,15 @@ class CallResolver:
         self, method_name: str, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         """
-        Tries to resolve a call as a method on the current module object.
+        Attempts to resolve a method as a top-level function in the same module.
 
         Args:
-            method_name (str): The name of the method.
-            call_name (str): The full call name.
-            module_qn (str): The qualified name of the module.
+            method_name (str): The method/function name.
+            call_name (str): The original call name.
+            module_qn (str): The module qualified name.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         method_qn = f"{module_qn}.{method_name}"
         if method_qn in self.function_registry:
@@ -630,17 +680,17 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         """
-        Resolves a method call on a `self` attribute (e.g., `self.service.do_work()`).
+        Resolves a call on an instance attribute (e.g. `self.attr.method`).
 
         Args:
-            parts (list[str]): The parts of the call name.
+            parts (list[str]): The call name parts.
             call_name (str): The full call name.
-            import_map (dict): The import map for the module.
-            module_qn (str): The qualified name of the module.
-            local_var_types (dict | None): A map of local variables to their types.
+            import_map (dict[str, str]): Import mapping.
+            module_qn (str): Module qualified name.
+            local_var_types (dict[str, str] | None): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         attribute_ref = cs.SEPARATOR_DOT.join(parts[:-1])
         method_name = parts[-1]
@@ -686,17 +736,17 @@ class CallResolver:
         local_var_types: dict[str, str] | None,
     ) -> tuple[str, str] | None:
         """
-        Resolves a multi-part qualified call (e.g., `a.b.c()`).
+        Resolves a call with multiple parts (e.g., "module.sub.func").
 
         Args:
-            parts (list[str]): The parts of the call name.
+            parts (list[str]): The call parts.
             call_name (str): The full call name.
-            import_map (dict): The import map for the module.
-            module_qn (str): The qualified name of the module.
-            local_var_types (dict | None): A map of local variables to their types.
+            import_map (dict[str, str]): Import mapping.
+            module_qn (str): Module qualified name.
+            local_var_types (dict[str, str] | None): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         class_name = parts[0]
         method_name = cs.SEPARATOR_DOT.join(parts[1:])
@@ -746,13 +796,13 @@ class CallResolver:
 
     def resolve_builtin_call(self, call_name: str) -> tuple[str, str] | None:
         """
-        Resolves a call to a known built-in function (e.g., in JavaScript).
+        Checks if the call corresponds to a known builtin function.
 
         Args:
-            call_name (str): The name of the call.
+            call_name (str): The call name.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved builtin call info or None.
         """
         if call_name in cs.JS_BUILTIN_PATTERNS:
             return (cs.NodeLabel.FUNCTION, f"{cs.BUILTIN_PREFIX}.{call_name}")
@@ -761,7 +811,7 @@ class CallResolver:
             if call_name.endswith(suffix):
                 return (
                     cs.NodeLabel.FUNCTION,
-                    f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}Function{cs.SEPARATOR_PROTOTYPE}{method}",
+                    f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}{cs.KEYWORD_FUNCTION}{cs.SEPARATOR_PROTOTYPE}{method}",
                 )
 
         if cs.SEPARATOR_PROTOTYPE in call_name and (
@@ -777,14 +827,14 @@ class CallResolver:
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:
         """
-        Resolves a C++ operator overload call.
+        Resolves C++ operator overloading calls.
 
         Args:
-            call_name (str): The name of the operator function (e.g., 'operator_plus').
-            module_qn (str): The qualified name of the module.
+            call_name (str): The call name (e.g., "operator+").
+            module_qn (str): The module qualified name.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved operator information or None.
         """
         if not call_name.startswith(cs.OPERATOR_PREFIX):
             return None
@@ -806,7 +856,15 @@ class CallResolver:
         return None
 
     def _is_method_chain(self, call_name: str) -> bool:
-        """Checks if a call name represents a chained method call."""
+        """
+        Detects if the call resembles a method chain (matches parenthesis patterns).
+
+        Args:
+            call_name (str): The call name.
+
+        Returns:
+            bool: True if it looks like a chain.
+        """
         if cs.CHAR_PAREN_OPEN not in call_name or cs.CHAR_PAREN_CLOSE not in call_name:
             return False
         parts = call_name.split(cs.SEPARATOR_DOT)
@@ -822,16 +880,18 @@ class CallResolver:
         local_var_types: dict[str, str] | None = None,
     ) -> tuple[str, str] | None:
         """
-        Resolves the final call in a method chain (e.g., `a().b().c()`).
+        Resolves chained method calls using type inference.
 
         Args:
-            call_name (str): The full chained call string.
-            module_qn (str): The qualified name of the module.
-            local_var_types (dict | None): A map of local variables to their types.
+            call_name (str): The chained call name.
+            module_qn (str): The module qualified name.
+            local_var_types (dict[str, str] | None): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
+        if not self.type_inference:
+            return None
         match = re.search(r"\.([^.()]+)$", call_name)
         if not match:
             return None
@@ -842,7 +902,7 @@ class CallResolver:
 
         if (
             object_type
-            := self.type_inference.python_type_inference._infer_expression_return_type(
+            := self.type_inference.python_type_inference._infer_expression_return_type(  # ty: ignore[possibly-missing-attribute]
                 object_expr, module_qn, local_var_types
             )
         ):
@@ -883,14 +943,14 @@ class CallResolver:
         self, call_name: str, class_context: str | None = None
     ) -> tuple[str, str] | None:
         """
-        Resolves a `super()` call to the appropriate method in a parent class.
+        Resolves a call to a superclass method.
 
         Args:
-            call_name (str): The `super()` call string.
-            class_context (str | None): The FQN of the class where the call occurs.
+            call_name (str): The call name.
+            class_context (str | None): The current class context.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved call information or None.
         """
         match call_name:
             case _ if call_name == cs.KEYWORD_SUPER:
@@ -934,14 +994,14 @@ class CallResolver:
         self, class_qn: str, method_name: str
     ) -> tuple[str, str] | None:
         """
-        Recursively searches parent classes for a method.
+        Walks up the class inheritance tree to find where a method is defined.
 
         Args:
-            class_qn (str): The FQN of the starting class.
-            method_name (str): The name of the method to find.
+            class_qn (str): The starting class qualified name.
+            method_name (str): The method name to find.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if found, else None.
+            tuple[str, str] | None: Resolved method information or None.
         """
         if class_qn not in self.class_inheritance:
             return None
@@ -971,17 +1031,15 @@ class CallResolver:
         self, candidate_qn: str, caller_module_qn: str
     ) -> int:
         """
-        Calculates a 'distance' score between two qualified names.
-
-        Used to rank potential matches from the trie search, preferring closer
-        matches in the module hierarchy.
+        Calculates a distance metric between module paths to resolve ambiguity (tie-breaking).
+        Lower distance means closer/more likely match.
 
         Args:
-            candidate_qn (str): The FQN of the potential callee.
-            caller_module_qn (str): The FQN of the module containing the call.
+            candidate_qn (str): The candidate qualified name.
+            caller_module_qn (str): The caller's module qualified name.
 
         Returns:
-            int: The calculated distance score.
+            int: The calculated distance.
         """
         caller_parts = caller_module_qn.split(cs.SEPARATOR_DOT)
         candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)
@@ -1004,14 +1062,14 @@ class CallResolver:
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
         """
-        Resolves a simple class name to its FQN within a module context.
+        Helper wrapper to resolve a class name from the current module context.
 
         Args:
-            class_name (str): The simple name of the class.
-            module_qn (str): The FQN of the module.
+            class_name (str): The class name.
+            module_qn (str): The module qualified name.
 
         Returns:
-            str | None: The resolved FQN of the class, or None.
+            str | None: Resolved class qualified name or None.
         """
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
@@ -1024,28 +1082,26 @@ class CallResolver:
         local_var_types: dict[str, str],
     ) -> tuple[str, str] | None:
         """
-        Resolves a Java method call using the Java-specific type inference engine.
+        Delegates resolution of Java method calls to the Java type inference engine.
 
         Args:
-            call_node (Node): The method invocation node.
-            module_qn (str): The FQN of the module.
-            local_var_types (dict[str, str]): A map of local variables to their types.
+            call_node (Node): The AST node for the call.
+            module_qn (str): The module qualified name.
+            local_var_types (dict[str, str]): Local variable types.
 
         Returns:
-            tuple[str, str] | None: A tuple of (node_type, fqn) if resolved, else None.
+            tuple[str, str] | None: Resolved method information or None.
         """
-        java_engine = self.type_inference.java_type_inference
+        if not self.type_inference:
+            return None
+        java_engine = self.type_inference.java_type_inference  # ty: ignore[possibly-missing-attribute]
 
         result = java_engine.resolve_java_method_call(
             call_node, local_var_types, module_qn
         )
 
         if result:
-            call_text = (
-                call_node.text.decode(cs.ENCODING_UTF8)
-                if call_node.text
-                else cs.TEXT_UNKNOWN
-            )
+            call_text = safe_decode_text(call_node) or cs.TEXT_UNKNOWN
             logger.debug(
                 ls.CALL_JAVA_RESOLVED.format(call_text=call_text, method_qn=result[1])
             )

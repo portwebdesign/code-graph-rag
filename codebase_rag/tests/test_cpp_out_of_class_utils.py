@@ -315,6 +315,7 @@ Vector Vector::operator+(const Vector& other) const {
 
         assert len(func_defs) == 1
         method_name = cpp_utils.extract_function_name(func_defs[0])
+        assert method_name is not None
         assert "operator" in method_name
 
     def test_template_method_name(self, cpp_parser) -> None:

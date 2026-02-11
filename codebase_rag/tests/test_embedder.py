@@ -31,14 +31,14 @@ def mock_unixcoder() -> MagicMock:
 def reset_model_cache() -> Generator[None, None, None]:
     if _has_semantic_deps():
         from codebase_rag.ai.embedder import (
-            get_model,  # ty: ignore[possibly-missing-import]
+            get_model,
         )
 
         get_model.cache_clear()
     yield
     if _has_semantic_deps():
         from codebase_rag.ai.embedder import (
-            get_model,  # ty: ignore[possibly-missing-import]
+            get_model,
         )
 
         get_model.cache_clear()
@@ -101,7 +101,7 @@ def test_embed_code_uses_default_max_length(
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 def test_get_model_is_cached(reset_model_cache: None) -> None:
     from codebase_rag.ai.embedder import (
-        get_model,  # ty: ignore[possibly-missing-import]
+        get_model,
     )
 
     with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:
@@ -120,7 +120,7 @@ def test_get_model_is_cached(reset_model_cache: None) -> None:
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 def test_get_model_uses_cuda_when_available(reset_model_cache: None) -> None:
     from codebase_rag.ai.embedder import (
-        get_model,  # ty: ignore[possibly-missing-import]
+        get_model,
     )
 
     with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:
@@ -138,7 +138,7 @@ def test_get_model_uses_cuda_when_available(reset_model_cache: None) -> None:
 @pytest.mark.skipif(not _has_semantic_deps(), reason="torch/transformers not installed")
 def test_get_model_does_not_use_cuda_when_unavailable(reset_model_cache: None) -> None:
     from codebase_rag.ai.embedder import (
-        get_model,  # ty: ignore[possibly-missing-import]
+        get_model,
     )
 
     with patch("codebase_rag.embedder.UniXcoder") as mock_unixcoder_class:

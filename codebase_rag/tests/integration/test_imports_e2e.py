@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -36,7 +36,7 @@ def get_imports_relationships(ingestor: MemgraphIngestor) -> list[dict]:
 def get_module_qualified_names(ingestor: MemgraphIngestor) -> set[str]:
     query = "MATCH (m:Module) RETURN m.qualified_name AS qn"
     results = ingestor.fetch_all(query)
-    return {r["qn"] for r in results}
+    return cast("set[str]", {r["qn"] for r in results})
 
 
 JAVA_UTILS_CODE = """\

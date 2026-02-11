@@ -1,29 +1,11 @@
-"""
-This module provides an interface for storing and searching vector embeddings using Qdrant.
-
-It handles the initialization of the Qdrant client and provides functions to
-store and search for code embeddings. The module is designed to work even if the
-`qdrant-client` library is not installed, in which case it provides mock (no-op)
-implementations of the core functions. This allows the application to run without
-vector search capabilities if the necessary dependencies are missing.
-
-Key functionalities:
--   `get_qdrant_client()`: Lazily initializes and returns a singleton Qdrant client.
--   `store_embedding()`: Stores a vector embedding for a specific code node (identified
-    by its ID and qualified name) in the Qdrant collection.
--   `search_embeddings()`: Searches for the most similar embeddings to a given query
-    vector and returns the top results.
-
-Configuration for the Qdrant database path, collection name, and vector dimensions
-are sourced from the application's central `settings` object.
-"""
-
 from loguru import logger
 
 from codebase_rag.core import logs as ls
 from codebase_rag.core.config import settings
 from codebase_rag.core.constants import PAYLOAD_NODE_ID, PAYLOAD_QUALIFIED_NAME
 from codebase_rag.utils.dependencies import has_qdrant_client
+
+_CLIENT = None
 
 if has_qdrant_client():
     from qdrant_client import QdrantClient
@@ -121,7 +103,6 @@ if has_qdrant_client():
             return []
 
 else:
-    # Mock implementations for when qdrant-client is not installed
 
     def store_embedding(
         node_id: int, embedding: list[float], qualified_name: str

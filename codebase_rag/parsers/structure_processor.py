@@ -1,33 +1,22 @@
-"""
-This module defines the `StructureProcessor`, which is responsible for identifying
-and ingesting the structural elements of a codebase, such as packages and folders.
-
-It scans the repository's directory structure, determines whether each directory
-is a package (based on the presence of indicator files like `__init__.py` or
-`Cargo.toml`), and creates the corresponding `Package` or `Folder` nodes in the
-graph. It also establishes `CONTAINS` relationships between these structural
-elements.
-
-This processor runs as the first pass of the `GraphUpdater` to build the
-foundational structure of the code graph before files and code definitions are
-processed.
-"""
-
 from pathlib import Path
 
 from loguru import logger
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs
 from codebase_rag.data_models.types_defs import LanguageQueries, NodeIdentifier
+from codebase_rag.services import IngestorProtocol
 
-from ..core import constants as cs
-from ..core import logs
-from ..services import IngestorProtocol
-from ..utils.path_utils import should_skip_path
+from ..utils.path_utils import should_skip_path, to_posix
 
 
 class StructureProcessor:
     """
-    Identifies and ingests the structural elements (packages, folders) of a codebase.
+    Processes the directory structure of the repository.
+
+    This class walks the directory tree, identifying packages based on language
+    indicators (e.g., `__init__.py`, `package.json`), and creates nodes for
+    packages, folders, and files.
     """
 
     def __init__(
@@ -39,17 +28,6 @@ class StructureProcessor:
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
     ):
-        """
-        Initializes the StructureProcessor.
-
-        Args:
-            ingestor (IngestorProtocol): The data ingestion service.
-            repo_path (Path): The root path of the repository.
-            project_name (str): The name of the project.
-            queries (dict): A dictionary of tree-sitter queries for each language.
-            unignore_paths (frozenset[str] | None): Paths to include even if ignored.
-            exclude_paths (frozenset[str] | None): Paths to exclude from processing.
-        """
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -62,24 +40,24 @@ class StructureProcessor:
         self, parent_rel_path: Path, parent_container_qn: str | None
     ) -> NodeIdentifier:
         """
-        Determines the unique identifier for the parent of a structural element.
+        Determine the node identifier for the parent container.
 
         Args:
-            parent_rel_path (Path): The relative path of the parent directory.
-            parent_container_qn (str | None): The qualified name of the parent if it's a package.
+            parent_rel_path (Path): Relative path to the parent directory.
+            parent_container_qn (str | None): Qualified name of the parent container.
 
         Returns:
-            NodeIdentifier: A tuple representing the parent's label, key, and value.
+            NodeIdentifier: The identifier (Label, Key, Value) for the parent.
         """
         if parent_rel_path == Path(cs.PATH_CURRENT_DIR):
             return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
         if parent_container_qn:
             return (cs.NodeLabel.PACKAGE, cs.KEY_QUALIFIED_NAME, parent_container_qn)
-        return (cs.NodeLabel.FOLDER, cs.KEY_PATH, parent_rel_path.as_posix())
+        return (cs.NodeLabel.FOLDER, cs.KEY_PATH, to_posix(parent_rel_path))
 
     def identify_structure(self) -> None:
         """
-        Scans the repository to identify all packages and folders and ingests them.
+        Scan and process the repository structure, identifying packages and folders.
         """
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
@@ -122,7 +100,7 @@ class StructureProcessor:
                     {
                         cs.KEY_QUALIFIED_NAME: package_qn,
                         cs.KEY_NAME: root.name,
-                        cs.KEY_PATH: relative_root.as_posix(),
+                        cs.KEY_PATH: to_posix(relative_root),
                     },
                 )
                 parent_identifier = self._get_parent_identifier(
@@ -140,7 +118,7 @@ class StructureProcessor:
                 )
                 self.ingestor.ensure_node_batch(
                     cs.NodeLabel.FOLDER,
-                    {cs.KEY_PATH: relative_root.as_posix(), cs.KEY_NAME: root.name},
+                    {cs.KEY_PATH: to_posix(relative_root), cs.KEY_NAME: root.name},
                 )
                 parent_identifier = self._get_parent_identifier(
                     parent_rel_path, parent_container_qn
@@ -148,18 +126,18 @@ class StructureProcessor:
                 self.ingestor.ensure_relationship_batch(
                     parent_identifier,
                     cs.RelationshipType.CONTAINS_FOLDER,
-                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, relative_root.as_posix()),
+                    (cs.NodeLabel.FOLDER, cs.KEY_PATH, to_posix(relative_root)),
                 )
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
         """
-        Processes a generic file, creating a `File` node and its relationship to its parent.
+        Process a generic file and link it to its parent container.
 
         Args:
-            file_path (Path): The absolute path to the file.
-            file_name (str): The name of the file.
+            file_path (Path): Path to the file.
+            file_name (str): Name of the file.
         """
-        relative_filepath = file_path.relative_to(self.repo_path).as_posix()
+        relative_filepath = to_posix(file_path.relative_to(self.repo_path))
         relative_root = file_path.parent.relative_to(self.repo_path)
 
         parent_container_qn = self.structural_elements.get(relative_root)

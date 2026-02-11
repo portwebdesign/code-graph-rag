@@ -1,13 +1,3 @@
-"""
-This module provides utility functions specifically for handling C++20 modules.
-
-It contains logic to:
--   Find and parse `export module` and `module` declarations.
--   Ingest `ModuleInterface` and `ModuleImplementation` nodes into the graph.
--   Create the appropriate `EXPORTS_MODULE` and `IMPLEMENTS_MODULE` relationships.
--   Identify classes that are explicitly exported from a module.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,13 +6,14 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
-from ...core import constants as cs
-from ...core import logs
+from codebase_rag.core import constants as cs
+
+from ... import logs
 from ..utils import safe_decode_text, safe_decode_with_fallback
 from .utils import decode_node_stripped
 
 if TYPE_CHECKING:
-    from ...services import IngestorProtocol
+    from codebase_rag.services import IngestorProtocol
 
 
 def ingest_cpp_module_declarations(
@@ -34,15 +25,19 @@ def ingest_cpp_module_declarations(
     ingestor: IngestorProtocol,
 ) -> None:
     """
-    Finds and ingests C++ module declarations from a file's AST.
+    Ingest C++ module declarations from the given AST root node.
+
+    Finds module declarations (export module ... / module ...), processes them,
+    and creates appropriate nodes (MODULE_INTERFACE, MODULE_IMPLEMENTATION)
+    and relationships in the graph.
 
     Args:
-        root_node (Node): The root node of the file's AST.
-        module_qn (str): The qualified name of the containing file-as-a-module.
-        file_path (Path): The path to the source file.
-        repo_path (Path): The root path of the repository.
-        project_name (str): The name of the project.
-        ingestor (IngestorProtocol): The data ingestion service.
+        root_node: The root AST node of the C++ file.
+        module_qn: The qualified name of the module being processed.
+        file_path: The path to the C++ source file.
+        repo_path: The root path of the repository.
+        project_name: The name of the project.
+        ingestor: The ingestor instance to use for creating nodes and relationships.
     """
     module_declarations = _find_module_declarations(root_node)
 
@@ -61,14 +56,13 @@ def ingest_cpp_module_declarations(
 
 def _find_module_declarations(root_node: Node) -> list[tuple[Node, str]]:
     """
-    Recursively finds all C++ module declaration nodes in the AST.
+    Find all module declaration nodes and their text content in the AST.
 
     Args:
-        root_node (Node): The node to start the search from.
+        root_node: The root AST node to search.
 
     Returns:
-        list[tuple[Node, str]]: A list of tuples, each containing the found
-                                node and its decoded text.
+        A list of tuples containing the module declaration Node and its decoded text string.
     """
     module_declarations: list[tuple[Node, str]] = []
 
@@ -102,7 +96,19 @@ def _process_export_module(
     project_name: str,
     ingestor: IngestorProtocol,
 ) -> None:
-    """Processes an `export module` declaration."""
+    """
+    Process an exported module interface declaration.
+
+    Creates a MODULE_INTERFACE node and links it to the defining module with an EXPORTS_MODULE relationship.
+
+    Args:
+        decl_text: The text content of the declaration (e.g., 'export module MyMod;').
+        module_qn: The qualified name of the defining module.
+        file_path: The file path.
+        repo_path: The repository root path.
+        project_name: The project name.
+        ingestor: The ingestor instance.
+    """
     parts = decl_text.split()
     if len(parts) < 3:
         return
@@ -115,7 +121,7 @@ def _process_export_module(
         {
             cs.KEY_QUALIFIED_NAME: interface_qn,
             cs.KEY_NAME: module_name,
-            cs.KEY_PATH: str(file_path.relative_to(repo_path)),
+            cs.KEY_PATH: file_path.relative_to(repo_path).as_posix(),
             cs.KEY_MODULE_TYPE: cs.CPP_MODULE_TYPE_INTERFACE,
         },
     )
@@ -137,7 +143,19 @@ def _process_module_implementation(
     project_name: str,
     ingestor: IngestorProtocol,
 ) -> None:
-    """Processes a `module` implementation declaration."""
+    """
+    Process a module implementation declaration.
+
+    Creates a MODULE_IMPLEMENTATION node and links it to the implemented module interface.
+
+    Args:
+        decl_text: The text content of the declaration (e.g., 'module MyMod;').
+        module_qn: The qualified name of the defining module.
+        file_path: The file path.
+        repo_path: The repository root path.
+        project_name: The project name.
+        ingestor: The ingestor instance.
+    """
     parts = decl_text.split()
     if len(parts) < 2:
         return
@@ -150,7 +168,7 @@ def _process_module_implementation(
         {
             cs.KEY_QUALIFIED_NAME: impl_qn,
             cs.KEY_NAME: f"{module_name}{cs.CPP_IMPL_SUFFIX}",
-            cs.KEY_PATH: str(file_path.relative_to(repo_path)),
+            cs.KEY_PATH: file_path.relative_to(repo_path).as_posix(),
             cs.KEY_IMPLEMENTS_MODULE: module_name,
             cs.KEY_MODULE_TYPE: cs.CPP_MODULE_TYPE_IMPLEMENTATION,
         },
@@ -174,16 +192,16 @@ def _process_module_implementation(
 
 def find_cpp_exported_classes(root_node: Node) -> list[Node]:
     """
-    Finds C++ classes that are exported using the `export` keyword.
+    Find C++ classes or structs that are explicitly exported.
 
-    This is a workaround for tree-sitter's parsing of `export class ...` as
-    a function definition with an error node.
+    Looks for `export class ...` or `export struct ...` patterns, including
+    those using macro-based exports if detected via specific keywords.
 
     Args:
-        root_node (Node): The root node of the AST to search.
+        root_node: The root AST node.
 
     Returns:
-        list[Node]: A list of AST nodes corresponding to exported classes.
+        A list of class/struct Nodes that are exported.
     """
     exported_class_nodes: list[Node] = []
 

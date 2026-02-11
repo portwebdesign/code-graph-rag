@@ -26,7 +26,7 @@ class TestLanguageInfo:
     def test_immutable(self) -> None:
         info = LanguageInfo(name="rust", extensions=[".rs"])
         with pytest.raises(AttributeError):
-            info.name = "go"
+            setattr(info, "name", "go")
 
 
 class TestNodeCategories:

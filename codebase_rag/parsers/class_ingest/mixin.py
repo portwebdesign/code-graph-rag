@@ -1,40 +1,20 @@
-"""
-This module defines the `ClassIngestMixin`, a component responsible for
-identifying, resolving, and ingesting class-like structures (classes, interfaces,
-structs, etc.) and their methods from a parsed AST.
-
-As a mixin, it's designed to be used by a larger processor class (like
-`DefinitionProcessor`). It handles the logic for various languages, including
-special cases like Rust `impl` blocks and C++ module declarations.
-
-Key functionalities:
--   Querying the AST for class-like nodes.
--   Resolving the identity (name, FQN, export status) of each class.
--   Ingesting class nodes and their relationships (e.g., inheritance, container).
--   Finding and ingesting all methods defined within a class.
--   Processing method overrides after all definitions have been ingested.
-"""
-
 from __future__ import annotations
 
 from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
+from codebase_rag.core import constants as cs
 from codebase_rag.data_models.types_defs import ASTNode, PropertyDict
 
-from ...core import constants as cs
-from ...core import logs
+from ... import logs
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
-from ..utils import (
-    ingest_method,
-    safe_decode_text,
-)
+from ..utils import ingest_method, safe_decode_text
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -48,22 +28,18 @@ if TYPE_CHECKING:
         SimpleNameLookup,
     )
     from codebase_rag.infrastructure.language_spec import LanguageSpec
+    from codebase_rag.services import IngestorProtocol
 
-    from ...services import IngestorProtocol
     from ..import_processor import ImportProcessor
-
-
-class FunctionResolution(NamedTuple):
-    """Holds the resolved identity of a function."""
-
-    qualified_name: str
-    name: str
-    is_exported: bool
 
 
 class ClassIngestMixin:
     """
-    A mixin class providing functionality to ingest classes and methods from an AST.
+    Mixin class that provides class and method ingestion capabilities.
+
+    Integrates with `cpp_modules`, `identity`, `relationships`, and other helpers
+    to process class definitions, resolve their identities, and establish
+    inheritance and membership relationships.
     """
 
     ingestor: IngestorProtocol
@@ -76,26 +52,12 @@ class ClassIngestMixin:
     class_inheritance: dict[str, list[str]]
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None:
-        """Abstract method to extract a docstring from a node."""
-        ...
+    def _get_docstring(self, node: ASTNode) -> str | None: ...
 
     @abstractmethod
-    def _extract_decorators(self, node: ASTNode) -> list[str]:
-        """Abstract method to extract decorators from a node."""
-        ...
+    def _extract_decorators(self, node: ASTNode) -> list[str]: ...
 
     def _resolve_to_qn(self, name: str, module_qn: str) -> str:
-        """
-        Resolves a simple name to a fully qualified name within a module context.
-
-        Args:
-            name (str): The simple name to resolve.
-            module_qn (str): The qualified name of the current module.
-
-        Returns:
-            str: The resolved fully qualified name.
-        """
         return self._resolve_class_name(name, module_qn) or f"{module_qn}.{name}"
 
     def _ingest_cpp_module_declarations(
@@ -105,12 +67,7 @@ class ClassIngestMixin:
         file_path: Path,
     ) -> None:
         """
-        Ingests C++ module interface and implementation declarations.
-
-        Args:
-            root_node (Node): The root node of the file's AST.
-            module_qn (str): The qualified name of the module.
-            file_path (Path): The path to the source file.
+        Delegate C++ module declaration ingestion to the `cpp_modules` helper.
         """
         cpp_modules.ingest_cpp_module_declarations(
             root_node,
@@ -123,13 +80,7 @@ class ClassIngestMixin:
 
     def _find_cpp_exported_classes(self, root_node: Node) -> list[Node]:
         """
-        Finds C++ classes that are explicitly exported from a module.
-
-        Args:
-            root_node (Node): The root node of the file's AST.
-
-        Returns:
-            list[Node]: A list of AST nodes representing exported classes.
+        Find C++ exported classes using the `cpp_modules` helper.
         """
         return cpp_modules.find_cpp_exported_classes(root_node)
 
@@ -141,13 +92,10 @@ class ClassIngestMixin:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         """
-        Finds and ingests all classes, methods, and other class-like structures.
+        Main entry point for ingesting classes and methods from a file's AST.
 
-        Args:
-            root_node (Node): The root node of the file's AST.
-            module_qn (str): The qualified name of the module.
-            language (cs.SupportedLanguage): The language of the source file.
-            queries (dict): A dictionary of tree-sitter queries.
+        Executes language-specific class queries, processes each found class node,
+        and handles inline modules.
         """
         lang_queries = queries[language]
         if not (query := lang_queries[cs.QUERY_CLASSES]):
@@ -187,15 +135,11 @@ class ClassIngestMixin:
         file_path: Path | None,
     ) -> None:
         """
-        Processes a single class node, ingesting it and its methods.
+        Process a single class node to create its graph representation.
 
-        Args:
-            class_node (Node): The AST node for the class.
-            module_qn (str): The qualified name of the module.
-            language (cs.SupportedLanguage): The language of the source file.
-            lang_queries (LanguageQueries): The queries for the language.
-            lang_config (LanguageSpec): The language specification.
-            file_path (Path | None): The path to the source file.
+        Resolves the class identity, determines its node type (class/interface/struct),
+        extracts properties (docstrings, decorators), and creates relationships
+        (defines, inherits, implements). Also triggers method ingestion for the class.
         """
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             self._ingest_rust_impl_methods(
@@ -227,6 +171,8 @@ class ClassIngestMixin:
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
             cs.KEY_IS_EXPORTED: is_exported,
         }
+        if file_path:
+            class_props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -245,7 +191,9 @@ class ClassIngestMixin:
             self._resolve_to_qn,
             self.function_registry,
         )
-        self._ingest_class_methods(class_node, class_qn, language, lang_queries)
+        self._ingest_class_methods(
+            class_node, class_qn, language, lang_queries, file_path
+        )
 
     def _ingest_rust_impl_methods(
         self,
@@ -255,13 +203,7 @@ class ClassIngestMixin:
         lang_queries: LanguageQueries,
     ) -> None:
         """
-        Ingests methods from a Rust `impl` block.
-
-        Args:
-            class_node (Node): The `impl_item` AST node.
-            module_qn (str): The qualified name of the module.
-            language (cs.SupportedLanguage): The language (Rust).
-            lang_queries (LanguageQueries): The queries for the language.
+        Ingest methods from a Rust `impl` block.
         """
         if not (impl_target := rs_utils.extract_impl_target(class_node)):
             return
@@ -275,6 +217,7 @@ class ClassIngestMixin:
 
         method_cursor = QueryCursor(method_query)
         method_captures = method_cursor.captures(body_node)
+        file_path = self.module_qn_to_file_path.get(module_qn)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if isinstance(method_node, Node):
                 ingest_method(
@@ -286,6 +229,10 @@ class ClassIngestMixin:
                     self.simple_name_lookup,
                     self._get_docstring,
                     language,
+                    None,
+                    None,
+                    file_path,
+                    self.repo_path,
                 )
 
     def _ingest_class_methods(
@@ -294,15 +241,12 @@ class ClassIngestMixin:
         class_qn: str,
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
+        file_path: Path | None = None,
     ) -> None:
         """
-        Finds and ingests all methods within a class body.
+        Ingest methods defined within a class body.
 
-        Args:
-            class_node (Node): The AST node of the class.
-            class_qn (str): The qualified name of the class.
-            language (cs.SupportedLanguage): The language of the code.
-            lang_queries (LanguageQueries): The queries for the language.
+        Finds method definitions using tree-sitter queries and delegates to `ingest_method`.
         """
         body_node = class_node.child_by_field_name("body")
         method_query = lang_queries[cs.QUERY_FUNCTIONS]
@@ -336,6 +280,8 @@ class ClassIngestMixin:
                 language,
                 self._extract_decorators,
                 method_qualified_name,
+                file_path,
+                self.repo_path,
             )
 
     def _process_inline_modules(
@@ -345,12 +291,7 @@ class ClassIngestMixin:
         lang_config: LanguageSpec,
     ) -> None:
         """
-        Processes inline module definitions (e.g., C++ namespaces).
-
-        Args:
-            module_nodes (list[Node]): A list of inline module AST nodes.
-            module_qn (str): The qualified name of the parent module.
-            lang_config (LanguageSpec): The language specification.
+        Process inline modules (e.g., nested namespaces or modules) found within the file.
         """
         for module_node in module_nodes:
             if not isinstance(module_node, Node):
@@ -380,7 +321,7 @@ class ClassIngestMixin:
 
     def process_all_method_overrides(self) -> None:
         """
-        Processes all method override relationships after all definitions are ingested.
+        Trigger the processing of method overrides after all classes are ingested.
         """
         mo.process_all_method_overrides(
             self.function_registry,
@@ -389,42 +330,14 @@ class ClassIngestMixin:
         )
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
-        """
-        Resolves a simple class name to its FQN.
-
-        Args:
-            class_name (str): The simple name of the class.
-            module_qn (str): The FQN of the module where the name is used.
-
-        Returns:
-            str | None: The resolved FQN, or None if not found.
-        """
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )
 
     def _extract_cpp_base_class_name(self, parent_text: str) -> str:
-        """
-        Extracts the base class name from a C++ inheritance clause.
-
-        Args:
-            parent_text (str): The text of the base class specifier.
-
-        Returns:
-            str: The extracted class name.
-        """
         from . import parent_extraction as pe
 
         return pe.extract_cpp_base_class_name(parent_text)
 
     def _get_node_type_for_inheritance(self, qualified_name: str) -> str:
-        """
-        Determines the node type for an inheritance relationship.
-
-        Args:
-            qualified_name (str): The FQN of the parent entity.
-
-        Returns:
-            str: The node label ('Class' or 'Interface').
-        """
         return rel.get_node_type_for_inheritance(qualified_name, self.function_registry)

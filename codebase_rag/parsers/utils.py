@@ -1,28 +1,15 @@
-"""
-This module provides utility functions that are shared across different parsers
-in the application.
-
-These helpers perform common tasks related to AST traversal, node manipulation,
-and data ingestion, reducing code duplication and centralizing common logic.
-
-Key functionalities:
--   `get_function_captures`: Extracts function-related nodes from an AST using
-    a tree-sitter query.
--   `safe_decode_text`: Safely decodes byte strings from tree-sitter nodes.
--   `ingest_method`: A generic function to ingest a method definition into the graph.
--   `is_method_node`: Determines if a function node is a method by checking its
-    ancestors in the AST.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
 from tree_sitter import Node, Query, QueryCursor
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs
 from codebase_rag.data_models.types_defs import (
     ASTNode,
     LanguageQueries,
@@ -32,18 +19,16 @@ from codebase_rag.data_models.types_defs import (
     TreeSitterNodeProtocol,
 )
 
-from ..core import constants as cs
-from ..core import logs
+from ..utils.path_utils import to_posix
 
 if TYPE_CHECKING:
     from codebase_rag.data_models.types_defs import FunctionRegistryTrieProtocol
     from codebase_rag.infrastructure.language_spec import LanguageSpec
-
-    from ..services import IngestorProtocol
+    from codebase_rag.services import IngestorProtocol
 
 
 class FunctionCapturesResult(NamedTuple):
-    """The result of a function capture query."""
+    """Result structure for function captures."""
 
     lang_config: LanguageSpec
     captures: dict[str, list[ASTNode]]
@@ -55,16 +40,15 @@ def get_function_captures(
     queries: dict[cs.SupportedLanguage, LanguageQueries],
 ) -> FunctionCapturesResult | None:
     """
-    Executes a tree-sitter query to capture all function nodes in an AST.
+    Executes the function capture query for the given language on the root node.
 
     Args:
-        root_node (ASTNode): The root node of the AST to query.
-        language (cs.SupportedLanguage): The language of the source code.
-        queries (dict): A dictionary of pre-compiled queries.
+        root_node (ASTNode): The root node of the AST.
+        language (cs.SupportedLanguage): The language of the file.
+        queries (dict[cs.SupportedLanguage, LanguageQueries]): The dictionary of queries.
 
     Returns:
-        FunctionCapturesResult | None: A named tuple containing the language
-            configuration and the captured nodes, or None if no query is available.
+        FunctionCapturesResult | None: The captures result or None if query missing.
     """
     lang_queries = queries[language]
     lang_config = lang_queries[cs.QUERY_CONFIG]
@@ -79,19 +63,18 @@ def get_function_captures(
 
 @lru_cache(maxsize=10000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
-    """Caches the decoding of byte strings to avoid repeated work."""
     return text_bytes.decode(cs.ENCODING_UTF8)
 
 
 def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | None:
     """
-    Safely decodes the text content of a tree-sitter node.
+    Safely decodes the text content of a Tree-sitter node.
 
     Args:
-        node (ASTNode | TreeSitterNodeProtocol | None): The node to decode.
+        node (ASTNode | TreeSitterNodeProtocol | None): The node to extract text from.
 
     Returns:
-        str | None: The decoded text, or None if the node or its text is None.
+        str | None: The decoded string or None if node is None or has no text.
     """
     if node is None or (text_bytes := node.text) is None:
         return None
@@ -101,43 +84,78 @@ def safe_decode_text(node: ASTNode | TreeSitterNodeProtocol | None) -> str | Non
 
 
 def get_query_cursor(query: Query) -> QueryCursor:
-    """
-    Creates a new `QueryCursor` for a given query.
-
-    Args:
-        query (Query): The tree-sitter Query object.
-
-    Returns:
-        QueryCursor: A new cursor instance.
-    """
+    """Creates a new QueryCursor for the given query."""
     return QueryCursor(query)
 
 
 def safe_decode_with_fallback(node: ASTNode | None, fallback: str = "") -> str:
-    """
-    Safely decodes a node's text, returning a fallback string if decoding fails.
-
-    Args:
-        node (ASTNode | None): The node to decode.
-        fallback (str): The string to return if decoding is not possible.
-
-    Returns:
-        str: The decoded text or the fallback string.
-    """
     return result if (result := safe_decode_text(node)) is not None else fallback
 
 
+def extract_param_names(func_node: ASTNode) -> list[str]:
+    """Extract parameter names from a function node."""
+    params_node = func_node.child_by_field_name("parameters")
+    if params_node is None:
+        params_node = func_node.child_by_field_name("params")
+    if params_node is None:
+        return []
+
+    names: list[str] = []
+    for child in params_node.children:
+        name_node = (
+            child.child_by_field_name("name")
+            if hasattr(child, "child_by_field_name")
+            else None
+        )
+        if name_node is None:
+            name_node = (
+                child.child_by_field_name("pattern")
+                if hasattr(child, "child_by_field_name")
+                else None
+            )
+        if name_node is None:
+            name_node = (
+                child.child_by_field_name("parameter")
+                if hasattr(child, "child_by_field_name")
+                else None
+            )
+        candidate = safe_decode_text(name_node) if name_node is not None else None
+        if not candidate and child.type in {
+            "identifier",
+            "variable_name",
+            "parameter",
+            "required_parameter",
+            "optional_parameter",
+            "default_parameter",
+            "typed_parameter",
+            "rest_parameter",
+            "formal_parameter",
+        }:
+            candidate = safe_decode_text(child)
+        if candidate:
+            names.append(candidate)
+    return names
+
+
+def build_lite_signature(
+    name: str,
+    params: list[str],
+    return_type: str | None,
+    language: cs.SupportedLanguage | None,
+) -> str:
+    """Format a minimal signature for a function or method."""
+    params_text = ", ".join([param for param in params if param])
+    signature = f"{name}({params_text})" if params_text else f"{name}{cs.EMPTY_PARENS}"
+    if return_type:
+        if language in {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}:
+            return f"{signature}: {return_type}"
+        if language == cs.SupportedLanguage.RUBY:
+            return f"{signature} # => {return_type}"
+        return f"{signature} -> {return_type}"
+    return signature
+
+
 def contains_node(parent: ASTNode, target: ASTNode) -> bool:
-    """
-    Recursively checks if a target node is a descendant of a parent node.
-
-    Args:
-        parent (ASTNode): The parent node.
-        target (ASTNode): The target node to search for.
-
-    Returns:
-        bool: True if the target is found within the parent's descendants, False otherwise.
-    """
     return parent == target or any(
         contains_node(child, target) for child in parent.children
     )
@@ -154,22 +172,9 @@ def ingest_method(
     language: cs.SupportedLanguage | None = None,
     extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
     method_qualified_name: str | None = None,
+    file_path: Path | None = None,
+    repo_path: Path | None = None,
 ) -> None:
-    """
-    A generic helper function to ingest a method definition.
-
-    Args:
-        method_node (ASTNode): The AST node of the method.
-        container_qn (str): The qualified name of the containing class or interface.
-        container_type (cs.NodeLabel): The label of the container node.
-        ingestor (IngestorProtocol): The data ingestion service.
-        function_registry (FunctionRegistryTrieProtocol): The shared function registry.
-        simple_name_lookup (SimpleNameLookup): The shared simple name lookup map.
-        get_docstring_func (Callable): A function to extract the docstring.
-        language (cs.SupportedLanguage | None): The language of the code.
-        extract_decorators_func (Callable | None): A function to extract decorators.
-        method_qualified_name (str | None): An optional override for the method's FQN.
-    """
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
 
@@ -186,6 +191,13 @@ def ingest_method(
     method_qn = method_qualified_name or f"{container_qn}.{method_name}"
 
     decorators = extract_decorators_func(method_node) if extract_decorators_func else []
+    param_names = extract_param_names(method_node)
+    signature_lite = build_lite_signature(
+        method_name,
+        param_names,
+        None,
+        language,
+    )
 
     method_props: PropertyDict = {
         cs.KEY_QUALIFIED_NAME: method_qn,
@@ -194,7 +206,10 @@ def ingest_method(
         cs.KEY_START_LINE: method_node.start_point[0] + 1,
         cs.KEY_END_LINE: method_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
+        cs.KEY_SIGNATURE_LITE: signature_lite,
     }
+    if file_path and repo_path:
+        method_props[cs.KEY_PATH] = to_posix(file_path.relative_to(repo_path))
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
@@ -218,21 +233,9 @@ def ingest_exported_function(
     simple_name_lookup: SimpleNameLookup,
     get_docstring_func: Callable[[ASTNode], str | None],
     is_export_inside_function_func: Callable[[ASTNode], bool],
+    file_path: Path | None = None,
+    repo_path: Path | None = None,
 ) -> None:
-    """
-    A helper function to ingest an exported function (e.g., in JavaScript).
-
-    Args:
-        function_node (ASTNode): The AST node of the function.
-        function_name (str): The name of the function.
-        module_qn (str): The qualified name of the module.
-        export_type (str): The type of export (for logging).
-        ingestor (IngestorProtocol): The data ingestion service.
-        function_registry (FunctionRegistryTrieProtocol): The shared function registry.
-        simple_name_lookup (SimpleNameLookup): The shared simple name lookup map.
-        get_docstring_func (Callable): A function to extract the docstring.
-        is_export_inside_function_func (Callable): A function to check if the export is nested.
-    """
     if is_export_inside_function_func(function_node):
         return
 
@@ -245,6 +248,8 @@ def ingest_exported_function(
         cs.KEY_END_LINE: function_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(function_node),
     }
+    if file_path and repo_path:
+        function_props[cs.KEY_PATH] = to_posix(file_path.relative_to(repo_path))
 
     logger.info(
         logs.EXPORT_FOUND.format(
@@ -257,16 +262,6 @@ def ingest_exported_function(
 
 
 def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
-    """
-    Determines if a function node is a method by checking if its ancestor is a class.
-
-    Args:
-        func_node (ASTNode): The function node to check.
-        lang_config (LanguageSpec): The language specification.
-
-    Returns:
-        bool: True if the node is a method, False otherwise.
-    """
     current = func_node.parent
     if not isinstance(current, Node):
         return False

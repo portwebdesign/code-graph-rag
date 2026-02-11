@@ -244,7 +244,7 @@ class TestGetCodeSnippetEdgeCases:
 
         assert result["found"] is True
         assert "世界" in result["source_code"]
-        assert "Unicode" in result["docstring"]
+        assert "Unicode" in str(result["docstring"])
 
 
 class TestGetCodeSnippetErrorHandling:

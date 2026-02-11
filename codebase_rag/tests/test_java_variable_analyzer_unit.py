@@ -1,10 +1,12 @@
 from collections import defaultdict
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.core import constants as cs
+from codebase_rag.data_models.types_defs import ASTNode
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.tests.conftest import create_mock_node
@@ -54,12 +56,18 @@ def engine(
     )
 
 
+def _as_ast(node: object) -> ASTNode:
+    return cast(ASTNode, node)
+
+
 class TestAnalyzeJavaParameters:
     def test_no_parameters_node(self, engine: JavaTypeInferenceEngine) -> None:
         scope_node = create_mock_node("method_declaration", fields={})
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_parameters(scope_node, local_var_types, "com.example")
+        engine._analyze_java_parameters(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types == {}
 
@@ -80,7 +88,9 @@ class TestAnalyzeJavaParameters:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_parameters(scope_node, local_var_types, "com.example")
+        engine._analyze_java_parameters(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert "userId" in local_var_types
         assert local_var_types["userId"] == "java.lang.String"
@@ -110,7 +120,9 @@ class TestAnalyzeJavaParameters:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_parameters(scope_node, local_var_types, "com.example")
+        engine._analyze_java_parameters(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types["name"] == "java.lang.String"
         assert local_var_types["count"] == "int"
@@ -136,7 +148,9 @@ class TestAnalyzeJavaParameters:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_parameters(scope_node, local_var_types, "com.example")
+        engine._analyze_java_parameters(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert "args" in local_var_types
         assert local_var_types["args"] == "java.lang.String[]"
@@ -159,7 +173,9 @@ class TestAnalyzeJavaParameters:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_parameters(scope_node, local_var_types, "com.example")
+        engine._analyze_java_parameters(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types == {}
 
@@ -179,7 +195,9 @@ class TestAnalyzeJavaLocalVariables:
         scope_node = create_mock_node("block", children=[decl_node])
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_local_variables(scope_node, local_var_types, "com.example")
+        engine._analyze_java_local_variables(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types["count"] == "int"
 
@@ -204,7 +222,9 @@ class TestAnalyzeJavaLocalVariables:
         scope_node = create_mock_node("block", children=[decl_node])
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_local_variables(scope_node, local_var_types, "com.example")
+        engine._analyze_java_local_variables(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types["list"] == "ArrayList"
 
@@ -235,7 +255,9 @@ class TestAnalyzeJavaLocalVariables:
         scope_node = create_mock_node("block", children=[var_decl1, inner_block])
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_local_variables(scope_node, local_var_types, "com.example")
+        engine._analyze_java_local_variables(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types["outer"] == "java.lang.String"
         assert local_var_types["inner"] == "int"
@@ -253,7 +275,9 @@ class TestAnalyzeJavaLocalVariables:
         scope_node = create_mock_node("block", children=[decl_node])
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_local_variables(scope_node, local_var_types, "com.example")
+        engine._analyze_java_local_variables(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types == {}
 
@@ -292,7 +316,9 @@ class TestAnalyzeJavaClassFields:
 
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_class_fields(method_body, local_var_types, "com.example")
+        engine._analyze_java_class_fields(
+            _as_ast(method_body), local_var_types, "com.example"
+        )
 
         assert "name" in local_var_types
         assert "this.name" in local_var_types
@@ -302,7 +328,9 @@ class TestAnalyzeJavaClassFields:
         scope_node = create_mock_node("block")
         local_var_types: dict[str, str] = {}
 
-        engine._analyze_java_class_fields(scope_node, local_var_types, "com.example")
+        engine._analyze_java_class_fields(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert local_var_types == {}
 
@@ -322,7 +350,7 @@ class TestAnalyzeJavaConstructorAssignments:
         local_var_types: dict[str, str] = {}
 
         engine._analyze_java_constructor_assignments(
-            scope_node, local_var_types, "com.example"
+            _as_ast(scope_node), local_var_types, "com.example"
         )
 
         assert local_var_types["userId"] == "java.lang.String"
@@ -346,7 +374,7 @@ class TestAnalyzeJavaConstructorAssignments:
         local_var_types: dict[str, str] = {}
 
         engine._analyze_java_constructor_assignments(
-            scope_node, local_var_types, "com.example"
+            _as_ast(scope_node), local_var_types, "com.example"
         )
 
         assert local_var_types["this.name"] == "java.lang.String"
@@ -373,7 +401,7 @@ class TestAnalyzeJavaConstructorAssignments:
         local_var_types: dict[str, str] = {}
 
         engine._analyze_java_constructor_assignments(
-            scope_node, local_var_types, "com.example"
+            _as_ast(scope_node), local_var_types, "com.example"
         )
 
         assert local_var_types["count"] == "int"
@@ -384,7 +412,7 @@ class TestExtractJavaVariableReference:
     def test_identifier(self, engine: JavaTypeInferenceEngine) -> None:
         node = create_mock_node(cs.TS_IDENTIFIER, "myVar")
 
-        result = engine._extract_java_variable_reference(node)
+        result = engine._extract_java_variable_reference(_as_ast(node))
 
         assert result == "myVar"
 
@@ -396,14 +424,14 @@ class TestExtractJavaVariableReference:
             fields={cs.FIELD_OBJECT: object_node, cs.FIELD_FIELD: field_node},
         )
 
-        result = engine._extract_java_variable_reference(node)
+        result = engine._extract_java_variable_reference(_as_ast(node))
 
         assert result == "this.name"
 
     def test_unknown_node_type(self, engine: JavaTypeInferenceEngine) -> None:
         node = create_mock_node("unknown_type", "something")
 
-        result = engine._extract_java_variable_reference(node)
+        result = engine._extract_java_variable_reference(_as_ast(node))
 
         assert result is None
 
@@ -414,7 +442,7 @@ class TestExtractJavaVariableReference:
             fields={cs.FIELD_OBJECT: object_node},
         )
 
-        result = engine._extract_java_variable_reference(node)
+        result = engine._extract_java_variable_reference(_as_ast(node))
 
         assert result is None
 
@@ -433,7 +461,7 @@ class TestAnalyzeJavaEnhancedForLoops:
         local_var_types: dict[str, str] = {}
 
         engine._analyze_java_enhanced_for_loops(
-            scope_node, local_var_types, "com.example"
+            _as_ast(scope_node), local_var_types, "com.example"
         )
 
         assert local_var_types["item"] == "java.lang.String"
@@ -457,7 +485,7 @@ class TestAnalyzeJavaEnhancedForLoops:
         local_var_types: dict[str, str] = {}
 
         engine._analyze_java_enhanced_for_loops(
-            scope_node, local_var_types, "com.example"
+            _as_ast(scope_node), local_var_types, "com.example"
         )
 
         assert local_var_types["num"] == "java.lang.Integer"
@@ -485,7 +513,7 @@ class TestAnalyzeJavaEnhancedForLoops:
         local_var_types: dict[str, str] = {}
 
         engine._analyze_java_enhanced_for_loops(
-            scope_node, local_var_types, "com.example"
+            _as_ast(scope_node), local_var_types, "com.example"
         )
 
         assert local_var_types["outer"] == "java.lang.String"
@@ -500,21 +528,21 @@ class TestInferJavaTypeFromExpression:
             fields={cs.FIELD_TYPE: type_node},
         )
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result == "ArrayList"
 
     def test_string_literal(self, engine: JavaTypeInferenceEngine) -> None:
         expr = create_mock_node(cs.TS_STRING_LITERAL, '"hello"')
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result == "String"
 
     def test_integer_literal(self, engine: JavaTypeInferenceEngine) -> None:
         expr = create_mock_node(cs.TS_INTEGER_LITERAL, "42")
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result == "int"
 
@@ -523,21 +551,21 @@ class TestInferJavaTypeFromExpression:
     ) -> None:
         expr = create_mock_node(cs.TS_DECIMAL_FLOATING_POINT_LITERAL, "3.14")
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result == "double"
 
     def test_true_literal(self, engine: JavaTypeInferenceEngine) -> None:
         expr = create_mock_node(cs.TS_TRUE, "true")
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result == "boolean"
 
     def test_false_literal(self, engine: JavaTypeInferenceEngine) -> None:
         expr = create_mock_node(cs.TS_FALSE, "false")
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result == "boolean"
 
@@ -548,14 +576,14 @@ class TestInferJavaTypeFromExpression:
             fields={cs.FIELD_TYPE: type_node},
         )
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result == "int[]"
 
     def test_unknown_expression_type(self, engine: JavaTypeInferenceEngine) -> None:
         expr = create_mock_node("unknown_expression", "something")
 
-        result = engine._infer_java_type_from_expression(expr, "com.example")
+        result = engine._infer_java_type_from_expression(_as_ast(expr), "com.example")
 
         assert result is None
 
@@ -604,7 +632,9 @@ class TestCollectAllVariableTypes:
         )
 
         local_var_types: dict[str, str] = {}
-        engine._collect_all_variable_types(scope_node, local_var_types, "com.example")
+        engine._collect_all_variable_types(
+            _as_ast(scope_node), local_var_types, "com.example"
+        )
 
         assert "param1" in local_var_types
         assert "local1" in local_var_types
@@ -626,7 +656,7 @@ class TestBuildVariableTypeMap:
         )
         scope_node = create_mock_node("method_declaration", children=[decl])
 
-        result = engine.build_variable_type_map(scope_node, "com.example")
+        result = engine.build_variable_type_map(_as_ast(scope_node), "com.example")
 
         assert "myVar" in result
         assert result["myVar"] == "java.lang.String"
@@ -636,7 +666,7 @@ class TestBuildVariableTypeMap:
     ) -> None:
         scope_node = create_mock_node("method_declaration", children=[])
 
-        result = engine.build_variable_type_map(scope_node, "com.example")
+        result = engine.build_variable_type_map(_as_ast(scope_node), "com.example")
 
         assert result == {}
 
@@ -690,7 +720,7 @@ class TestFindFieldTypeInClass:
         root_node = create_mock_node("program", children=[class_node])
 
         result = engine._find_field_type_in_class(
-            root_node, "MyClass", "myField", "com.example"
+            _as_ast(root_node), "MyClass", "myField", "com.example"
         )
 
         assert result == "java.lang.String"
@@ -706,7 +736,7 @@ class TestFindFieldTypeInClass:
         root_node = create_mock_node("program", children=[class_node])
 
         result = engine._find_field_type_in_class(
-            root_node, "MyClass", "myField", "com.example"
+            _as_ast(root_node), "MyClass", "myField", "com.example"
         )
 
         assert result is None
@@ -736,7 +766,7 @@ class TestFindFieldTypeInClass:
         root_node = create_mock_node("program", children=[class_node])
 
         result = engine._find_field_type_in_class(
-            root_node, "MyClass", "myField", "com.example"
+            _as_ast(root_node), "MyClass", "myField", "com.example"
         )
 
         assert result is None

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.core.constants import SupportedLanguage
 from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.rs.utils import (
     build_module_path,
@@ -15,9 +16,9 @@ from codebase_rag.parsers.rs.utils import (
 
 def get_rust_parser():
     parsers, _ = load_parsers()
-    if "rust" not in parsers:
+    if SupportedLanguage.RUST not in parsers:
         pytest.skip("Rust parser not available")
-    return parsers["rust"]
+    return parsers[SupportedLanguage.RUST]
 
 
 def parse_rust_code(code: str):

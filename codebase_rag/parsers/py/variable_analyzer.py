@@ -1,42 +1,23 @@
-"""
-This module defines the `PythonVariableAnalyzerMixin`, a component responsible for
-analyzing variable declarations and assignments in Python to infer their types.
-
-As a mixin, it's designed to be used by the `PythonTypeInferenceEngine`. It
-contains the logic for analyzing different kinds of variable initializations,
-including simple assignments, parameters, for-loop variables, and list
-comprehensions.
-
-Key functionalities:
--   Inferring types for function parameters, both typed and untyped (via heuristics).
--   Processing simple and complex assignment expressions to determine variable types.
--   Analyzing list comprehensions and for-loops to infer the type of loop variables.
--   Inferring the types of instance variables (e.g., `self.my_var`) from assignments
-    within methods.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as lg
 from codebase_rag.data_models.types_defs import (
     ASTNode,
     FunctionRegistryTrieProtocol,
     NodeType,
 )
 
-from ...core import constants as cs
-from ...core import logs as lg
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
 
 if TYPE_CHECKING:
 
     class _VariableAnalyzerDeps(Protocol):
-        """Defines the dependencies required by the mixin for type hinting."""
-
         def _infer_type_from_expression(
             self, node: ASTNode, module_qn: str
         ) -> str | None: ...
@@ -48,7 +29,10 @@ else:
 
 class PythonVariableAnalyzerMixin(_VarBase):
     """
-    A mixin for analyzing Python variables to support type inference.
+    Mixin for analyzing Python variables and parameters.
+
+    Infers types for method parameters (typed and untyped), loop variables,
+    and handles self-assignments for instance variables.
     """
 
     import_processor: ImportProcessor
@@ -58,12 +42,12 @@ class PythonVariableAnalyzerMixin(_VarBase):
         self, caller_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """
-        Infers types for all parameters of a function or method.
+        Infer types for method parameters and add them to the local variable map.
 
         Args:
-            caller_node (ASTNode): The function/method definition node.
-            local_var_types (dict[str, str]): The dictionary to populate with types.
-            module_qn (str): The qualified name of the module.
+            caller_node: The method/function AST node.
+            local_var_types: dictionary to populate with parameter types.
+            module_qn: The module qualified name.
         """
         params_node = caller_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
         if not params_node:
@@ -75,7 +59,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _process_parameter(
         self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes a single parameter node."""
+        """
+        Process a single parameter node to infer its type.
+
+        Args:
+            param: The parameter AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         match param.type:
             case cs.TS_PY_IDENTIFIER:
                 self._process_untyped_parameter(param, local_var_types, module_qn)
@@ -87,7 +78,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _process_untyped_parameter(
         self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes a parameter without an explicit type hint."""
+        """
+        Process an untyped parameter (try to infer from name).
+
+        Args:
+            param: The parameter AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         if (
             param.text is None
             or (param_name := safe_decode_text(param)) is None
@@ -106,7 +104,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _process_typed_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
-        """Processes a parameter with an explicit type hint."""
+        """
+        Process a typed parameter (extract type annotation).
+
+        Args:
+            param: The parameter AST node.
+            local_var_types: Dictionary of local variable types.
+        """
         param_name_node = next(
             (c for c in param.children if c.type == cs.TS_PY_IDENTIFIER), None
         )
@@ -125,7 +129,13 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _process_typed_default_parameter(
         self, param: ASTNode, local_var_types: dict[str, str]
     ) -> None:
-        """Processes a parameter with both a type hint and a default value."""
+        """
+        Process a parameter with a default value and type annotation.
+
+        Args:
+            param: The parameter AST node.
+            local_var_types: Dictionary of local variable types.
+        """
         param_name_node = param.child_by_field_name(cs.TS_FIELD_NAME)
         param_type_node = param.child_by_field_name(cs.TS_FIELD_TYPE)
         if not (
@@ -142,7 +152,16 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_type_from_parameter_name(
         self, param_name: str, module_qn: str
     ) -> str | None:
-        """Infers a parameter's type based on its name using heuristics."""
+        """
+        Infer type from parameter name using heuristic matching against available classes.
+
+        Args:
+            param_name: The parameter name.
+            module_qn: The module qualified name.
+
+        Returns:
+            The best matching class name, or None.
+        """
         logger.debug(
             lg.PY_TYPE_INFER_ATTEMPT.format(param=param_name, module=module_qn)
         )
@@ -151,7 +170,15 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return self._find_best_class_match(param_name, available_class_names)
 
     def _collect_available_classes(self, module_qn: str) -> list[str]:
-        """Collects all class names available in the current scope (module + imports)."""
+        """
+        Collect available class names in the current scope (module and imports).
+
+        Args:
+            module_qn: The module qualified name.
+
+        Returns:
+            List of class qualified types available.
+        """
         available_class_names: list[str] = []
         for qn, node_type in self.function_registry.find_with_prefix(module_qn):
             if node_type != NodeType.CLASS:
@@ -173,7 +200,16 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _find_best_class_match(
         self, param_name: str, available_class_names: list[str]
     ) -> str | None:
-        """Finds the best matching class name for a parameter name from a list of candidates."""
+        """
+        Find the best matching class for a parameter name.
+
+        Args:
+            param_name: The parameter name.
+            available_class_names: List of candidate class names.
+
+        Returns:
+            The best matching class name, or None.
+        """
         param_lower = param_name.lower()
         best_match = None
         highest_score = 0
@@ -192,7 +228,16 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return best_match
 
     def _calculate_match_score(self, param_lower: str, class_lower: str) -> int:
-        """Calculates a score indicating how well a parameter name matches a class name."""
+        """
+        Calculate a matching score between a parameter name and a class name.
+
+        Args:
+            param_lower: Lowercase parameter name.
+            class_lower: Lowercase class name.
+
+        Returns:
+            Integer score (higher is better).
+        """
         if param_lower == class_lower:
             return cs.PY_SCORE_EXACT_MATCH
         if class_lower.endswith(param_lower) or param_lower.endswith(class_lower):
@@ -206,7 +251,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _analyze_comprehension(
         self, comp_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Analyzes a list/dict/set comprehension to infer loop variable types."""
+        """
+        Analyze a list/dict/set comprehension to update local variables.
+
+        Args:
+            comp_node: The comprehension AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         for child in comp_node.children:
             if child.type == cs.TS_PY_FOR_IN_CLAUSE:
                 self._analyze_for_clause(child, local_var_types, module_qn)
@@ -214,13 +266,27 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _analyze_for_loop(
         self, for_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Analyzes a `for` loop to infer the loop variable's type."""
+        """
+        Analyze a for loop to infer loop variable type.
+
+        Args:
+            for_node: The for loop AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         self._analyze_for_clause(for_node, local_var_types, module_qn)
 
     def _analyze_for_clause(
         self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Analyzes a `for ... in ...` clause from a loop or comprehension."""
+        """
+        Analyze the 'for X in Y' clause.
+
+        Args:
+            node: The node containing the for clause.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         if (left_node := node.child_by_field_name(cs.TS_FIELD_LEFT)) and (
             right_node := node.child_by_field_name(cs.TS_FIELD_RIGHT)
         ):
@@ -235,7 +301,15 @@ class PythonVariableAnalyzerMixin(_VarBase):
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
-        """Infers the type of a loop variable from the iterable."""
+        """
+        Infer the loop variable type from the iterable expression.
+
+        Args:
+            left_node: The loop variable node (left side of 'in').
+            right_node: The iterable expression node (right side of 'in').
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         if not (loop_var := self._extract_variable_name(left_node)):
             return
 
@@ -250,7 +324,17 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_iterable_element_type(
         self, iterable_node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
-        """Infers the element type of an iterable expression."""
+        """
+        Infer the type of elements yielded by an iterable.
+
+        Args:
+            iterable_node: The iterable AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred element type, or None.
+        """
         if iterable_node.type == cs.TS_PY_LIST:
             return self._infer_list_element_type(iterable_node)
 
@@ -263,7 +347,15 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return self._infer_variable_element_type(var_name, local_var_types, module_qn)
 
     def _infer_list_element_type(self, list_node: ASTNode) -> str | None:
-        """Infers the element type of a list literal."""
+        """
+        Infer element type from a list literal.
+
+        Args:
+            list_node: The list literal AST node.
+
+        Returns:
+            The inferred element type (if uniform/deducible), or None.
+        """
         for child in list_node.children:
             if child.type != cs.TS_PY_CALL:
                 continue
@@ -284,14 +376,28 @@ class PythonVariableAnalyzerMixin(_VarBase):
         local_var_types: dict[str, str],
         module_qn: str,
     ) -> None:
-        """Infers types for instance variables (`self.foo`) from assignments."""
+        """
+        Infer instance variable types from assignments.
+
+        Args:
+            assignments: List of assignment nodes.
+            local_var_types: Dictionary of local variable types (used/updated).
+            module_qn: The module qualified name.
+        """
         for assignment in assignments:
             self._process_self_assignment(assignment, local_var_types, module_qn)
 
     def _process_self_assignment(
         self, assignment: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes a single assignment to a `self` attribute."""
+        """
+        Process an assignment to 'self.x' to infer instance variable type.
+
+        Args:
+            assignment: The assignment AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         left_node = assignment.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment.child_by_field_name(cs.TS_FIELD_RIGHT)
         if not (
@@ -315,7 +421,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _analyze_self_assignments(
         self, node: ASTNode, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Traverses the AST to find all assignments to `self` attributes."""
+        """
+        Recursively analyze AST for 'self' assignments.
+
+        Args:
+            node: The root node to traverse.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         stack: list[ASTNode] = [node]
 
         while stack:
@@ -327,7 +440,17 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_variable_element_type(
         self, var_name: str, local_var_types: dict[str, str], module_qn: str
     ) -> str | None:
-        """Infers the element type of a variable that is an iterable."""
+        """
+        Infer element type of a variable assuming it is a list/iterable.
+
+        Args:
+            var_name: The variable name.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred element type, or None.
+        """
         if (
             var_name in local_var_types
             and (var_type := local_var_types[var_name])
@@ -339,7 +462,16 @@ class PythonVariableAnalyzerMixin(_VarBase):
     def _infer_method_return_element_type(
         self, var_name: str, module_qn: str
     ) -> str | None:
-        """Infers the element type of an iterable returned by a method."""
+        """
+        Infer element type based on variable name naming conventions (plural/repository patterns).
+
+        Args:
+            var_name: The variable name.
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred element type, or None.
+        """
         if cs.PY_VAR_PATTERN_ALL in var_name or var_name.endswith(
             cs.PY_VAR_SUFFIX_PLURAL
         ):
@@ -347,7 +479,15 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return None
 
     def _analyze_repository_item_type(self, module_qn: str) -> str | None:
-        """Analyzes a repository-like pattern to infer the model type."""
+        """
+        Analyze if the current module is a repository and return its model type.
+
+        Args:
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred model type for repository items, or None.
+        """
         repo_qn_patterns = [
             f"{module_qn.split(cs.SEPARATOR_DOT)[0]}{cs.PY_MODELS_BASE_PATH}{cs.PY_CLASS_REPOSITORY}",
             cs.PY_CLASS_REPOSITORY,
@@ -361,7 +501,15 @@ class PythonVariableAnalyzerMixin(_VarBase):
         return None
 
     def _extract_variable_name(self, node: ASTNode) -> str | None:
-        """Extracts a variable name from an identifier node."""
+        """
+        Extract variable name from an identifier node.
+
+        Args:
+            node: The identifier AST node.
+
+        Returns:
+            The variable name, or None.
+        """
         if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
             return None
         return safe_decode_text(node) or None

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +16,22 @@ from codebase_rag.parsers.type_inference import TypeInferenceEngine
 
 if TYPE_CHECKING:
     from codebase_rag.parsers.factory import ProcessorFactory
+
+
+class _LegacyTypeInferenceEngine(Protocol):
+    import_processor: ImportProcessor
+    function_registry: object
+    repo_path: Path
+    project_name: str
+    ast_cache: object
+    queries: object
+    module_qn_to_file_path: dict[str, Path]
+    class_inheritance: dict[str, list[str]]
+    simple_name_lookup: object
+
+
+def _as_legacy(engine: TypeInferenceEngine) -> _LegacyTypeInferenceEngine:
+    return cast(_LegacyTypeInferenceEngine, engine)
 
 
 @pytest.fixture
@@ -221,50 +237,50 @@ class TestDependencyInjection:
     def test_type_inference_receives_import_processor(
         self, factory: ProcessorFactory
     ) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.import_processor is factory.import_processor
 
     def test_type_inference_receives_function_registry(
         self, factory: ProcessorFactory
     ) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.function_registry is factory.function_registry
 
     def test_type_inference_receives_repo_path(self, factory: ProcessorFactory) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.repo_path == factory.repo_path
 
     def test_type_inference_receives_project_name(
         self, factory: ProcessorFactory
     ) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.project_name == factory.project_name
 
     def test_type_inference_receives_ast_cache(self, factory: ProcessorFactory) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.ast_cache is factory.ast_cache
 
     def test_type_inference_receives_queries(self, factory: ProcessorFactory) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.queries is factory.queries
 
     def test_type_inference_shares_module_qn_to_file_path(
         self, factory: ProcessorFactory
     ) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.module_qn_to_file_path is factory.module_qn_to_file_path
 
     def test_type_inference_receives_class_inheritance_from_definition_processor(
         self, factory: ProcessorFactory
     ) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         definition_proc = factory.definition_processor
         assert engine.class_inheritance is definition_proc.class_inheritance
 
     def test_type_inference_receives_simple_name_lookup(
         self, factory: ProcessorFactory
     ) -> None:
-        engine = factory.type_inference
+        engine = _as_legacy(factory.type_inference)
         assert engine.simple_name_lookup is factory.simple_name_lookup
 
     def test_call_processor_receives_repo_path(self, factory: ProcessorFactory) -> None:
@@ -354,7 +370,7 @@ class TestSharedState:
         self, factory: ProcessorFactory
     ) -> None:
         definition_proc = factory.definition_processor
-        type_inf = factory.type_inference
+        type_inf = _as_legacy(factory.type_inference)
 
         test_path = Path("/test/path.py")
         factory.module_qn_to_file_path["test.module"] = test_path
@@ -366,7 +382,7 @@ class TestSharedState:
         self, factory: ProcessorFactory
     ) -> None:
         definition_proc = factory.definition_processor
-        type_inf = factory.type_inference
+        type_inf = _as_legacy(factory.type_inference)
         call_proc = factory.call_processor
 
         definition_proc.class_inheritance["test.Child"] = ["test.Parent"]
@@ -377,16 +393,28 @@ class TestSharedState:
     def test_function_registry_is_shared_across_processors(
         self, factory: ProcessorFactory
     ) -> None:
-        from codebase_rag.data_models.types_defs import NodeType
+        from codebase_rag.data_models.types_defs import (
+            FunctionRegistryTrieProtocol,
+            NodeType,
+        )
 
         import_proc = factory.import_processor
         definition_proc = factory.definition_processor
-        type_inf = factory.type_inference
+        type_inf = _as_legacy(factory.type_inference)
         call_proc = factory.call_processor
 
         factory.function_registry["test.module.func"] = NodeType.FUNCTION
 
-        assert "test.module.func" in import_proc.function_registry
-        assert "test.module.func" in definition_proc.function_registry
-        assert "test.module.func" in type_inf.function_registry
-        assert "test.module.func" in call_proc._resolver.function_registry
+        import_registry = cast(
+            FunctionRegistryTrieProtocol, import_proc.function_registry
+        )
+        definition_registry = definition_proc.function_registry
+        type_registry = cast(FunctionRegistryTrieProtocol, type_inf.function_registry)
+        call_registry = cast(
+            FunctionRegistryTrieProtocol, call_proc._resolver.function_registry
+        )
+
+        assert "test.module.func" in import_registry
+        assert "test.module.func" in definition_registry
+        assert "test.module.func" in type_registry
+        assert "test.module.func" in call_registry

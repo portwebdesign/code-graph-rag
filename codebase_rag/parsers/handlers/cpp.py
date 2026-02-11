@@ -1,19 +1,10 @@
-"""
-This module defines the `CppHandler`, a language-specific handler for C++.
-
-It implements the `BaseLanguageHandler` protocol to provide C++-specific logic
-for tasks like extracting function names, building fully qualified names (FQNs),
-and determining if a function is exported. This class encapsulates the unique
-parsing and name resolution rules required for C++.
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from codebase_rag.core import constants as cs
 from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS
 
-from ...core import constants as cs
 from ...utils.fqn_resolver import resolve_fqn_from_ast
 from ..cpp import utils as cpp_utils
 from ..utils import safe_decode_text
@@ -27,17 +18,17 @@ if TYPE_CHECKING:
 
 
 class CppHandler(BaseLanguageHandler):
-    """Language handler for C++."""
+    """Handler for C++ specific AST operations."""
 
     def extract_function_name(self, node: ASTNode) -> str | None:
         """
-        Extracts the name of a C++ function or lambda from its AST node.
+        Extract the name of a function from checking node.
 
         Args:
-            node (ASTNode): The AST node of the function or lambda.
+            node: The function AST node.
 
         Returns:
-            str | None: The extracted name, or a generated name for lambdas, or None.
+            The function name or a generated lambda name.
         """
         if func_name := cpp_utils.extract_function_name(node):
             return func_name
@@ -58,22 +49,19 @@ class CppHandler(BaseLanguageHandler):
         project_name: str,
     ) -> str:
         """
-        Builds the fully qualified name for a C++ function.
-
-        It first attempts to use the precise FQN resolver and falls back to a
-        heuristic-based builder if that fails.
+        Build the qualified name for a function.
 
         Args:
-            node (ASTNode): The function's AST node.
-            module_qn (str): The FQN of the containing module.
-            func_name (str): The simple name of the function.
-            lang_config (LanguageSpec | None): The language specification (unused for C++).
-            file_path (Path | None): The path to the source file.
-            repo_path (Path): The root path of the repository.
-            project_name (str): The name of the project.
+            node: The function node.
+            module_qn: The module qualified name.
+            func_name: The function name.
+            lang_config: The language configuration.
+            file_path: The file path (required for FQN resolution).
+            repo_path: The repository root.
+            project_name: The project name.
 
         Returns:
-            str: The constructed fully qualified name.
+            The fully qualified function name.
         """
         if (
             fqn_config := LANGUAGE_FQN_SPECS.get(cs.SupportedLanguage.CPP)
@@ -87,25 +75,25 @@ class CppHandler(BaseLanguageHandler):
 
     def is_function_exported(self, node: ASTNode) -> bool:
         """
-        Checks if a C++ function is exported from a module.
+        Check if a function is exported.
 
         Args:
-            node (ASTNode): The function's AST node.
+            node: The function node.
 
         Returns:
-            bool: True if the function is exported, False otherwise.
+            True if the function is exported, False otherwise.
         """
         return cpp_utils.is_exported(node)
 
     def extract_base_class_name(self, base_node: ASTNode) -> str | None:
         """
-        Extracts the name of a base class from its AST node in an inheritance clause.
+        Extract the name of a base class.
 
         Args:
-            base_node (ASTNode): The AST node representing the base class.
+            base_node: The base class AST node.
 
         Returns:
-            str | None: The simple name of the base class.
+            The base class name.
         """
         if base_node.type == cs.TS_TEMPLATE_TYPE:
             if (

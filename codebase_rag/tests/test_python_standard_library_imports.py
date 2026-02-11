@@ -1,10 +1,13 @@
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.data_models.types_defs import ASTNode
 from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure.parser_loader import load_parsers
+from codebase_rag.parsers.import_processor import ImportProcessor
 
 
 class TestStandardLibraryImports:
@@ -29,8 +32,15 @@ class TestStandardLibraryImports:
             queries=queries,
         )
 
+    @pytest.fixture
+    def import_processor(self, mock_updater: GraphUpdater) -> ImportProcessor:
+        return cast(ImportProcessor, mock_updater.factory.import_processor)
+
+    def _as_ast(self, node: object) -> ASTNode:
+        return cast(ASTNode, node)
+
     def test_standard_library_imports_not_prefixed(
-        self, mock_updater: GraphUpdater
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
     ) -> None:
         """Test that standard library imports are not prefixed with project name."""
         module_qn = "myproject.main"
@@ -53,8 +63,8 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_from_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -64,7 +74,9 @@ class TestStandardLibraryImports:
             == expected_mapping
         )
 
-    def test_third_party_imports_not_prefixed(self, mock_updater: GraphUpdater) -> None:
+    def test_third_party_imports_not_prefixed(
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
+    ) -> None:
         """Test that third-party imports are not prefixed with project name."""
         module_qn = "myproject.analysis"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
@@ -86,8 +98,8 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_from_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -98,7 +110,7 @@ class TestStandardLibraryImports:
         )
 
     def test_local_module_imports_are_prefixed(
-        self, mock_updater: GraphUpdater
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
     ) -> None:
         """Test that local module imports ARE prefixed with project name."""
         module_qn = "myproject.main"
@@ -121,8 +133,8 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_from_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -132,7 +144,9 @@ class TestStandardLibraryImports:
             == expected_mapping
         )
 
-    def test_local_file_imports_are_prefixed(self, mock_updater: GraphUpdater) -> None:
+    def test_local_file_imports_are_prefixed(
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
+    ) -> None:
         """Test that local file imports ARE prefixed with project name."""
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
@@ -154,8 +168,8 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_from_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -166,7 +180,7 @@ class TestStandardLibraryImports:
         )
 
     def test_already_prefixed_imports_unchanged(
-        self, mock_updater: GraphUpdater
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
     ) -> None:
         """Test that imports already prefixed with project name are unchanged."""
         module_qn = "myproject.main"
@@ -189,8 +203,8 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_from_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -200,7 +214,9 @@ class TestStandardLibraryImports:
             == expected_mapping
         )
 
-    def test_nested_local_module_imports(self, mock_updater: GraphUpdater) -> None:
+    def test_nested_local_module_imports(
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
+    ) -> None:
         """Test that nested local module imports are correctly prefixed."""
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
@@ -222,8 +238,8 @@ class TestStandardLibraryImports:
             "name": [mock_name_node] if field == "name" else []
         }.get(field, [])
 
-        mock_updater.factory.import_processor._handle_python_import_from_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_from_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -233,7 +249,9 @@ class TestStandardLibraryImports:
             == expected_mapping
         )
 
-    def test_regular_import_standard_library(self, mock_updater: GraphUpdater) -> None:
+    def test_regular_import_standard_library(
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
+    ) -> None:
         """Test that regular imports of standard library are not prefixed."""
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
@@ -245,8 +263,8 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_dotted_name]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -256,7 +274,9 @@ class TestStandardLibraryImports:
             == expected_mapping
         )
 
-    def test_regular_import_local_module(self, mock_updater: GraphUpdater) -> None:
+    def test_regular_import_local_module(
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
+    ) -> None:
         """Test that regular imports of local modules ARE prefixed."""
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
@@ -268,8 +288,8 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_dotted_name]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -280,7 +300,7 @@ class TestStandardLibraryImports:
         )
 
     def test_regular_import_dotted_local_module(
-        self, mock_updater: GraphUpdater
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
     ) -> None:
         """Test that dotted imports of local modules are correctly handled."""
         module_qn = "myproject.main"
@@ -293,8 +313,8 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_dotted_name]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -304,7 +324,9 @@ class TestStandardLibraryImports:
             == expected_mapping
         )
 
-    def test_aliased_import_standard_library(self, mock_updater: GraphUpdater) -> None:
+    def test_aliased_import_standard_library(
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
+    ) -> None:
         """Test that aliased imports of standard library are not prefixed."""
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
@@ -325,8 +347,8 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_aliased_import]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 
@@ -336,7 +358,9 @@ class TestStandardLibraryImports:
             == expected_mapping
         )
 
-    def test_aliased_import_local_module(self, mock_updater: GraphUpdater) -> None:
+    def test_aliased_import_local_module(
+        self, mock_updater: GraphUpdater, import_processor: ImportProcessor
+    ) -> None:
         """Test that aliased imports of local modules ARE prefixed."""
         module_qn = "myproject.main"
         mock_updater.factory.import_processor.import_mapping[module_qn] = {}
@@ -357,8 +381,8 @@ class TestStandardLibraryImports:
 
         mock_import_node.named_children = [mock_aliased_import]
 
-        mock_updater.factory.import_processor._handle_python_import_statement(
-            mock_import_node,  # ty: ignore[invalid-argument-type]
+        import_processor._handle_python_import_statement(
+            self._as_ast(mock_import_node),
             module_qn,
         )
 

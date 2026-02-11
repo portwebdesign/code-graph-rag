@@ -1,19 +1,3 @@
-"""
-This module defines a comprehensive set of constants used throughout the application.
-
-By centralizing these values, it ensures consistency, simplifies maintenance, and
-improves readability. The constants include:
--   Enumerations (`StrEnum`) for controlled sets of values like model roles, providers,
-    colors, and node/relationship labels.
--   Named tuples for simple, structured data.
--   File extensions and package indicators for various programming languages.
--   Keys for dictionary access and JSON serialization.
--   UI strings, log message templates, and error messages.
--   Configuration for `tree-sitter` parsers, including node types and field names.
--   Default values and settings for various components.
--   Security-related constants, such as allowlists and blocklists for shell commands.
-"""
-
 from enum import StrEnum
 from typing import NamedTuple
 
@@ -122,6 +106,24 @@ EXT_CCM = ".ccm"
 EXT_CS = ".cs"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
+EXT_RB = ".rb"
+EXT_RAKE = ".rake"
+EXT_GEMSPEC = ".gemspec"
+EXT_KT = ".kt"
+EXT_KTS = ".kts"
+EXT_YAML = ".yaml"
+EXT_YML = ".yml"
+EXT_JSON = ".json"
+EXT_HTML = ".html"
+EXT_HTM = ".htm"
+EXT_CSS = ".css"
+EXT_SCSS = ".scss"
+EXT_GRAPHQL = ".graphql"
+EXT_GQL = ".gql"
+EXT_SQL = ".sql"
+EXT_VUE = ".vue"
+EXT_SVELTE = ".svelte"
+EXT_DOCKERFILE = ".dockerfile"
 
 # (H) File extension tuples by language
 PY_EXTENSIONS = (EXT_PY,)
@@ -146,6 +148,18 @@ CPP_EXTENSIONS = (
 CS_EXTENSIONS = (EXT_CS,)
 PHP_EXTENSIONS = (EXT_PHP,)
 LUA_EXTENSIONS = (EXT_LUA,)
+RUBY_EXTENSIONS = (EXT_RB, EXT_RAKE, EXT_GEMSPEC)
+KOTLIN_EXTENSIONS = (EXT_KT, EXT_KTS)
+YAML_EXTENSIONS = (EXT_YAML, EXT_YML)
+JSON_EXTENSIONS = (EXT_JSON,)
+HTML_EXTENSIONS = (EXT_HTML, EXT_HTM)
+CSS_EXTENSIONS = (EXT_CSS,)
+SCSS_EXTENSIONS = (EXT_SCSS,)
+GRAPHQL_EXTENSIONS = (EXT_GRAPHQL, EXT_GQL)
+SQL_EXTENSIONS = (EXT_SQL,)
+VUE_EXTENSIONS = (EXT_VUE,)
+SVELTE_EXTENSIONS = (EXT_SVELTE,)
+DOCKERFILE_EXTENSIONS = (EXT_DOCKERFILE,)
 
 # (H) Package indicator files
 PKG_INIT_PY = "__init__.py"
@@ -154,6 +168,7 @@ PKG_CMAKE_LISTS = "CMakeLists.txt"
 PKG_MAKEFILE = "Makefile"
 PKG_VCXPROJ_GLOB = "*.vcxproj"
 PKG_CONANFILE = "conanfile.txt"
+DOCKERFILE_NAME = "Dockerfile"
 
 DEFAULT_REGION = "us-central1"
 DEFAULT_MODEL = "llama3.2"
@@ -205,22 +220,75 @@ KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
 KEY_EXTENSION = "extension"
+KEY_FOLDER_PATH = "folder_path"
+KEY_FOLDER_NAME = "folder_name"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
 KEY_PROPS = "props"
 KEY_CREATED = "created"
 KEY_FROM_VAL = "from_val"
 KEY_TO_VAL = "to_val"
+KEY_FROM_PATH = "from_path"
+KEY_TO_PATH = "to_path"
 KEY_VERSION_SPEC = "version_spec"
+KEY_FRAMEWORK = "framework"
+KEY_FRAMEWORK_METADATA = "framework_metadata"
+KEY_HTTP_METHOD = "http_method"
+KEY_ROUTE_PATH = "route_path"
+KEY_RELATION_TYPE = "relation_type"
+KEY_LIFETIME = "lifetime"
+KEY_MIDDLEWARE_ORDER = "middleware_order"
+KEY_HOOK_NAME = "hook_name"
+KEY_HOOK_KIND = "hook_kind"
+KEY_BLOCK_NAME = "block_name"
+KEY_BLOCK_TYPE = "block_type"
+KEY_ASSET_HANDLE = "asset_handle"
+KEY_ASSET_TYPE = "asset_type"
+KEY_ASSET_PATH = "asset_path"
+KEY_UTILITY_NAME = "utility_name"
+KEY_TAILWIND_CONTENT = "tailwind_content"
+KEY_TAILWIND_SAFELIST = "tailwind_safelist"
+KEY_TAILWIND_SOURCE_INLINE = "tailwind_source_inline"
+KEY_HTMX_TRIGGER = "htmx_trigger"
+KEY_HTMX_TARGET = "htmx_target"
+KEY_HTMX_SWAP = "htmx_swap"
+KEY_FILE_LEVEL_CALL = "file_level_call"
+KEY_IS_PLACEHOLDER = "is_placeholder"
+KEY_IMPORT_SOURCE = "import_source"
+KEY_IMPORTED_SYMBOL = "imported_symbol"
+KEY_LOCAL_NAME = "local_name"
+KEY_IS_DEFAULT_IMPORT = "is_default_import"
+KEY_IS_NAMESPACE_IMPORT = "is_namespace_import"
+KEY_TYPE_PARAMETERS = "type_parameters"
 KEY_PREFIX = "prefix"
 KEY_PROJECT_NAME = "project_name"
 KEY_IS_EXTERNAL = "is_external"
+KEY_ANALYSIS_RUN_ID = "analysis_run_id"
+KEY_ANALYSIS_TIMESTAMP = "analysis_timestamp"
+KEY_ANALYSIS_SUMMARY = "analysis_summary"
+KEY_GIT_HEAD = "git_head"
+KEY_METRIC_NAME = "metric_name"
+KEY_METRIC_VALUE = "metric_value"
+KEY_RUN_ID = "run_id"
+KEY_ORIGIN = "origin"
+KEY_EPISTEMIC_STATUS = "epistemic_status"
+KEY_CONFIDENCE = "confidence"
+KEY_BUNDLE_ID = "bundle_id"
+KEY_INTERNAL_ID = "internal_id"
+KEY_SYNTHETIC_NAME = "synthetic_name"
+KEY_IS_ASYNC = "is_async"
+KEY_HAS_AWAIT = "has_await"
+KEY_STRING_LITERALS = "string_literals"
+KEY_CALL_EXPRESSION_COUNT = "call_expression_count"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"
 
 # (H) File names
 INIT_PY = "__init__.py"
+
+# (H) Keywords
+KEYWORD_FUNCTION = "function"
 
 # (H) Encoding
 ENCODING_UTF8 = "utf-8"
@@ -332,11 +400,11 @@ SEPARATOR_DOT = "."
 SEPARATOR_SLASH = "/"
 
 # (H) Path navigation
-PATH_CURRENT_DIR = ".."
-PATH_PARENT_DIR = "../.."
+PATH_CURRENT_DIR = "."
+PATH_PARENT_DIR = ".."
 GLOB_ALL = "*"
-PATH_RELATIVE_PREFIX = "../"
-PATH_PARENT_PREFIX = "../../"
+PATH_RELATIVE_PREFIX = "./"
+PATH_PARENT_PREFIX = "../"
 CPP_IMPORT_PARTITION_PREFIX = "import :"
 CPP_PARTITION_PREFIX = "partition_"
 
@@ -372,6 +440,26 @@ class NodeLabel(StrEnum):
     MODULE_INTERFACE = "ModuleInterface"
     MODULE_IMPLEMENTATION = "ModuleImplementation"
     EXTERNAL_PACKAGE = "ExternalPackage"
+    ENDPOINT = "Endpoint"
+    HOOK = "Hook"
+    BLOCK = "Block"
+    ASSET = "Asset"
+    TAILWIND_UTILITY = "TailwindUtility"
+    IMPORT = "Import"
+    COMPONENT = "Component"
+    PARAMETER = "Parameter"
+    ANALYSIS_REPORT = "AnalysisReport"
+    ANALYSIS_METRIC = "AnalysisMetric"
+    ANALYSIS_RUN = "AnalysisRun"
+    LIBRARY = "Library"
+    DOC_CHUNK = "DocChunk"
+    CONCEPT = "Concept"
+    SOURCE = "Source"
+    BUNDLE = "Bundle"
+    VIRTUAL_MODULE = "VirtualModule"
+    VIRTUAL_FUNCTION = "VirtualFunction"
+    ENTRY_POINT = "EntryPoint"
+    EVENT_FLOW = "EventFlow"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -390,6 +478,26 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.MODULE_INTERFACE: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.MODULE_IMPLEMENTATION: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.EXTERNAL_PACKAGE: UniqueKeyType.NAME,
+    NodeLabel.ENDPOINT: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.HOOK: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.BLOCK: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ASSET: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.TAILWIND_UTILITY: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.IMPORT: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.COMPONENT: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.PARAMETER: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ANALYSIS_REPORT: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ANALYSIS_METRIC: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ANALYSIS_RUN: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.LIBRARY: UniqueKeyType.NAME,
+    NodeLabel.DOC_CHUNK: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.CONCEPT: UniqueKeyType.NAME,
+    NodeLabel.SOURCE: UniqueKeyType.NAME,
+    NodeLabel.BUNDLE: UniqueKeyType.NAME,
+    NodeLabel.VIRTUAL_MODULE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.VIRTUAL_FUNCTION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.ENTRY_POINT: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.EVENT_FLOW: UniqueKeyType.QUALIFIED_NAME,
 }
 
 _missing_keys = set(NodeLabel) - set(_NODE_LABEL_UNIQUE_KEYS.keys())
@@ -416,8 +524,56 @@ class RelationshipType(StrEnum):
     INHERITS = "INHERITS"
     IMPLEMENTS = "IMPLEMENTS"
     OVERRIDES = "OVERRIDES"
+    RETURNS_TYPE = "RETURNS_TYPE"
+    PARAMETER_TYPE = "PARAMETER_TYPE"
+    CAUGHT_BY = "CAUGHT_BY"
+    THROWS = "THROWS"
+    DECORATES = "DECORATES"
+    ANNOTATES = "ANNOTATES"
+    REQUIRES_LIBRARY = "REQUIRES_LIBRARY"
+    DEPENDS_ON = "DEPENDS_ON"
     CALLS = "CALLS"
     DEPENDS_ON_EXTERNAL = "DEPENDS_ON_EXTERNAL"
+    HAS_ENDPOINT = "HAS_ENDPOINT"
+    ROUTES_TO_CONTROLLER = "ROUTES_TO_CONTROLLER"
+    ROUTES_TO_ACTION = "ROUTES_TO_ACTION"
+    RENDERS_VIEW = "RENDERS_VIEW"
+    USES_MIDDLEWARE = "USES_MIDDLEWARE"
+    REGISTERS_SERVICE = "REGISTERS_SERVICE"
+    ELOQUENT_RELATION = "ELOQUENT_RELATION"
+    HOOKS = "HOOKS"
+    REGISTERS_BLOCK = "REGISTERS_BLOCK"
+    USES_ASSET = "USES_ASSET"
+    USES_UTILITY = "USES_UTILITY"
+    RESOLVES_IMPORT = "RESOLVES_IMPORT"
+    USES_COMPONENT = "USES_COMPONENT"
+    HANDLES_ERROR = "HANDLES_ERROR"
+    MUTATES_STATE = "MUTATES_STATE"
+    HAS_PARAMETER = "HAS_PARAMETER"
+    HAS_METRIC = "HAS_METRIC"
+    HAS_RUN = "HAS_RUN"
+    HAS_REPORT = "HAS_REPORT"
+    HAS_ANALYSIS = "HAS_ANALYSIS"
+    REQUIRES_DOC = "REQUIRES_DOC"
+    CONTAINS = "CONTAINS"
+    HAS_TYPE_PARAMETER = "HAS_TYPE_PARAMETER"
+    EMBEDS = "EMBEDS"
+    CONTAINS_VIRTUAL_MODULE = "CONTAINS_VIRTUAL_MODULE"
+    LIKELY_CALLS = "LIKELY_CALLS"
+    RUNTIME_CALLS = "RUNTIME_CALLS"
+    REQUESTS_ENDPOINT = "REQUESTS_ENDPOINT"
+    USES_HANDLER = "USES_HANDLER"
+    USES_SERVICE = "USES_SERVICE"
+    PROVIDES_SERVICE = "PROVIDES_SERVICE"
+    HAS_DOC = "HAS_DOC"
+    DESCRIBES = "DESCRIBES"
+    USED_IN = "USED_IN"
+    USES_LIBRARY = "USES_LIBRARY"
+    SOURCED_FROM = "SOURCED_FROM"
+    SUPERSEDES = "SUPERSEDES"
+    DOCUMENTS_EXTERNAL = "DOCUMENTS_EXTERNAL"
+    IS_ENTRY_POINT = "IS_ENTRY_POINT"
+    TRIGGERS_FLOW = "TRIGGERS_FLOW"
 
 
 NODE_PROJECT = NodeLabel.PROJECT
@@ -432,6 +588,8 @@ KEY_PARAMETERS = "parameters"
 KEY_DECORATORS = "decorators"
 KEY_DOCSTRING = "docstring"
 KEY_IS_EXPORTED = "is_exported"
+KEY_IS_ENTRY_POINT = "is_entry_point"
+KEY_SIGNATURE_LITE = "signature_lite"
 
 # (H) Method signature formatting
 EMPTY_PARENS = "()"
@@ -482,6 +640,18 @@ class SupportedLanguage(StrEnum):
     CSHARP = "c-sharp"
     PHP = "php"
     LUA = "lua"
+    RUBY = "ruby"
+    KOTLIN = "kotlin"
+    YAML = "yaml"
+    JSON = "json"
+    HTML = "html"
+    CSS = "css"
+    SCSS = "scss"
+    GRAPHQL = "graphql"
+    DOCKERFILE = "dockerfile"
+    SQL = "sql"
+    VUE = "vue"
+    SVELTE = "svelte"
 
 
 class LanguageStatus(StrEnum):
@@ -536,24 +706,84 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "Java",
     ),
     SupportedLanguage.GO: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Methods, type declarations",
+        LanguageStatus.FULL,
+        "Methods, type declarations, interfaces",
         "Go",
     ),
     SupportedLanguage.SCALA: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Case classes, objects",
+        LanguageStatus.FULL,
+        "Case classes, objects, traits",
         "Scala",
     ),
     SupportedLanguage.CSHARP: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Classes, interfaces, generics (planned)",
+        LanguageStatus.FULL,
+        "Classes, interfaces, generics, records",
         "C#",
     ),
     SupportedLanguage.PHP: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Classes, functions, namespaces",
+        LanguageStatus.FULL,
+        "Classes, functions, namespaces, attributes",
         "PHP",
+    ),
+    SupportedLanguage.RUBY: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Classes, modules, require/rails patterns",
+        "Ruby",
+    ),
+    SupportedLanguage.KOTLIN: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Classes, coroutines, DSLs, type inference",
+        "Kotlin",
+    ),
+    SupportedLanguage.YAML: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Config structures, Kubernetes/Docker Compose",
+        "YAML",
+    ),
+    SupportedLanguage.JSON: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Config structures, package.json",
+        "JSON",
+    ),
+    SupportedLanguage.HTML: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Document structure, components",
+        "HTML",
+    ),
+    SupportedLanguage.CSS: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Selectors, imports, stylesheets",
+        "CSS",
+    ),
+    SupportedLanguage.SCSS: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Variables, mixins, nested rules",
+        "SCSS",
+    ),
+    SupportedLanguage.GRAPHQL: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Schemas, types, queries",
+        "GraphQL",
+    ),
+    SupportedLanguage.DOCKERFILE: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Images, stages, build instructions",
+        "Dockerfile",
+    ),
+    SupportedLanguage.SQL: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Tables, views, statements",
+        "SQL",
+    ),
+    SupportedLanguage.VUE: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Single-file components, templates",
+        "Vue",
+    ),
+    SupportedLanguage.SVELTE: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Single-file components, markup",
+        "Svelte",
     ),
 }
 
@@ -629,6 +859,7 @@ FIELD_PROPERTY = "property"
 FIELD_NAME = "name"
 FIELD_ALIAS = "alias"
 FIELD_MODULE_NAME = "module_name"
+FIELD_SOURCE = "source"
 FIELD_ARGUMENTS = "arguments"
 FIELD_BODY = "body"
 FIELD_CONSTRUCTOR = "constructor"
@@ -786,6 +1017,19 @@ class TreeSitterModule(StrEnum):
     JAVA = "tree_sitter_java"
     CPP = "tree_sitter_cpp"
     LUA = "tree_sitter_lua"
+    RUBY = "tree_sitter_ruby"
+    KOTLIN = "tree_sitter_kotlin"
+    YAML = "tree_sitter_yaml"
+    JSON = "tree_sitter_json"
+    PHP = "tree_sitter_php"
+    HTML = "tree_sitter_html"
+    CSS = "tree_sitter_css"
+    SCSS = "tree_sitter_scss"
+    GRAPHQL = "tree_sitter_graphql"
+    DOCKERFILE = "tree_sitter_dockerfile"
+    SQL = "tree_sitter_sql"
+    VUE = "tree_sitter_vue"
+    SVELTE = "tree_sitter_svelte"
 
 
 # (H) Query dict keys
@@ -2821,6 +3065,94 @@ SPEC_PHP_CALL_TYPES = (
     TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION,
 )
+
+# (H) LANGUAGE_SPECS node type tuples for Ruby
+SPEC_RUBY_FUNCTION_TYPES = ("method", "singleton_method")
+SPEC_RUBY_CLASS_TYPES = ("class", "module")
+SPEC_RUBY_MODULE_TYPES = ("program",)
+SPEC_RUBY_CALL_TYPES = ("call", "method_call")
+SPEC_RUBY_IMPORT_TYPES = ("call", "method_call")
+
+# (H) LANGUAGE_SPECS node type tuples for Kotlin
+SPEC_KOTLIN_FUNCTION_TYPES = ("function_declaration",)
+SPEC_KOTLIN_CLASS_TYPES = (
+    "class_declaration",
+    "interface_declaration",
+    "object_declaration",
+)
+SPEC_KOTLIN_MODULE_TYPES = ("source_file",)
+SPEC_KOTLIN_CALL_TYPES = ("call_expression",)
+SPEC_KOTLIN_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for YAML
+SPEC_YAML_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_YAML_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_YAML_MODULE_TYPES = ("document",)
+SPEC_YAML_CALL_TYPES: tuple[str, ...] = ()
+SPEC_YAML_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for JSON
+SPEC_JSON_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_JSON_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_JSON_MODULE_TYPES = ("document",)
+SPEC_JSON_CALL_TYPES: tuple[str, ...] = ()
+SPEC_JSON_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for HTML
+SPEC_HTML_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_HTML_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_HTML_MODULE_TYPES = ("document", "source_file")
+SPEC_HTML_CALL_TYPES: tuple[str, ...] = ()
+SPEC_HTML_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for CSS
+SPEC_CSS_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_CSS_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_CSS_MODULE_TYPES = ("stylesheet", "source_file")
+SPEC_CSS_CALL_TYPES: tuple[str, ...] = ()
+SPEC_CSS_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for SCSS
+SPEC_SCSS_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_SCSS_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_SCSS_MODULE_TYPES = ("stylesheet", "source_file")
+SPEC_SCSS_CALL_TYPES: tuple[str, ...] = ()
+SPEC_SCSS_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for GraphQL
+SPEC_GRAPHQL_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_GRAPHQL_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_GRAPHQL_MODULE_TYPES = ("document", "source_file")
+SPEC_GRAPHQL_CALL_TYPES: tuple[str, ...] = ()
+SPEC_GRAPHQL_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for Dockerfile
+SPEC_DOCKERFILE_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_DOCKERFILE_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_DOCKERFILE_MODULE_TYPES = ("source_file",)
+SPEC_DOCKERFILE_CALL_TYPES: tuple[str, ...] = ()
+SPEC_DOCKERFILE_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for SQL
+SPEC_SQL_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_SQL_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_SQL_MODULE_TYPES = ("source_file", "program")
+SPEC_SQL_CALL_TYPES: tuple[str, ...] = ()
+SPEC_SQL_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for Vue
+SPEC_VUE_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_VUE_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_VUE_MODULE_TYPES = ("source_file", "document")
+SPEC_VUE_CALL_TYPES: tuple[str, ...] = ()
+SPEC_VUE_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for Svelte
+SPEC_SVELTE_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_SVELTE_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_SVELTE_MODULE_TYPES = ("source_file", "document")
+SPEC_SVELTE_CALL_TYPES: tuple[str, ...] = ()
+SPEC_SVELTE_IMPORT_TYPES: tuple[str, ...] = ()
 
 # (H) LANGUAGE_SPECS node type tuples for Lua
 SPEC_LUA_FUNCTION_TYPES = (TS_LUA_FUNCTION_DECLARATION, TS_LUA_FUNCTION_DEFINITION)

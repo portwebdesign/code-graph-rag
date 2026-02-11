@@ -1,11 +1,12 @@
 from collections import defaultdict
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.core import constants as cs
-from codebase_rag.data_models.types_defs import NodeType
+from codebase_rag.data_models.types_defs import ASTNode, NodeType
 from codebase_rag.parsers.import_processor import ImportProcessor
 from codebase_rag.parsers.java.type_inference import JavaTypeInferenceEngine
 from codebase_rag.tests.conftest import create_mock_node
@@ -53,6 +54,10 @@ def type_inference_engine(
         class_inheritance={},
         simple_name_lookup=defaultdict(set),
     )
+
+
+def _as_ast(node: object) -> ASTNode:
+    return cast(ASTNode, node)
 
 
 class TestJavaTypeResolverMixin:
@@ -627,7 +632,7 @@ class TestJavaTypeResolverAstMethods:
         root_node = create_mock_node("program", children=[outer_class])
 
         result = type_inference_engine._find_superclass_using_ast(
-            root_node, "InnerClass", "com.example"
+            _as_ast(root_node), "InnerClass", "com.example"
         )
         assert result == "BaseClass"
 
@@ -643,7 +648,7 @@ class TestJavaTypeResolverAstMethods:
         root_node = create_mock_node("program", children=[class_node])
 
         result = type_inference_engine._find_superclass_using_ast(
-            root_node, "TargetClass", "com.example"
+            _as_ast(root_node), "TargetClass", "com.example"
         )
         assert result is None
 
@@ -806,7 +811,9 @@ class TestJavaTypeResolverAstMethods:
         root_node = create_mock_node("program", children=[class1, class2])
 
         class_names: list[str] = []
-        type_inference_engine._traverse_for_class_declarations(root_node, class_names)
+        type_inference_engine._traverse_for_class_declarations(
+            _as_ast(root_node), class_names
+        )
         assert "ClassA" in class_names
         assert "ClassB" in class_names
 
@@ -837,7 +844,9 @@ class TestJavaTypeResolverAstMethods:
         )
 
         class_names: list[str] = []
-        type_inference_engine._traverse_for_class_declarations(root_node, class_names)
+        type_inference_engine._traverse_for_class_declarations(
+            _as_ast(root_node), class_names
+        )
         assert len(class_names) == 3
         assert "MyClass" in class_names
         assert "MyInterface" in class_names

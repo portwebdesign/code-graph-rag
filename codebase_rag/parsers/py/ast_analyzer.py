@@ -1,19 +1,3 @@
-"""
-This module defines the `PythonAstAnalyzerMixin`, a component responsible for
-analyzing a Python AST to infer types and resolve method calls.
-
-As a mixin, it's designed to be used by the `PythonTypeInferenceEngine`. It
-contains the core logic for traversing the AST, processing assignments, and
-analyzing return statements to build a map of local variables to their inferred
-types.
-
-Key functionalities:
--   Traversing the AST to find assignments, comprehensions, and for-loops.
--   Processing simple and complex assignments to infer variable types.
--   Finding the AST node for a method given its fully qualified name.
--   Analyzing a method's `return` statements to infer its return type.
-"""
-
 from __future__ import annotations
 
 from abc import abstractmethod
@@ -22,10 +6,10 @@ from typing import TYPE_CHECKING, Protocol
 from loguru import logger
 from tree_sitter import Node, QueryCursor
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as lg
 from codebase_rag.data_models.types_defs import LanguageQueries
 
-from ...core import constants as cs
-from ...core import logs as lg
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
 from ..utils import safe_decode_text
 
@@ -37,8 +21,6 @@ if TYPE_CHECKING:
     from ..js_ts.type_inference import JsTypeInferenceEngine
 
     class _AstAnalyzerDeps(Protocol):
-        """Defines the dependencies required by the mixin for type hinting."""
-
         def build_local_variable_type_map(
             self, caller_node: Node, module_qn: str
         ) -> dict[str, str]: ...
@@ -65,7 +47,10 @@ else:
 
 class PythonAstAnalyzerMixin(_AstBase):
     """
-    A mixin for analyzing Python ASTs to support type inference.
+    Mixin for analyzing Python ASTs.
+
+    Provides methods for traversing ASTs, processing assignments, loops, and comprehensions,
+    and inferring types from variables and method calls.
     """
 
     queries: dict[cs.SupportedLanguage, LanguageQueries]
@@ -75,46 +60,38 @@ class PythonAstAnalyzerMixin(_AstBase):
     _js_type_inference_getter: Callable[[], JsTypeInferenceEngine]
 
     @abstractmethod
-    def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
-        """Abstract method to infer type from any expression."""
-        ...
+    def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None: ...
 
     @abstractmethod
     def _infer_type_from_expression_simple(
         self, node: Node, module_qn: str
-    ) -> str | None:
-        """Abstract method to infer type from simple expressions."""
-        ...
+    ) -> str | None: ...
 
     @abstractmethod
     def _infer_type_from_expression_complex(
         self, node: Node, module_qn: str, local_var_types: dict[str, str]
-    ) -> str | None:
-        """Abstract method to infer type from complex expressions."""
-        ...
+    ) -> str | None: ...
 
     @abstractmethod
     def _infer_method_call_return_type(
         self, method_qn: str, module_qn: str, local_var_types: dict[str, str] | None
-    ) -> str | None:
-        """Abstract method to infer a method's return type."""
-        ...
+    ) -> str | None: ...
 
     @abstractmethod
-    def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None:
-        """Abstract method to find a class FQN from a simple name in scope."""
-        ...
+    def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None: ...
 
     def _traverse_single_pass(
         self, node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
         """
-        Performs a single pass over the AST to collect and process nodes.
+        Perform a single pass traversal of the AST to analyze variable types.
+
+        Collects assignments, comprehensions, and for-loops to infer types within the scope.
 
         Args:
-            node (Node): The starting node for the traversal.
-            local_var_types (dict[str, str]): The dictionary to populate with types.
-            module_qn (str): The qualified name of the module.
+            node: The root node of the scope to traverse.
+            local_var_types: Dictionary to populate with inferred variable types.
+            module_qn: The qualified name of the current module.
         """
         assignments: list[Node] = []
         comprehensions: list[Node] = []
@@ -157,7 +134,15 @@ class PythonAstAnalyzerMixin(_AstBase):
         module_qn: str,
         processor: Callable[[Node, dict[str, str], str], None],
     ) -> None:
-        """Recursively traverses the AST and applies a processor to assignment nodes."""
+        """
+        Traverse the AST specifically to process assignment nodes.
+
+        Args:
+            node: The root node to traverse.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+            processor: Callback function to process each found assignment node.
+        """
         stack: list[Node] = [node]
         while stack:
             current = stack.pop()
@@ -168,7 +153,14 @@ class PythonAstAnalyzerMixin(_AstBase):
     def _process_assignment_simple(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes an assignment to infer types from simple literal values."""
+        """
+        Process a simple assignment node to infer types.
+
+        Args:
+            assignment_node: The assignment AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
 
@@ -188,7 +180,14 @@ class PythonAstAnalyzerMixin(_AstBase):
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
     ) -> None:
-        """Processes an assignment to infer types from complex expressions like function calls."""
+        """
+        Process a complex assignment node (involving more involved type resolution).
+
+        Args:
+            assignment_node: The assignment AST node.
+            local_var_types: Dictionary of local variable types.
+            module_qn: The module qualified name.
+        """
         left_node = assignment_node.child_by_field_name(cs.TS_FIELD_LEFT)
         right_node = assignment_node.child_by_field_name(cs.TS_FIELD_RIGHT)
 
@@ -209,20 +208,28 @@ class PythonAstAnalyzerMixin(_AstBase):
             logger.debug(lg.PY_TYPE_COMPLEX.format(var=var_name, type=inferred_type))
 
     def _extract_assignment_variable_name(self, node: Node) -> str | None:
-        """Extracts the variable name from the left-hand side of an assignment."""
+        """
+        Extract the variable name from the left side of an assignment.
+
+        Args:
+            node: The AST node representing the variable (left side).
+
+        Returns:
+            The variable name string if valid, otherwise None.
+        """
         if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
             return None
         return safe_decode_text(node) or None
 
     def _find_method_ast_node(self, method_qn: str) -> Node | None:
         """
-        Finds the AST node for a method given its fully qualified name.
+        Find the AST node for a method given its qualified name.
 
         Args:
-            method_qn (str): The FQN of the method.
+            method_qn: The fully qualified name of the method.
 
         Returns:
-            Node | None: The AST node of the method, or None if not found.
+            The AST node of the method definition, or None if not found.
         """
         qn_parts = method_qn.split(cs.SEPARATOR_DOT)
         if len(qn_parts) < 3:
@@ -246,7 +253,18 @@ class PythonAstAnalyzerMixin(_AstBase):
         method_name: str,
         language: cs.SupportedLanguage,
     ) -> Node | None:
-        """Dispatches to the correct language-specific method finder."""
+        """
+        Find a method node within a given AST root, dispatching by language.
+
+        Args:
+            root_node: The root AST node of the file.
+            class_name: The name of the class containing the method.
+            method_name: The name of the method to find.
+            language: The language of the file.
+
+        Returns:
+            The method definition AST node, or None if not found.
+        """
         match language:
             case cs.SupportedLanguage.PYTHON:
                 return self._find_python_method_in_ast(
@@ -260,7 +278,17 @@ class PythonAstAnalyzerMixin(_AstBase):
     def _find_python_method_in_ast(
         self, root_node: Node, class_name: str, method_name: str
     ) -> Node | None:
-        """Finds a Python method node within a class in a given AST."""
+        """
+        Find a Python method definition within the AST.
+
+        Args:
+            root_node: The root AST node.
+            class_name: The enclosing class name.
+            method_name: The method name.
+
+        Returns:
+            The AST node for the method, or None.
+        """
         lang_queries = self.queries[cs.SupportedLanguage.PYTHON]
         class_query = lang_queries[cs.QUERY_KEY_CLASSES]
         if not class_query:
@@ -307,14 +335,14 @@ class PythonAstAnalyzerMixin(_AstBase):
         self, method_node: Node, method_qn: str
     ) -> str | None:
         """
-        Analyzes all return statements in a method to infer its return type.
+        Analyze return statements in a method to infer return type.
 
         Args:
-            method_node (Node): The AST node of the method.
-            method_qn (str): The FQN of the method.
+            method_node: The AST node of the method.
+            method_qn: The method qualified name.
 
         Returns:
-            str | None: The inferred return type, or None.
+            The inferred return type descriptor, or None.
         """
         return_nodes: list[Node] = []
         self._find_return_statements(method_node, return_nodes)
@@ -338,7 +366,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _find_return_statements(self, node: Node, return_nodes: list[Node]) -> None:
-        """Recursively finds all `return_statement` nodes within a given node."""
+        """
+        Recursively find all return statement nodes within a scope.
+
+        Args:
+            node: The starting node.
+            return_nodes: List to append found return nodes to.
+        """
         stack: list[Node] = [node]
 
         while stack:
@@ -349,7 +383,16 @@ class PythonAstAnalyzerMixin(_AstBase):
             stack.extend(reversed(current.children))
 
     def _analyze_return_expression(self, expr_node: Node, method_qn: str) -> str | None:
-        """Analyzes a return expression to infer the type."""
+        """
+        Analyze an expression used in a return statement to infer its type.
+
+        Args:
+            expr_node: The expression AST node.
+            method_qn: The context method qualified name.
+
+        Returns:
+            The inferred type, or None.
+        """
         match expr_node.type:
             case cs.TS_PY_CALL:
                 return self._analyze_call_return(expr_node, method_qn)
@@ -361,7 +404,16 @@ class PythonAstAnalyzerMixin(_AstBase):
                 return None
 
     def _analyze_call_return(self, expr_node: Node, method_qn: str) -> str | None:
-        """Analyzes a `call` expression in a return statement."""
+        """
+        Analyze a function/method call return type.
+
+        Args:
+            expr_node: The call expression AST node.
+            method_qn: The context method qualified name.
+
+        Returns:
+            The inferred return type of the call, or None.
+        """
         func_node = expr_node.child_by_field_name(cs.TS_FIELD_FUNCTION)
         if not func_node:
             return None
@@ -385,7 +437,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _resolve_call_class_name(self, class_name: str, method_qn: str) -> str | None:
-        """Resolves the class name from a constructor call in a return statement."""
+        """
+        Resolve the class name corresponding to a call (likely a constructor or class method).
+
+        Args:
+            class_name: The simple class name.
+            method_qn: The current method context.
+
+        Returns:
+            The resolved class name (potentially qualified), or None.
+        """
         qn_parts = method_qn.split(cs.SEPARATOR_DOT)
         if class_name == cs.PY_KEYWORD_CLS and len(qn_parts) >= 2:
             return qn_parts[-2]
@@ -398,7 +459,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _analyze_identifier_return(self, expr_node: Node, method_qn: str) -> str | None:
-        """Analyzes an `identifier` in a return statement."""
+        """
+        Analyze an identifier return to find its type from local scope.
+
+        Args:
+            expr_node: The identifier AST node.
+            method_qn: The current method context.
+
+        Returns:
+            The inferred type of the variable, or None.
+        """
         if expr_node.text is None:
             return None
 
@@ -425,7 +495,16 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _analyze_attribute_return(self, expr_node: Node, method_qn: str) -> str | None:
-        """Analyzes an `attribute` access in a return statement."""
+        """
+        Analyze an attribute access return (e.g. self.some_field).
+
+        Args:
+            expr_node: The attribute AST node.
+            method_qn: The current method context.
+
+        Returns:
+            The inferred type, or None.
+        """
         object_node = expr_node.child_by_field_name(cs.TS_FIELD_OBJECT)
         if (
             object_node
@@ -440,5 +519,13 @@ class PythonAstAnalyzerMixin(_AstBase):
         return None
 
     def _extract_method_call_from_attr(self, attr_node: Node) -> str | None:
-        """Extracts the full method call string from an `attribute` node."""
+        """
+        Extract the method name from an attribute node used in a call.
+
+        Args:
+            attr_node: The attribute node.
+
+        Returns:
+            The method name string, or None.
+        """
         return safe_decode_text(attr_node) or None if attr_node.text else None

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Coroutine
 from pathlib import Path
+from typing import Any, TypeVar, cast
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +17,12 @@ from codebase_rag.infrastructure.decorators import (
     timing_decorator,
     validate_project_path,
 )
+
+T = TypeVar("T")
+
+
+def _run[T](coro: Awaitable[T]) -> T:
+    return asyncio.run(cast(Coroutine[Any, Any, T], coro))
 
 
 class TestEnsureLoaded:
@@ -116,7 +124,7 @@ class TestAsyncTimingDecorator:
         async def async_add(a: int, b: int) -> int:
             return a + b
 
-        result = asyncio.run(async_add(2, 3))
+        result = _run(async_add(2, 3))
         assert result == 5
 
     def test_logs_timing_info(self) -> None:
@@ -126,7 +134,7 @@ class TestAsyncTimingDecorator:
             async def async_func() -> str:
                 return "done"
 
-            result = asyncio.run(async_func())
+            result = _run(async_func())
 
             assert result == "done"
             mock_logger.info.assert_called_once()
@@ -141,7 +149,7 @@ class TestAsyncTimingDecorator:
                 raise ValueError("async error")
 
             with pytest.raises(ValueError, match="async error"):
-                asyncio.run(async_failing())
+                _run(async_failing())
 
     def test_preserves_function_metadata(self) -> None:
         @async_timing_decorator
@@ -169,7 +177,7 @@ class TestValidateProjectPath:
 
         service = MockService()
         with patch.object(Path, "resolve", return_value=Path("/project/src/file.py")):
-            result = asyncio.run(service.read(file_path="src/file.py"))
+            result = _run(service.read(file_path="src/file.py"))
 
         assert result.error_message is None
 
@@ -189,7 +197,7 @@ class TestValidateProjectPath:
                 return ResultType(file_path=str(file_path))
 
         service = MockService()
-        result = asyncio.run(service.read(file_path="../etc/passwd"))
+        result = _run(service.read(file_path="../etc/passwd"))
 
         assert result.error_message is not None
         assert "outside" in result.error_message.lower()
@@ -210,7 +218,7 @@ class TestValidateProjectPath:
                 return ResultType(file_path=str(file_path))
 
         service = MockService()
-        result = asyncio.run(service.read(file_path=123))  # type: ignore[arg-type]
+        result = _run(service.read(file_path=123))
 
         assert result.error_message is not None
 
@@ -231,7 +239,7 @@ class TestValidateProjectPath:
 
         service = MockService()
         with patch.object(Path, "resolve", return_value=Path("/project/test.txt")):
-            result = asyncio.run(service.save("my content", "test.txt"))
+            result = _run(service.save("my content", "test.txt"))
 
         assert result.error_message is None
         assert "test.txt" in result.file_path
@@ -467,7 +475,7 @@ class TestMcpTryExcept:
         async def successful_handler() -> str:
             return "success"
 
-        result = asyncio.run(successful_handler())
+        result = _run(successful_handler())
         assert result == "success"
 
     def test_returns_error_on_exception(self) -> None:
@@ -475,7 +483,7 @@ class TestMcpTryExcept:
         async def failing_handler() -> str:
             raise ValueError("something went wrong")
 
-        result = asyncio.run(failing_handler())
+        result = _run(failing_handler())
         assert result == "error: something went wrong"
 
     def test_works_with_dict_error_factory(self) -> None:
@@ -486,7 +494,7 @@ class TestMcpTryExcept:
         async def handler() -> dict[str, str]:
             raise RuntimeError("db error")
 
-        result = asyncio.run(handler())
+        result = _run(handler())
         assert result == {"error": "db error", "status": "failed"}
 
     def test_preserves_function_metadata(self) -> None:
@@ -501,7 +509,7 @@ class TestMcpTryExcept:
         async def handler_with_args(a: int, b: str) -> str:
             return f"{a}-{b}"
 
-        result = asyncio.run(handler_with_args(1, "test"))
+        result = _run(handler_with_args(1, "test"))
         assert result == "1-test"
 
     def test_reraises_keyboard_interrupt(self) -> None:
@@ -510,7 +518,7 @@ class TestMcpTryExcept:
             raise KeyboardInterrupt()
 
         with pytest.raises(KeyboardInterrupt):
-            asyncio.run(handler_with_interrupt())
+            _run(handler_with_interrupt())
 
     def test_reraises_system_exit(self) -> None:
         @mcp_try_except(lambda e: f"error: {e}")
@@ -518,7 +526,7 @@ class TestMcpTryExcept:
             raise SystemExit(1)
 
         with pytest.raises(SystemExit):
-            asyncio.run(handler_with_exit())
+            _run(handler_with_exit())
 
     def test_reraises_cancelled_error(self) -> None:
         @mcp_try_except(lambda e: f"error: {e}")
@@ -526,4 +534,4 @@ class TestMcpTryExcept:
             raise asyncio.CancelledError()
 
         with pytest.raises(asyncio.CancelledError):
-            asyncio.run(handler_with_cancel())
+            _run(handler_with_cancel())

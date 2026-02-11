@@ -1,17 +1,3 @@
-"""
-This module provides parsers for various dependency management files from different
-programming language ecosystems.
-
-It defines a base `DependencyParser` class and specific implementations for
-different file types, such as `pyproject.toml`, `requirements.txt`, `package.json`,
-`Cargo.toml`, and more. The main entry point is the `parse_dependencies` function,
-which dispatches to the appropriate parser based on the file name.
-
-Each parser is responsible for reading a dependency file and extracting a list
-of `Dependency` objects, which contain the name and version specifier of each
-dependency.
-"""
-
 import json
 import re
 from pathlib import Path
@@ -20,21 +6,20 @@ import defusedxml.ElementTree as ET
 import toml
 from loguru import logger
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
 from codebase_rag.data_models.models import Dependency
-
-from ..core import constants as cs
-from ..core import logs as ls
 
 
 def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
     """
-    Extracts a package name and version specifier from a PEP 508 string.
+    Extracts the package name and version specifier from a PEP 508 dependency string.
 
     Args:
-        dep_string (str): The dependency string (e.g., 'requests[security]>=2.25.1').
+        dep_string (str): The dependency string (e.g., "requests>=2.0").
 
     Returns:
-        tuple[str, str]: A tuple containing the package name and the version specifier.
+        tuple[str, str]: A tuple of (package_name, version_spec). Returns empty strings if parsing fails.
     """
     stripped = dep_string.strip()
     match = re.match(r"^([a-zA-Z0-9_.-]+(?:\[[^\]]*\])?)", stripped)
@@ -50,33 +35,40 @@ def _extract_pep508_package_name(dep_string: str) -> tuple[str, str]:
 
 
 class DependencyParser:
-    """Base class for dependency file parsers."""
+    """
+    Base class for dependency file parsers.
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a dependency file to extract dependencies.
+        Parses a dependency file and returns a list of dependencies.
 
         Args:
-            file_path (Path): The path to the dependency file.
+            file_path (Path): Path to the dependency file.
 
         Returns:
-            list[Dependency]: A list of extracted Dependency objects.
+            list[Dependency]: A list of parsed Dependency objects.
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses.
         """
         raise NotImplementedError
 
 
 class PyProjectTomlParser(DependencyParser):
-    """Parses `pyproject.toml` files for dependencies."""
+    """
+    Parser for pyproject.toml files.
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `pyproject.toml` file for both standard and optional dependencies.
+        Parses pyproject.toml for dependencies (Poetry and standard project).
 
         Args:
-            file_path (Path): The path to the `pyproject.toml` file.
+            file_path (Path): Path to pyproject.toml.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -118,17 +110,19 @@ class PyProjectTomlParser(DependencyParser):
 
 
 class RequirementsTxtParser(DependencyParser):
-    """Parses `requirements.txt` files."""
+    """
+    Parser for requirements.txt files.
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `requirements.txt` file.
+        Parses requirements.txt for dependencies.
 
         Args:
-            file_path (Path): The path to the `requirements.txt` file.
+            file_path (Path): Path to requirements.txt.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -149,17 +143,19 @@ class RequirementsTxtParser(DependencyParser):
 
 
 class PackageJsonParser(DependencyParser):
-    """Parses `package.json` files for Node.js projects."""
+    """
+    Parser for package.json files (Node.js).
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `package.json` file.
+        Parses package.json for dependencies, devDependencies, and peerDependencies.
 
         Args:
-            file_path (Path): The path to the `package.json` file.
+            file_path (Path): Path to package.json.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -173,7 +169,13 @@ class PackageJsonParser(DependencyParser):
     def _load_and_collect_deps(
         self, file_path: Path, dependencies: list[Dependency]
     ) -> None:
-        """Loads the JSON and collects dependencies from different sections."""
+        """
+        Helper to load JSON and extract dependencies from various keys.
+
+        Args:
+            file_path (Path): Path to the file.
+            dependencies (list[Dependency]): List to append found dependencies to.
+        """
         with open(file_path, encoding=cs.ENCODING_UTF8) as f:
             data = json.load(f)
 
@@ -189,17 +191,19 @@ class PackageJsonParser(DependencyParser):
 
 
 class CargoTomlParser(DependencyParser):
-    """Parses `Cargo.toml` files for Rust projects."""
+    """
+    Parser for Cargo.toml files (Rust).
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `Cargo.toml` file.
+        Parses Cargo.toml for dependencies.
 
         Args:
-            file_path (Path): The path to the `Cargo.toml` file.
+            file_path (Path): Path to Cargo.toml.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -228,17 +232,19 @@ class CargoTomlParser(DependencyParser):
 
 
 class GoModParser(DependencyParser):
-    """Parses `go.mod` files for Go projects."""
+    """
+    Parser for go.mod files (Go).
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `go.mod` file.
+        Parses go.mod for required modules.
 
         Args:
-            file_path (Path): The path to the `go.mod` file.
+            file_path (Path): Path to go.mod.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -277,17 +283,19 @@ class GoModParser(DependencyParser):
 
 
 class GemfileParser(DependencyParser):
-    """Parses `Gemfile` files for Ruby projects."""
+    """
+    Parser for Gemfile (Ruby).
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `Gemfile`.
+        Parses Gemfile for gem dependencies.
 
         Args:
-            file_path (Path): The path to the `Gemfile`.
+            file_path (Path): Path to Gemfile.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -308,17 +316,19 @@ class GemfileParser(DependencyParser):
 
 
 class ComposerJsonParser(DependencyParser):
-    """Parses `composer.json` files for PHP projects."""
+    """
+    Parser for composer.json (PHP).
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `composer.json` file.
+        Parses composer.json for required packages.
 
         Args:
-            file_path (Path): The path to the `composer.json` file.
+            file_path (Path): Path to composer.json.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -342,17 +352,19 @@ class ComposerJsonParser(DependencyParser):
 
 
 class CsprojParser(DependencyParser):
-    """Parses `.csproj` files for .NET projects."""
+    """
+    Parser for .csproj files (C# / .NET).
+    """
 
     def parse(self, file_path: Path) -> list[Dependency]:
         """
-        Parses a `.csproj` file for `PackageReference` items.
+        Parses .csproj for PackageReference elements.
 
         Args:
-            file_path (Path): The path to the `.csproj` file.
+            file_path (Path): Path to .csproj file.
 
         Returns:
-            list[Dependency]: A list of extracted dependencies.
+            list[Dependency]: List of found dependencies.
         """
         dependencies: list[Dependency] = []
         try:
@@ -372,13 +384,13 @@ class CsprojParser(DependencyParser):
 
 def parse_dependencies(file_path: Path) -> list[Dependency]:
     """
-    Selects the appropriate parser based on the file name and parses it.
+    Factory function to parse dependencies based on file name or extension.
 
     Args:
-        file_path (Path): The path to the dependency file.
+        file_path (Path): Path to the dependency file.
 
     Returns:
-        list[Dependency]: A list of extracted dependencies.
+        list[Dependency]: A list of parsed dependencies.
     """
     file_name = file_path.name.lower()
 

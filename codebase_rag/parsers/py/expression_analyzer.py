@@ -1,20 +1,3 @@
-"""
-This module defines the `PythonExpressionAnalyzerMixin`, a component responsible for
-analyzing different types of Python expressions to infer their return types.
-
-As a mixin, it's designed to be used by the `PythonTypeInferenceEngine`. It
-contains the core logic for recursively analyzing expressions, including simple
-literals, variable assignments, function calls, and complex chained method calls.
-
-Key functionalities:
--   Differentiating between simple and complex expressions for phased analysis.
--   Inferring the return type of method calls, including complex chains like
-    `a.b().c()`.
--   Caching method return types to avoid re-computation.
--   Resolving method qualified names from call expressions.
--   Analyzing a method's `return` statements to determine its return type.
-"""
-
 from __future__ import annotations
 
 import re
@@ -23,6 +6,8 @@ from typing import TYPE_CHECKING, Protocol
 from loguru import logger
 from tree_sitter import Node
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as lg
 from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     NodeType,
@@ -30,8 +15,6 @@ from codebase_rag.data_models.types_defs import (
 )
 from codebase_rag.infrastructure.decorators import recursion_guard
 
-from ...core import constants as cs
-from ...core import logs as lg
 from ..import_processor import ImportProcessor
 from ..utils import safe_decode_text
 from .utils import resolve_class_name
@@ -42,8 +25,6 @@ if TYPE_CHECKING:
     from ..factory import ASTCacheProtocol
 
     class _ExpressionAnalyzerDeps(Protocol):
-        """Defines the dependencies required by the mixin for type hinting."""
-
         def _analyze_self_assignments(
             self, node: Node, local_var_types: dict[str, str], module_qn: str
         ) -> None: ...
@@ -65,7 +46,10 @@ else:
 
 class PythonExpressionAnalyzerMixin(_ExprBase):
     """
-    A mixin for analyzing Python expressions to support type inference.
+    Mixin for analyzing Python expressions to infer types.
+
+    Focused on resolving return types of function/method calls and expressions involving
+    identifiers and attributes.
     """
 
     import_processor: ImportProcessor
@@ -78,14 +62,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
 
     def _infer_type_from_expression(self, node: Node, module_qn: str) -> str | None:
         """
-        Infers the type of a variable from its assignment expression.
+        Infer the type resulting from an expression node.
+
+        Handles calls (constructor calls look like class names), list comprehensions, etc.
 
         Args:
-            node (Node): The expression node on the right side of an assignment.
-            module_qn (str): The FQN of the current module.
+            node: The expression AST node.
+            module_qn: The current module qualified name.
 
         Returns:
-            str | None: The inferred type name, or None.
+            The inferred type string, or None.
         """
         if node.type == cs.TS_PY_CALL:
             func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
@@ -117,14 +103,14 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         self, node: Node, module_qn: str
     ) -> str | None:
         """
-        Infers a type from simple expressions like constructor calls.
+        Perform simple type inference from an expression (no local var context).
 
         Args:
-            node (Node): The expression node.
-            module_qn (str): The FQN of the current module.
+            node: The expression AST node.
+            module_qn: The current module qualified name.
 
         Returns:
-            str | None: The inferred type name, or None.
+            The inferred type string, or None.
         """
         if node.type == cs.TS_PY_CALL:
             func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
@@ -147,15 +133,15 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         self, node: Node, module_qn: str, local_var_types: dict[str, str]
     ) -> str | None:
         """
-        Infers a type from complex expressions like method calls.
+        Perform complex type inference using local variable context.
 
         Args:
-            node (Node): The expression node.
-            module_qn (str): The FQN of the current module.
-            local_var_types (dict[str, str]): A map of known local variable types.
+            node: The expression AST node.
+            module_qn: The module qualified name.
+            local_var_types: Dictionary of local variable types.
 
         Returns:
-            str | None: The inferred type name, or None.
+            The inferred type string, or None.
         """
         if node.type == cs.TS_PY_CALL:
             func_node = node.child_by_field_name(cs.TS_FIELD_FUNCTION)
@@ -171,7 +157,15 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return None
 
     def _extract_full_method_call(self, attr_node: Node) -> str | None:
-        """Extracts the full text of a method call from an attribute node."""
+        """
+        Extract the full method call string from an attribute node.
+
+        Args:
+            attr_node: The attribute AST node.
+
+        Returns:
+            The method call string, or None.
+        """
         return safe_decode_text(attr_node) if attr_node.text else None
 
     @recursion_guard(
@@ -189,15 +183,15 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
         """
-        Infers the return type of a method call, handling simple and chained calls.
+        Infer the return type of a method call string.
 
         Args:
-            method_call (str): The full text of the method call expression.
-            module_qn (str): The FQN of the current module.
-            local_var_types (dict | None): A map of known local variable types.
+            method_call: The method call string (e.g., "obj.method()").
+            module_qn: The module qualified name.
+            local_var_types: Dictionary of local variable types.
 
         Returns:
-            str | None: The inferred return type FQN, or None.
+            The inferred return type, or None.
         """
         if cs.SEPARATOR_DOT in method_call and self._is_method_chain(method_call):
             return self._infer_chained_call_return_type_fixed(
@@ -207,7 +201,15 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return self._infer_method_return_type(method_call, module_qn, local_var_types)
 
     def _is_method_chain(self, call_name: str) -> bool:
-        """Checks if a call name represents a chained method call."""
+        """
+        Check if a call string represents a method chain (multiple dots and parens).
+
+        Args:
+            call_name: The call string.
+
+        Returns:
+            True if it looks like a method chain, False otherwise.
+        """
         return (
             cs.CHAR_PAREN_OPEN in call_name
             and cs.CHAR_PAREN_CLOSE in call_name
@@ -220,7 +222,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        """Infers the return type of the final call in a method chain."""
+        """
+        Infer return type for a chained method call.
+
+        Args:
+            call_name: The chained call string.
+            module_qn: The module qualified name.
+            local_var_types: Dictionary of local variable types.
+
+        Returns:
+            The inferred return type, or None.
+        """
         match = re.search(cs.REGEX_FINAL_METHOD_CAPTURE, call_name)
         if not match:
             return None
@@ -250,7 +262,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        """Infers the type of the object expression that precedes the final method call."""
+        """
+        Infer the type of the base object in a chained call.
+
+        Args:
+            object_expr: The expression for the base object.
+            module_qn: The module qualified name.
+            local_var_types: Dictionary of local variable types.
+
+        Returns:
+            The inferred type, or None.
+        """
         if (
             cs.CHAR_PAREN_OPEN not in object_expr
             and local_var_types
@@ -271,7 +293,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        """Infers the return type of a complex expression."""
+        """
+        Infer the return type of a general expression string.
+
+        Args:
+            expression: The expression string.
+            module_qn: The module qualified name.
+            local_var_types: Dictionary of local variable types.
+
+        Returns:
+            The inferred type, or None.
+        """
         if (
             cs.CHAR_PAREN_OPEN not in expression
             and local_var_types
@@ -292,13 +324,13 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     )
     def _get_method_return_type_from_ast(self, method_qn: str) -> str | None:
         """
-        Gets a method's return type by analyzing its AST, with caching.
+        Get the return type of a method by analyzing its AST (cached).
 
         Args:
-            method_qn (str): The FQN of the method.
+            method_qn: The method qualified name.
 
         Returns:
-            str | None: The inferred return type FQN, or None.
+            The return type string, or None.
         """
         if method_qn in self._method_return_type_cache:
             return self._method_return_type_cache[method_qn]
@@ -318,7 +350,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        """Infers a method's return type by resolving the call and analyzing its AST."""
+        """
+        Infer the return type of a method call by resolving it to a method definition.
+
+        Args:
+            method_call: The method call string.
+            module_qn: The module qualified name.
+            local_var_types: Dictionary of local variable types.
+
+        Returns:
+            The inferred return type, or None.
+        """
         try:
             if (
                 method_qn := self._resolve_method_qualified_name(
@@ -337,7 +379,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         module_qn: str,
         local_var_types: dict[str, str] | None = None,
     ) -> str | None:
-        """Resolves a method call string to a method's FQN."""
+        """
+        Resolve a method call string to its fully qualified name.
+
+        Args:
+            method_call: The method call string.
+            module_qn: The module qualified name.
+            local_var_types: Dictionary of local variable types.
+
+        Returns:
+            The method fully qualified name, or None.
+        """
         if cs.SEPARATOR_DOT not in method_call:
             return None
 
@@ -378,7 +430,17 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     def _resolve_class_method(
         self, class_name: str, method_name: str, module_qn: str
     ) -> str | None:
-        """Resolves a method FQN given a class name and method name."""
+        """
+        Resolve a method on a specific class.
+
+        Args:
+            class_name: The class name (simple or qualified).
+            method_name: The method name.
+            module_qn: The current module qualified name.
+
+        Returns:
+            The method qualified name, or None.
+        """
         local_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
         if result := self._try_resolve_method(local_class_qn, method_name):
             return result
@@ -403,7 +465,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return None
 
     def _try_resolve_method(self, class_qn: str, method_name: str) -> str | None:
-        """Tries to resolve a method FQN against the function registry."""
+        """
+        Check if a method exists on a given class QN.
+
+        Args:
+            class_qn: The class qualified name.
+            method_name: The method name.
+
+        Returns:
+            The method qualified name if valid, None otherwise.
+        """
         if self.function_registry.get(class_qn) != NodeType.CLASS:
             return None
         method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
@@ -412,7 +483,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return None
 
     def _infer_attribute_type(self, attribute_name: str, module_qn: str) -> str | None:
-        """Infers the type of a class attribute (e.g., `self.foo`)."""
+        """
+        Infer the type of an attribute.
+
+        Args:
+            attribute_name: The attribute name.
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred type, or None.
+        """
         if result := self._try_infer_from_self_assignments(attribute_name, module_qn):
             return result
 
@@ -428,7 +508,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
     def _try_infer_from_self_assignments(
         self, attribute_name: str, module_qn: str
     ) -> str | None:
-        """Tries to infer an attribute's type by finding its assignment in `__init__`."""
+        """
+        Try to infer attribute type from 'self' assignments in the module.
+
+        Args:
+            attribute_name: The attribute name.
+            module_qn: The module qualified name.
+
+        Returns:
+            The inferred type, or None.
+        """
         try:
             file_path = self.module_qn_to_file_path.get(module_qn)
             if not file_path or file_path not in self.ast_cache:
@@ -449,7 +538,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
             return None
 
     def _find_class_in_scope(self, class_name: str, module_qn: str) -> str | None:
-        """Finds a class FQN by its simple name within the current scope."""
+        """
+        Find a class definition within the current scope (module or imports).
+
+        Args:
+            class_name: The class name to find.
+            module_qn: The current module qualified name.
+
+        Returns:
+            The class qualified name, or None.
+        """
         local_class_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}"
         if self.function_registry.get(local_class_qn) == NodeType.CLASS:
             return class_name
@@ -469,7 +567,16 @@ class PythonExpressionAnalyzerMixin(_ExprBase):
         return None
 
     def _resolve_class_name(self, class_name: str, module_qn: str) -> str | None:
-        """Resolves a simple class name to its FQN."""
+        """
+        Resolve a class name to its fully qualified name.
+
+        Args:
+            class_name: The class name.
+            module_qn: The module qualified name.
+
+        Returns:
+            The resolved class qualified name, or None.
+        """
         return resolve_class_name(
             class_name, module_qn, self.import_processor, self.function_registry
         )

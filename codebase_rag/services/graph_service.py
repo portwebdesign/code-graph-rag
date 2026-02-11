@@ -1,22 +1,3 @@
-"""
-This module provides the `MemgraphIngestor` class, a service responsible for
-all interactions with the Memgraph database.
-
-It handles connecting to the database, executing Cypher queries, and ingesting
-data in batches. The class uses a context manager pattern for managing the
-database connection lifecycle. It also includes buffering mechanisms for nodes
-and relationships to optimize write performance by grouping multiple operations
-into single batch transactions.
-
-Key functionalities:
--   Connecting to and disconnecting from Memgraph.
--   Executing single and batch Cypher queries.
--   Buffering and flushing nodes and relationships to the database.
--   Ensuring database constraints and indexes for performance.
--   Exporting the entire graph to a dictionary format.
--   Cleaning the database and managing project-specific data.
-"""
-
 from __future__ import annotations
 
 import types
@@ -24,10 +5,12 @@ from collections import defaultdict
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 import mgclient  # ty: ignore[unresolved-import]
 from loguru import logger
 
+from codebase_rag.core import constants as cs
 from codebase_rag.core.constants import (
     ERR_SUBSTR_ALREADY_EXISTS,
     ERR_SUBSTR_CONSTRAINT,
@@ -320,6 +303,7 @@ class MemgraphIngestor:
             label (str): The label of the node.
             properties (dict[str, PropertyValue]): The properties of the node.
         """
+        self._apply_project_context(label, properties)
         self.node_buffer.append((label, properties))
         if len(self.node_buffer) >= self.batch_size:
             logger.debug(ls.MG_NODE_BUFFER_FLUSH.format(size=self.batch_size))
@@ -343,12 +327,20 @@ class MemgraphIngestor:
         """
         from_label, from_key, from_val = from_spec
         to_label, to_key, to_val = to_spec
+        rel_props: dict[str, PropertyValue] = dict(properties) if properties else {}
+        project_name = getattr(self, "project_name", None)
+        if project_name and cs.KEY_PROJECT_NAME not in rel_props:
+            rel_props[cs.KEY_PROJECT_NAME] = project_name
+        if from_key == cs.KEY_PATH and cs.KEY_FROM_PATH not in rel_props:
+            rel_props[cs.KEY_FROM_PATH] = from_val
+        if to_key == cs.KEY_PATH and cs.KEY_TO_PATH not in rel_props:
+            rel_props[cs.KEY_TO_PATH] = to_val
         self.relationship_buffer.append(
             (
                 (from_label, from_key, from_val),
                 rel_type,
                 (to_label, to_key, to_val),
-                properties,
+                rel_props or None,
             )
         )
         if len(self.relationship_buffer) >= self.batch_size:
@@ -405,6 +397,45 @@ class MemgraphIngestor:
             logger.info(ls.MG_NODES_SKIPPED.format(count=skipped_total))
         self.node_buffer.clear()
 
+    def _apply_project_context(
+        self, label: str, properties: dict[str, PropertyValue]
+    ) -> None:
+        project_name = getattr(self, "project_name", None)
+        if project_name and cs.KEY_PROJECT_NAME not in properties:
+            properties[cs.KEY_PROJECT_NAME] = project_name
+
+        path_value = properties.get(cs.KEY_PATH)
+        if not path_value:
+            return
+
+        folder_path, folder_name = self._derive_folder_props(
+            label, str(path_value), project_name
+        )
+        if folder_path and cs.KEY_FOLDER_PATH not in properties:
+            properties[cs.KEY_FOLDER_PATH] = folder_path
+        if folder_name and cs.KEY_FOLDER_NAME not in properties:
+            properties[cs.KEY_FOLDER_NAME] = folder_name
+
+    @staticmethod
+    def _derive_folder_props(
+        label: str, path_value: str, project_name: str | None
+    ) -> tuple[str, str]:
+        try:
+            node_label = cs.NodeLabel(label)
+        except Exception:
+            node_label = None
+
+        path_obj = Path(path_value)
+        if node_label in {cs.NodeLabel.FOLDER, cs.NodeLabel.PACKAGE}:
+            folder_path = path_obj.as_posix()
+        else:
+            folder_path = path_obj.parent.as_posix()
+
+        if folder_path in {"", "."}:
+            return ".", project_name or path_obj.name
+
+        return folder_path, Path(folder_path).name
+
     def flush_relationships(self) -> None:
         """Flushes the buffered relationships to the database."""
         if not self.relationship_buffer:
@@ -452,6 +483,16 @@ class MemgraphIngestor:
                                 to_val=sample[KEY_TO_VAL],
                             )
                         )
+            failed = len(params_list) - batch_successful
+            if failed > 0:
+                self._log_missing_relationship_endpoints(
+                    from_label,
+                    from_key,
+                    to_label,
+                    to_key,
+                    params_list,
+                    results,
+                )
 
         logger.info(
             ls.MG_RELS_FLUSHED.format(
@@ -461,6 +502,48 @@ class MemgraphIngestor:
             )
         )
         self.relationship_buffer.clear()
+
+    def _log_missing_relationship_endpoints(
+        self,
+        from_label: str,
+        from_key: str,
+        to_label: str,
+        to_key: str,
+        params_list: Sequence[RelBatchRow],
+        results: Sequence[ResultRow],
+    ) -> None:
+        samples = 0
+        for row, result in zip(params_list, results):
+            created = result.get(KEY_CREATED, 0)
+            if isinstance(created, int) and created > 0:
+                continue
+            from_val = row[KEY_FROM_VAL]
+            to_val = row[KEY_TO_VAL]
+            from_exists = self._execute_query(
+                f"MATCH (a:{from_label} {{{from_key}: $value}}) RETURN count(a) as count",
+                {"value": from_val},
+            )
+            to_exists = self._execute_query(
+                f"MATCH (b:{to_label} {{{to_key}: $value}}) RETURN count(b) as count",
+                {"value": to_val},
+            )
+            from_count = from_exists[0].get("count", 0) if from_exists else 0
+            to_count = to_exists[0].get("count", 0) if to_exists else 0
+            logger.warning(
+                ls.MG_REL_ENDPOINT_MISSING.format(
+                    from_label=from_label,
+                    from_key=from_key,
+                    from_val=from_val,
+                    from_exists=from_count,
+                    to_label=to_label,
+                    to_key=to_key,
+                    to_val=to_val,
+                    to_exists=to_count,
+                )
+            )
+            samples += 1
+            if samples >= 3:
+                break
 
     def flush_all(self) -> None:
         """Flushes all buffered nodes and relationships to the database."""

@@ -1,26 +1,3 @@
-"""
-This module serves as the main entry point and orchestrator for the codebase-rag
-application's interactive modes, such as the chat and optimization loops.
-
-It handles the initialization of services, creation of tools, setup of the main
-agent, and management of the user interaction loop. It integrates various
-components like configuration, logging, UI rendering (with Rich and prompt-toolkit),
-and asynchronous task management.
-
-Key functionalities include:
--   Setting up the application context and session logging.
--   Initializing and connecting to the Memgraph database.
--   Creating and configuring the LLM agent and its tools (e.g., for file reading,
-    code retrieval, shell commands).
--   Running the main interactive loops for chat and optimization, handling user
-    input, agent responses, and tool calls.
--   Managing user approvals for sensitive operations like file edits and shell
-    commands.
--   Handling graceful cancellation of long-running agent tasks.
--   Providing utility functions for UI rendering, such as styled text, tables,
-    and diffs.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -374,10 +351,13 @@ def _setup_common_initialization(repo_path: str) -> Path:
     Returns:
         Path: The resolved absolute path to the project root.
     """
+    project_root = Path(repo_path).resolve()
+    output_dir = project_root / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     logger.remove()
     logger.add(sys.stdout, format=cs.LOG_FORMAT)
-
-    project_root = Path(repo_path).resolve()
+    logger.add(output_dir / "log.txt", format=cs.LOG_FORMAT, mode="w")
     tmp_dir = project_root / cs.TMP_DIR
     if tmp_dir.exists():
         if tmp_dir.is_dir():
@@ -775,12 +755,23 @@ def _create_model_from_string(
         tuple[Model, str, ModelConfig]: A tuple of the new model instance, its
                                         canonical string, and its configuration.
     """
-    base_config = current_override_config or settings.active_orchestrator_config
+    try:
+        from codebase_rag import main as main_module
+
+        settings_ref = getattr(main_module, "settings", settings)
+        provider_factory = getattr(
+            main_module, "get_provider_from_config", get_provider_from_config
+        )
+    except Exception:
+        settings_ref = settings
+        provider_factory = get_provider_from_config
+
+    base_config = current_override_config or settings_ref.active_orchestrator_config
 
     if cs.CHAR_COLON not in model_string:
         raise ValueError(ex.MODEL_FORMAT_INVALID)
     provider_name, model_id = (
-        p.strip() for p in settings.parse_model_string(model_string)
+        p.strip() for p in settings_ref.parse_model_string(model_string)
     )
     if not model_id:
         raise ValueError(ex.MODEL_ID_EMPTY)
@@ -793,14 +784,14 @@ def _create_model_from_string(
         config = ModelConfig(
             provider=provider_name,
             model_id=model_id,
-            endpoint=settings.ollama_endpoint,
+            endpoint=settings_ref.ollama_endpoint,
             api_key=cs.DEFAULT_API_KEY,
         )
     else:
         config = ModelConfig(provider=provider_name, model_id=model_id)
 
     canonical_string = f"{provider_name}{cs.CHAR_COLON}{model_id}"
-    provider = get_provider_from_config(config)
+    provider = provider_factory(config)
     return provider.create_model(model_id), canonical_string, config
 
 
@@ -822,6 +813,20 @@ def _handle_model_command(
         tuple[Model | None, str | None, ModelConfig | None]: The updated model,
             string, and config.
     """
+    try:
+        from codebase_rag import main as main_module
+
+        ctx = getattr(main_module, "app_context", app_context)
+        settings_ref = getattr(main_module, "settings", settings)
+        create_model = getattr(
+            main_module, "_create_model_from_string", _create_model_from_string
+        )
+        logger_ref = getattr(main_module, "logger", logger)
+    except Exception:
+        ctx = app_context
+        settings_ref = settings
+        create_model = _create_model_from_string
+        logger_ref = logger
     parts = command.strip().split(maxsplit=1)
     arg = parts[1].strip() if len(parts) > 1 else None
 
@@ -829,27 +834,25 @@ def _handle_model_command(
         if current_model_string:
             display_model = current_model_string
         else:
-            config = settings.active_orchestrator_config
+            config = settings_ref.active_orchestrator_config
             display_model = f"{config.provider}{cs.CHAR_COLON}{config.model_id}"
-        app_context.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
+        ctx.console.print(cs.UI_MODEL_CURRENT.format(model=display_model))
         return current_model, current_model_string, current_config
 
     if arg.lower() == cs.HELP_ARG:
-        app_context.console.print(cs.UI_MODEL_USAGE)
+        ctx.console.print(cs.UI_MODEL_USAGE)
         return current_model, current_model_string, current_config
 
     try:
-        new_model, canonical_model_string, new_config = _create_model_from_string(
+        new_model, canonical_model_string, new_config = create_model(
             arg, current_config
         )
-        logger.info(ls.MODEL_SWITCHED.format(model=canonical_model_string))
-        app_context.console.print(
-            cs.UI_MODEL_SWITCHED.format(model=canonical_model_string)
-        )
+        logger_ref.info(ls.MODEL_SWITCHED.format(model=canonical_model_string))
+        ctx.console.print(cs.UI_MODEL_SWITCHED.format(model=canonical_model_string))
         return new_model, canonical_model_string, new_config
     except (ValueError, AssertionError) as e:
-        logger.error(ls.MODEL_SWITCH_FAILED.format(error=e))
-        app_context.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
+        logger_ref.error(ls.MODEL_SWITCH_FAILED.format(error=e))
+        ctx.console.print(cs.UI_MODEL_SWITCH_ERROR.format(error=e))
         return current_model, current_model_string, current_config
 
 
@@ -1335,7 +1338,7 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
     Raises:
         ValueError: If the configuration is invalid.
     """
-    from .providers.base import get_provider_from_config
+    from codebase_rag.providers.base import get_provider_from_config
 
     try:
         provider = get_provider_from_config(config)

@@ -18,7 +18,7 @@ from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
 
 if TYPE_CHECKING:
-    pass  # ty: ignore[unresolved-import]
+    pass
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
@@ -87,6 +87,13 @@ def create_mock_node(
 
 
 logger.remove()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def disable_analysis_for_tests() -> Generator[None, None, None]:
+    os.environ["CODEGRAPH_ANALYSIS"] = "0"
+    yield
+    os.environ.pop("CODEGRAPH_ANALYSIS", None)
 
 
 @pytest.fixture

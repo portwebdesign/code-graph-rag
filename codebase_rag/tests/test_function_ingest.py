@@ -526,7 +526,7 @@ class TestFunctionResolution:
         )
 
         with pytest.raises(AttributeError):
-            resolution.name = "new_name"
+            setattr(resolution, "name", "new_name")
 
 
 class TestIntegrationFunctionIngestion:

@@ -16,7 +16,7 @@ from codebase_rag.tests.conftest import create_and_run_updater
         ("local mod = require('pkg.mod')", "mod", "pkg.mod"),
         ("local a = require('../lib/alpha')", "a", "lib.alpha"),
     ],
-)  # type: ignore
+)
 def test_lua_imports_paths(
     temp_repo: Path,
     req: str,

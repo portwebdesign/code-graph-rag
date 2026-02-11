@@ -1,20 +1,3 @@
-"""
-This module provides utility functions specifically for parsing Java source code.
-
-It contains helpers for extracting detailed information from various Java-specific
-AST nodes, such as classes, methods, fields, and annotations. These functions
-are used by other Java-related parsers to deconstruct the AST into a structured
-format.
-
-Key functionalities:
--   Extracting full class and method information, including modifiers, return types,
-    parameters, and inheritance.
--   Identifying special methods like the `main` method.
--   Resolving class and module contexts from fully qualified names.
--   Parsing package and import declarations.
--   Handling Java-specific path and module resolution logic.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,6 +5,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from tree_sitter import Node
 
+from codebase_rag.core import constants as cs
 from codebase_rag.data_models.models import MethodModifiersAndAnnotations
 from codebase_rag.data_models.types_defs import (
     ASTNode,
@@ -32,7 +16,6 @@ from codebase_rag.data_models.types_defs import (
     JavaMethodInfo,
 )
 
-from ...core import constants as cs
 from ..utils import safe_decode_text
 
 if TYPE_CHECKING:
@@ -40,7 +23,7 @@ if TYPE_CHECKING:
 
 
 class ClassContext(NamedTuple):
-    """Holds the context for a class being processed."""
+    """Context information for a Java class."""
 
     module_qn: str
     target_class_name: str
@@ -54,16 +37,16 @@ def get_root_node_from_module_qn(
     min_parts: int = 2,
 ) -> Node | None:
     """
-    Retrieves the root AST node for a given module qualified name.
+    Retrieve the AST root node for a given module qualified name.
 
     Args:
-        module_qn (str): The qualified name of the module.
-        module_qn_to_file_path (dict): A map from module FQNs to file paths.
-        ast_cache (ASTCacheProtocol): The cache of parsed ASTs.
-        min_parts (int): The minimum number of parts the FQN must have.
+        module_qn: The module qualified name.
+        module_qn_to_file_path: Mapping from module QN to file path.
+        ast_cache: AST cache.
+        min_parts: Minimum number of parts in module QN to consider valid.
 
     Returns:
-        Node | None: The root AST node, or None if not found.
+        The root AST node, or None if not found or invalid.
     """
     parts = module_qn.split(cs.SEPARATOR_DOT)
     if len(parts) < min_parts:
@@ -83,15 +66,15 @@ def get_class_context_from_qn(
     ast_cache: ASTCacheProtocol,
 ) -> ClassContext | None:
     """
-    Retrieves the full context (module FQN, class name, root node) for a class FQN.
+    Retrieve class context (module QN, class name, root node) from a class qualified name.
 
     Args:
-        class_qn (str): The fully qualified name of the class.
-        module_qn_to_file_path (dict): A map from module FQNs to file paths.
-        ast_cache (ASTCacheProtocol): The cache of parsed ASTs.
+        class_qn: The class fully qualified name.
+        module_qn_to_file_path: Mapping from module QN to file path.
+        ast_cache: AST cache.
 
     Returns:
-        ClassContext | None: The class context, or None if it cannot be resolved.
+        A ClassContext object, or None if not found.
     """
     parts = class_qn.split(cs.SEPARATOR_DOT)
     if len(parts) < 2:
@@ -111,13 +94,13 @@ def get_class_context_from_qn(
 
 def extract_package_name(package_node: ASTNode) -> str | None:
     """
-    Extracts the package name from a `package_declaration` node.
+    Extract the package name from a package declaration node.
 
     Args:
-        package_node (ASTNode): The package declaration node.
+        package_node: The package declaration AST node.
 
     Returns:
-        str | None: The name of the package.
+        The package name string, or None.
     """
     if package_node.type != cs.TS_PACKAGE_DECLARATION:
         return None
@@ -134,13 +117,13 @@ def extract_package_name(package_node: ASTNode) -> str | None:
 
 def extract_import_path(import_node: ASTNode) -> dict[str, str]:
     """
-    Extracts the local name and full path from an `import_declaration` node.
+    Extract import information from an import declaration node.
 
     Args:
-        import_node (ASTNode): The import declaration node.
+        import_node: The import declaration AST node.
 
     Returns:
-        dict[str, str]: A dictionary mapping the local name to the full import path.
+        Dictionary mapping imported names (or wildcards) to full import paths.
     """
     if import_node.type != cs.TS_IMPORT_DECLARATION:
         return {}
@@ -172,7 +155,6 @@ def extract_import_path(import_node: ASTNode) -> dict[str, str]:
 
 
 def _extract_superclass(class_node: ASTNode) -> str | None:
-    """Extracts the superclass name from a class node."""
     superclass_node = class_node.child_by_field_name(cs.TS_FIELD_SUPERCLASS)
     if not superclass_node:
         return None
@@ -188,7 +170,6 @@ def _extract_superclass(class_node: ASTNode) -> str | None:
 
 
 def _extract_interface_name(type_child: ASTNode) -> str | None:
-    """Extracts an interface name from a type node within an `implements` clause."""
     match type_child.type:
         case cs.TS_TYPE_IDENTIFIER:
             return safe_decode_text(type_child)
@@ -200,7 +181,6 @@ def _extract_interface_name(type_child: ASTNode) -> str | None:
 
 
 def _extract_interfaces(class_node: ASTNode) -> list[str]:
-    """Extracts all implemented interface names from a class node."""
     interfaces_node = class_node.child_by_field_name(cs.TS_FIELD_INTERFACES)
     if not interfaces_node:
         return []
@@ -215,7 +195,6 @@ def _extract_interfaces(class_node: ASTNode) -> list[str]:
 
 
 def _extract_type_parameters(class_node: ASTNode) -> list[str]:
-    """Extracts generic type parameters from a class or method node."""
     type_params_node = class_node.child_by_field_name(cs.TS_FIELD_TYPE_PARAMETERS)
     if not type_params_node:
         return []
@@ -234,14 +213,14 @@ def extract_from_modifiers_node(
     node: ASTNode, allowed_modifiers: frozenset[str]
 ) -> MethodModifiersAndAnnotations:
     """
-    Extracts modifiers and annotations from a `modifiers` node.
+    Extract modifiers and annotations from a node's modifiers child.
 
     Args:
-        node (ASTNode): The parent node containing the `modifiers` child.
-        allowed_modifiers (frozenset[str]): A set of valid modifier strings.
+        node: The parent node containing a modifiers child.
+        allowed_modifiers: Set of allowed modifier strings.
 
     Returns:
-        MethodModifiersAndAnnotations: An object containing lists of modifiers and annotations.
+        A MethodModifiersAndAnnotations object.
     """
     result = MethodModifiersAndAnnotations()
     modifiers_node = next(
@@ -261,19 +240,18 @@ def extract_from_modifiers_node(
 
 
 def _extract_class_modifiers(class_node: ASTNode) -> list[str]:
-    """Extracts the modifiers for a class node."""
     return extract_from_modifiers_node(class_node, cs.JAVA_CLASS_MODIFIERS).modifiers
 
 
 def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
     """
-    Extracts comprehensive information about a class from its AST node.
+    Extract detailed information from a class declaration node.
 
     Args:
-        class_node (ASTNode): The AST node of the class.
+        class_node: The class AST node.
 
     Returns:
-        JavaClassInfo: A TypedDict containing the class's name, type, inheritance, etc.
+        A JavaClassInfo object containing name, superclass, interfaces, etc.
     """
     if class_node.type not in cs.JAVA_CLASS_NODE_TYPES:
         return JavaClassInfo(
@@ -300,14 +278,12 @@ def extract_class_info(class_node: ASTNode) -> JavaClassInfo:
 
 
 def _get_method_type(method_node: ASTNode) -> str:
-    """Determines if a node is a method or a constructor."""
     if method_node.type == cs.TS_CONSTRUCTOR_DECLARATION:
         return cs.JAVA_TYPE_CONSTRUCTOR
     return cs.JAVA_TYPE_METHOD
 
 
 def _extract_method_return_type(method_node: ASTNode) -> str | None:
-    """Extracts the return type of a method."""
     if method_node.type != cs.TS_METHOD_DECLARATION:
         return None
     if type_node := method_node.child_by_field_name(cs.TS_FIELD_TYPE):
@@ -316,14 +292,12 @@ def _extract_method_return_type(method_node: ASTNode) -> str | None:
 
 
 def _extract_formal_param_type(param_node: ASTNode) -> str | None:
-    """Extracts the type from a `formal_parameter` node."""
     if param_type_node := param_node.child_by_field_name(cs.TS_FIELD_TYPE):
         return safe_decode_text(param_type_node)
     return None
 
 
 def _extract_spread_param_type(spread_node: ASTNode) -> str | None:
-    """Extracts the type from a `spread_parameter` (varargs) node."""
     for subchild in spread_node.children:
         if subchild.type == cs.TS_TYPE_IDENTIFIER:
             if param_type_text := safe_decode_text(subchild):
@@ -332,7 +306,6 @@ def _extract_spread_param_type(spread_node: ASTNode) -> str | None:
 
 
 def _extract_method_parameters(method_node: ASTNode) -> list[str]:
-    """Extracts a list of parameter types for a method."""
     params_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
     if not params_node:
         return []
@@ -352,13 +325,13 @@ def _extract_method_parameters(method_node: ASTNode) -> list[str]:
 
 def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
     """
-    Extracts comprehensive information about a method from its AST node.
+    Extract detailed information from a method declaration node.
 
     Args:
-        method_node (ASTNode): The AST node of the method.
+        method_node: The method AST node.
 
     Returns:
-        JavaMethodInfo: A TypedDict containing the method's name, types, modifiers, etc.
+        A JavaMethodInfo object containing name, return type, parameters, etc.
     """
     if method_node.type not in cs.JAVA_METHOD_NODE_TYPES:
         return JavaMethodInfo(
@@ -386,13 +359,13 @@ def extract_method_info(method_node: ASTNode) -> JavaMethodInfo:
 
 def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
     """
-    Extracts information about a class field from its AST node.
+    Extract information from a field declaration node.
 
     Args:
-        field_node (ASTNode): The `field_declaration` AST node.
+        field_node: The field declaration AST node.
 
     Returns:
-        JavaFieldInfo: A TypedDict containing the field's name, type, and modifiers.
+        A JavaFieldInfo object.
     """
     if field_node.type != cs.TS_FIELD_DECLARATION:
         return JavaFieldInfo(
@@ -424,13 +397,13 @@ def extract_field_info(field_node: ASTNode) -> JavaFieldInfo:
 
 def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
     """
-    Extracts information about a method call from its AST node.
+    Extract information from a method invocation node.
 
     Args:
-        call_node (ASTNode): The `method_invocation` AST node.
+        call_node: The method invocation AST node.
 
     Returns:
-        JavaMethodCallInfo | None: A TypedDict with call info, or None if not a call node.
+        A JavaMethodCallInfo object, or None if invalid.
     """
     if call_node.type != cs.TS_METHOD_INVOCATION:
         return None
@@ -459,7 +432,6 @@ def extract_method_call_info(call_node: ASTNode) -> JavaMethodCallInfo | None:
 
 
 def _has_main_method_modifiers(method_node: ASTNode) -> bool:
-    """Checks if a method has `public static` modifiers."""
     has_public = False
     has_static = False
 
@@ -476,7 +448,6 @@ def _has_main_method_modifiers(method_node: ASTNode) -> bool:
 
 
 def _is_valid_main_formal_param(param_node: ASTNode) -> bool:
-    """Checks if a formal parameter is a valid `main` method parameter."""
     type_node = param_node.child_by_field_name(cs.TS_FIELD_TYPE)
     if not type_node:
         return False
@@ -494,7 +465,6 @@ def _is_valid_main_formal_param(param_node: ASTNode) -> bool:
 
 
 def _is_valid_main_spread_param(spread_node: ASTNode) -> bool:
-    """Checks if a spread parameter is a valid `main` method parameter."""
     for subchild in spread_node.children:
         if subchild.type == cs.TS_TYPE_IDENTIFIER:
             type_text = safe_decode_text(subchild)
@@ -504,7 +474,6 @@ def _is_valid_main_spread_param(spread_node: ASTNode) -> bool:
 
 
 def _has_valid_main_parameter(method_node: ASTNode) -> bool:
-    """Checks if a method has the correct parameter signature for a `main` method."""
     parameters_node = method_node.child_by_field_name(cs.TS_FIELD_PARAMETERS)
     if not parameters_node:
         return False
@@ -528,13 +497,15 @@ def _has_valid_main_parameter(method_node: ASTNode) -> bool:
 
 def is_main_method(method_node: ASTNode) -> bool:
     """
-    Determines if a method node represents a standard Java `public static void main`.
+    Check if a method node represents a valid Java 'main' method.
+
+    Checks signature: public static void main(String[] args).
 
     Args:
-        method_node (ASTNode): The method declaration node.
+        method_node: The method AST node.
 
     Returns:
-        bool: True if it is a main method, False otherwise.
+        True if it is a main method, False otherwise.
     """
     if method_node.type != cs.TS_METHOD_DECLARATION:
         return False
@@ -555,13 +526,13 @@ def is_main_method(method_node: ASTNode) -> bool:
 
 def get_java_visibility(node: ASTNode) -> str:
     """
-    Determines the visibility (public, protected, private, package) of a node.
+    Determine the visibility (access level) of a node.
 
     Args:
-        node (ASTNode): The node to check (e.g., class, method, field).
+        node: The AST node.
 
     Returns:
-        str: The visibility level as a string.
+        The visibility string (e.g., "public", "private", "package").
     """
     for child in node.children:
         match child.type:
@@ -581,15 +552,15 @@ def build_qualified_name(
     include_methods: bool = False,
 ) -> list[str]:
     """
-    Builds a list of path parts for a qualified name by traversing up the AST.
+    Build a list of name parts representing the qualified path to a node.
 
     Args:
-        node (ASTNode): The starting node.
-        include_classes (bool): Whether to include class names in the path.
-        include_methods (bool): Whether to include method names in the path.
+        node: The starting AST node.
+        include_classes: Whether to handle class parents.
+        include_methods: Whether to handle method parents.
 
     Returns:
-        list[str]: A list of names forming the path.
+        List of strings representing the path parts.
     """
     path_parts: list[str] = []
     current = node.parent
@@ -612,13 +583,13 @@ def build_qualified_name(
 
 def extract_annotation_info(annotation_node: ASTNode) -> JavaAnnotationInfo:
     """
-    Extracts information from an annotation node.
+    Extract information from an annotation node.
 
     Args:
-        annotation_node (ASTNode): The annotation AST node.
+        annotation_node: The annotation AST node.
 
     Returns:
-        JavaAnnotationInfo: A TypedDict with the annotation's name and arguments.
+        A JavaAnnotationInfo object.
     """
     if annotation_node.type != cs.TS_ANNOTATION:
         return JavaAnnotationInfo(name=None, arguments=[])
@@ -639,16 +610,15 @@ def extract_annotation_info(annotation_node: ASTNode) -> JavaAnnotationInfo:
 
 def find_package_start_index(parts: list[str]) -> int | None:
     """
-    Finds the starting index of the package path within a list of file path parts.
+    Find the index in a path list where the package structure likely starts.
 
-    This helps to correctly construct the FQN by identifying where the package
-    name begins in a typical Java/JVM project structure (e.g., after 'src/main/java').
+    Heuristic based on standard Java folder layout (src/main/java, etc.).
 
     Args:
-        parts (list[str]): The parts of the file path.
+        parts: List of path parts.
 
     Returns:
-        int | None: The starting index of the package path, or None.
+        The starting index, or None if not found.
     """
     for i, part in enumerate(parts):
         if part in cs.JAVA_JVM_LANGUAGES and i > 0:
@@ -670,7 +640,6 @@ def find_package_start_index(parts: list[str]) -> int | None:
 
 
 def _is_non_standard_java_src_layout(parts: list[str], src_idx: int) -> bool:
-    """Checks for a non-standard Java source layout (e.g., 'src/main/com/...')"""
     if src_idx + 2 >= len(parts):
         return False
 

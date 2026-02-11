@@ -3,6 +3,10 @@ from pathlib import Path
 from ..core import constants as cs
 
 
+def to_posix(path: Path) -> str:
+    return path.as_posix()
+
+
 def should_skip_path(
     path: Path,
     repo_path: Path,

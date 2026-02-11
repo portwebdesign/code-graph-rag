@@ -1,16 +1,3 @@
-"""
-This module contains functions for extracting parent class and interface names
-from a class's AST node.
-
-It provides language-specific logic to handle the different syntaxes for
-inheritance and interface implementation across languages like C++, Java,
-Python, and JavaScript/TypeScript.
-
-The main entry point is `extract_parent_classes`, which dispatches to the
-appropriate helper function based on the node type and language. The extracted
-names are then resolved to their fully qualified names.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -19,8 +6,9 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Node
 
-from ...core import constants as cs
-from ...core import logs
+from codebase_rag.core import constants as cs
+
+from ... import logs
 from ..cpp import utils as cpp_utils
 from ..utils import safe_decode_text
 from .utils import find_child_by_type
@@ -36,16 +24,18 @@ def extract_parent_classes(
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
     """
-    Extracts a list of FQNs for all parent classes and interfaces of a given class node.
+    Extract a list of parent class qualified names for a given class node.
+
+    Delegates to language-specific extraction logic based on the node type.
 
     Args:
-        class_node (Node): The AST node of the class.
-        module_qn (str): The FQN of the module containing the class.
-        import_processor (ImportProcessor): The import processor instance.
-        resolve_to_qn (Callable): A function to resolve a simple name to an FQN.
+        class_node: The AST node for the class.
+        module_qn: The module qualified name.
+        import_processor: The processor for resolving imports.
+        resolve_to_qn: A callable to resolve simple names to qualified names.
 
     Returns:
-        list[str]: A list of FQNs of the parent classes and interfaces.
+        A list of qualified names of the parent classes.
     """
     if class_node.type in cs.CPP_CLASS_TYPES:
         return extract_cpp_parent_classes(class_node, module_qn)
@@ -81,16 +71,6 @@ def extract_parent_classes(
 
 
 def extract_cpp_parent_classes(class_node: Node, module_qn: str) -> list[str]:
-    """
-    Extracts parent classes from a C++ class definition.
-
-    Args:
-        class_node (Node): The C++ class's AST node.
-        module_qn (str): The FQN of the containing module.
-
-    Returns:
-        list[str]: A list of FQNs of the parent classes.
-    """
     parent_classes: list[str] = []
     for child in class_node.children:
         if child.type == cs.TS_BASE_CLASS_CLAUSE:
@@ -102,15 +82,17 @@ def parse_cpp_base_classes(
     base_clause_node: Node, class_node: Node, module_qn: str
 ) -> list[str]:
     """
-    Parses a C++ `base_class_clause` to find parent class names.
+    Parse the base class clause of a C++ class definition.
+
+    Extracts base class names and resolves them to qualified names relative to the current module.
 
     Args:
-        base_clause_node (Node): The `base_class_clause` AST node.
-        class_node (Node): The containing class node.
-        module_qn (str): The FQN of the containing module.
+        base_clause_node: The AST node containing the base class list.
+        class_node: The class AST node.
+        module_qn: The module qualified name.
 
     Returns:
-        list[str]: A list of FQNs of the parent classes.
+        A list of resolved parent class qualified names.
     """
     parent_classes: list[str] = []
     base_type_nodes = (
@@ -145,15 +127,6 @@ def parse_cpp_base_classes(
 
 
 def extract_cpp_base_class_name(parent_text: str) -> str:
-    """
-    Extracts the simple name from a C++ parent class string, stripping templates and namespaces.
-
-    Args:
-        parent_text (str): The text of the parent class specifier.
-
-    Returns:
-        str: The simple name of the base class.
-    """
     if cs.CHAR_ANGLE_OPEN in parent_text:
         parent_text = parent_text.split(cs.CHAR_ANGLE_OPEN)[0]
 
@@ -168,7 +141,6 @@ def resolve_superclass_from_type_identifier(
     module_qn: str,
     resolve_to_qn: Callable[[str, str], str],
 ) -> str | None:
-    """Resolves a `type_identifier` node to a fully qualified name."""
     if type_identifier_node.text:
         if parent_name := safe_decode_text(type_identifier_node):
             return resolve_to_qn(parent_name, module_qn)
@@ -181,15 +153,9 @@ def extract_java_superclass(
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
     """
-    Extracts the superclass from a Java class declaration.
+    Extract the superclass from a Java class definition.
 
-    Args:
-        class_node (Node): The Java class's AST node.
-        module_qn (str): The FQN of the containing module.
-        resolve_to_qn (Callable): A function to resolve a simple name to an FQN.
-
-    Returns:
-        list[str]: A list containing the FQN of the superclass, or an empty list.
+    Parses the `extends` clause and resolves the superclass name.
     """
     superclass_node = class_node.child_by_field_name(cs.FIELD_SUPERCLASS)
     if not superclass_node:
@@ -218,16 +184,10 @@ def extract_python_superclasses(
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
     """
-    Extracts superclasses from a Python class definition.
+    Extract superclasses from a Python class definition.
 
-    Args:
-        class_node (Node): The Python class's AST node.
-        module_qn (str): The FQN of the containing module.
-        import_processor (ImportProcessor): The import processor instance.
-        resolve_to_qn (Callable): A function to resolve a simple name to an FQN.
-
-    Returns:
-        list[str]: A list of FQNs of the superclasses.
+    Parses the argument list of the class definition and resolves each base class
+    using import mappings or local resolution.
     """
     superclasses_node = class_node.child_by_field_name(cs.FIELD_SUPERCLASSES)
     if not superclasses_node:
@@ -259,16 +219,9 @@ def extract_js_ts_heritage_parents(
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
     """
-    Extracts parent classes from a JavaScript/TypeScript `class_heritage` node.
+    Extract parent classes from JS/TS class heritage clauses.
 
-    Args:
-        class_heritage_node (Node): The `class_heritage` AST node.
-        module_qn (str): The FQN of the containing module.
-        import_processor (ImportProcessor): The import processor instance.
-        resolve_to_qn (Callable): A function to resolve a simple name to an FQN.
-
-    Returns:
-        list[str]: A list of FQNs of the parent classes.
+    Handles `extends` clauses and mixin patterns (e.g. `extends Mixin(Base)`).
     """
     parent_classes: list[str] = []
 
@@ -305,7 +258,6 @@ def extract_from_extends_clause(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
-    """Extracts parent class from a JS/TS `extends_clause` node."""
     for grandchild in extends_clause.children:
         if grandchild.type in cs.JS_TS_PARENT_REF_TYPES:
             if parent_name := safe_decode_text(grandchild):
@@ -318,7 +270,6 @@ def extract_from_extends_clause(
 
 
 def is_preceded_by_extends(child: Node, parent_node: Node) -> bool:
-    """Checks if a node in a heritage clause is preceded by the `extends` keyword."""
     child_index = parent_node.children.index(child)
     return (
         child_index > 0 and parent_node.children[child_index - 1].type == cs.TS_EXTENDS
@@ -331,7 +282,9 @@ def extract_interface_parents(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
-    """Extracts parent interfaces from a TypeScript interface declaration."""
+    """
+    Extract parent interfaces for a TS interface declaration (extends clause).
+    """
     extends_clause = find_child_by_type(class_node, cs.TS_EXTENDS_TYPE_CLAUSE)
     if not extends_clause:
         return []
@@ -354,7 +307,6 @@ def extract_mixin_parent_classes(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
-    """Recursively extracts parent classes from JS/TS mixin patterns."""
     parent_classes: list[str] = []
 
     for child in call_expr_node.children:
@@ -384,7 +336,6 @@ def resolve_js_ts_parent_class(
     import_processor: ImportProcessor,
     resolve_to_qn: Callable[[str, str], str],
 ) -> str:
-    """Resolves a JS/TS parent class name to its FQN."""
     if module_qn not in import_processor.import_mapping:
         return f"{module_qn}.{parent_name}"
     import_map = import_processor.import_mapping[module_qn]
@@ -399,15 +350,15 @@ def extract_implemented_interfaces(
     resolve_to_qn: Callable[[str, str], str],
 ) -> list[str]:
     """
-    Extracts implemented interfaces from a Java class declaration.
+    Extract interfaces implemented by a class (Java `implements` clause).
 
     Args:
-        class_node (Node): The Java class's AST node.
-        module_qn (str): The FQN of the containing module.
-        resolve_to_qn (Callable): A function to resolve a simple name to an FQN.
+        class_node: The class AST node.
+        module_qn: The module qualified name.
+        resolve_to_qn: Resolution callable.
 
     Returns:
-        list[str]: A list of FQNs of the implemented interfaces.
+        A list of qualified names of implemented interfaces.
     """
     implemented_interfaces: list[str] = []
 
@@ -426,7 +377,6 @@ def extract_java_interface_names(
     module_qn: str,
     resolve_to_qn: Callable[[str, str], str],
 ) -> None:
-    """Extracts interface names from a Java `implements` clause."""
     for child in interfaces_node.children:
         if child.type == cs.TS_TYPE_LIST:
             for type_child in child.children:

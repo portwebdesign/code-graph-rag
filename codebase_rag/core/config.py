@@ -1,25 +1,3 @@
-"""
-This module manages the application's configuration using Pydantic's `BaseSettings`.
-
-It loads settings from environment variables and a `.env` file, providing a centralized
-place for all configuration parameters. This includes settings for database connections
-(Memgraph), Large Language Model (LLM) providers (like OpenAI, Anthropic, Ollama),
-and other operational parameters.
-
-Key features:
--   `AppConfig` class: A Pydantic `BaseSettings` model that holds all configuration
-    variables.
--   `ModelConfig` dataclass: Represents the configuration for a specific LLM,
-    including provider, model ID, and API keys.
--   Dynamic loading of LLM configurations for different roles (e.g., 'orchestrator',
-    'cypher').
--   API key validation and user-friendly error messages for missing keys.
--   Handling of a `.cgrignore` file for specifying patterns to exclude or include
-    during file processing, similar to `.gitignore`.
--   A singleton `settings` instance of `AppConfig` is created for easy access
-    throughout the application.
-"""
-
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -182,7 +160,8 @@ class ModelConfig:
             or self.api_key == cs.DEFAULT_API_KEY
         ):
             error_msg = format_missing_api_key_errors(self.provider, role)
-            raise ValueError(error_msg)
+            logger.warning(error_msg)
+            return
 
 
 class AppConfig(BaseSettings):
@@ -198,18 +177,15 @@ class AppConfig(BaseSettings):
         case_sensitive=False,
     )
 
-    # Memgraph settings
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
 
-    # Agent settings
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 
-    # Orchestrator LLM settings
     ORCHESTRATOR_PROVIDER: str = ""
     ORCHESTRATOR_MODEL: str = ""
     ORCHESTRATOR_API_KEY: str | None = None
@@ -220,7 +196,6 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
 
-    # Cypher LLM settings
     CYPHER_PROVIDER: str = ""
     CYPHER_MODEL: str = ""
     CYPHER_API_KEY: str | None = None
@@ -231,7 +206,6 @@ class AppConfig(BaseSettings):
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
-    # Ollama settings
     OLLAMA_BASE_URL: str = "http://localhost:11434"
 
     @property
@@ -239,7 +213,6 @@ class AppConfig(BaseSettings):
         """Constructs the Ollama v1 API endpoint URL."""
         return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
-    # Repository and Shell settings
     TARGET_REPO_PATH: str = ".."
     SHELL_COMMAND_TIMEOUT: int = 30
     SHELL_COMMAND_ALLOWLIST: frozenset[str] = frozenset(
@@ -304,28 +277,37 @@ class AppConfig(BaseSettings):
         }
     )
 
-    # Vector store (Qdrant) and embedding settings
     QDRANT_DB_PATH: str = "./.qdrant_code_embeddings"
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5
     EMBEDDING_MAX_LENGTH: int = 512
+    EMBEDDING_CACHE_SIZE: int = 1024
     EMBEDDING_PROGRESS_INTERVAL: int = 10
 
-    # Cache settings
+    CONTEXT7_API_KEY: str | None = None
+    CONTEXT7_API_URL: str | None = None
+    CONTEXT7_MCP_URL: str | None = None
+    CONTEXT7_AUTO_ENABLED: bool = True
+    CONTEXT7_AUTO_LIBRARIES: str = (
+        "django,fastapi,flask,react,next.js,nextjs,express,nestjs,spring,rails,laravel"
+    )
+    CONTEXT7_PERSIST_GRAPH: bool = True
+    CONTEXT7_PERSIST_MEMORY: bool = True
+    CONTEXT7_DOC_TTL_DAYS: int = 30
+    CONTEXT7_MAX_CHUNKS: int = 6
+    CONTEXT7_MEMORY_MAX_CHARS: int = 1200
+
     CACHE_MAX_ENTRIES: int = 1000
     CACHE_MAX_MEMORY_MB: int = 500
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
-    # Health check settings
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
 
-    # Active model configurations (can be overridden at runtime)
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
-    # General settings
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
 
     def _get_default_config(self, role: str) -> ModelConfig:

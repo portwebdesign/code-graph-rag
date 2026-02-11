@@ -1,10 +1,12 @@
 from collections import defaultdict
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.core import constants as cs
+from codebase_rag.data_models.types_defs import ASTNode, LanguageQueries
 from codebase_rag.parsers.js_ts.module_system import JsTsModuleSystemMixin
 from codebase_rag.tests.conftest import create_mock_node
 
@@ -24,8 +26,14 @@ class ConcreteModuleSystemMixin(JsTsModuleSystemMixin):
         self.simple_name_lookup = simple_name_lookup
         self.repo_path = Path("/test/repo")
         self.project_name = "test_project"
-        self._get_docstring = MagicMock(return_value=None)
-        self._is_export_inside_function = MagicMock(return_value=False)
+
+    def _get_docstring(self, node: ASTNode) -> str | None:
+        _ = node
+        return None
+
+    def _is_export_inside_function(self, node: ASTNode) -> bool:
+        _ = node
+        return False
 
 
 @pytest.fixture
@@ -66,12 +74,16 @@ def mixin(
 
 
 @pytest.fixture
-def mock_language_queries() -> dict[cs.SupportedLanguage, MagicMock]:
+def mock_language_queries() -> dict[cs.SupportedLanguage, LanguageQueries]:
     mock_lang = MagicMock()
     return {
-        cs.SupportedLanguage.JS: {cs.QUERY_LANGUAGE: mock_lang},
-        cs.SupportedLanguage.TS: {cs.QUERY_LANGUAGE: mock_lang},
+        cs.SupportedLanguage.JS: cast(LanguageQueries, {cs.QUERY_LANGUAGE: mock_lang}),
+        cs.SupportedLanguage.TS: cast(LanguageQueries, {cs.QUERY_LANGUAGE: mock_lang}),
     }
+
+
+def _as_ast(node: object) -> ASTNode:
+    return cast(ASTNode, node)
 
 
 class TestProcessCommonjsImport:
@@ -154,7 +166,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_called_once()
 
@@ -195,7 +209,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_called_once()
 
@@ -214,7 +230,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -237,7 +255,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -267,7 +287,9 @@ class TestProcessVariableDeclaratorForCommonjs:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -276,10 +298,10 @@ class TestIngestMissingImportPatterns:
     def test_skips_non_js_ts_languages(
         self,
         mixin: ConcreteModuleSystemMixin,
-        mock_language_queries: dict[cs.SupportedLanguage, MagicMock],
+        mock_language_queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         mixin._ingest_missing_import_patterns(
-            MagicMock(),
+            _as_ast(MagicMock()),
             "test_module",
             cs.SupportedLanguage.PYTHON,
             mock_language_queries,
@@ -289,11 +311,11 @@ class TestIngestMissingImportPatterns:
         self,
         mixin: ConcreteModuleSystemMixin,
     ) -> None:
-        queries: dict[cs.SupportedLanguage, dict[str, MagicMock | None]] = {
-            cs.SupportedLanguage.JS: {cs.QUERY_LANGUAGE: None}
+        queries: dict[cs.SupportedLanguage, LanguageQueries] = {
+            cs.SupportedLanguage.JS: cast(LanguageQueries, {cs.QUERY_LANGUAGE: None})
         }
         mixin._ingest_missing_import_patterns(
-            MagicMock(),
+            _as_ast(MagicMock()),
             "test_module",
             cs.SupportedLanguage.JS,
             queries,
@@ -304,10 +326,10 @@ class TestIngestCommonjsExports:
     def test_skips_non_js_ts_languages(
         self,
         mixin: ConcreteModuleSystemMixin,
-        mock_language_queries: dict[cs.SupportedLanguage, MagicMock],
+        mock_language_queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         mixin._ingest_commonjs_exports(
-            MagicMock(),
+            _as_ast(MagicMock()),
             "test_module",
             cs.SupportedLanguage.PYTHON,
             mock_language_queries,
@@ -317,11 +339,11 @@ class TestIngestCommonjsExports:
         self,
         mixin: ConcreteModuleSystemMixin,
     ) -> None:
-        queries: dict[cs.SupportedLanguage, dict[str, MagicMock | None]] = {
-            cs.SupportedLanguage.JS: {cs.QUERY_LANGUAGE: None}
+        queries: dict[cs.SupportedLanguage, LanguageQueries] = {
+            cs.SupportedLanguage.JS: cast(LanguageQueries, {cs.QUERY_LANGUAGE: None})
         }
         mixin._ingest_commonjs_exports(
-            MagicMock(),
+            _as_ast(MagicMock()),
             "test_module",
             cs.SupportedLanguage.JS,
             queries,
@@ -334,12 +356,14 @@ class TestIngestEs6Exports:
         mixin: ConcreteModuleSystemMixin,
     ) -> None:
         mock_lang = MagicMock()
-        queries: dict[cs.SupportedLanguage, dict[str, MagicMock]] = {
-            cs.SupportedLanguage.JS: {cs.QUERY_LANGUAGE: mock_lang}
+        queries: dict[cs.SupportedLanguage, LanguageQueries] = {
+            cs.SupportedLanguage.JS: cast(
+                LanguageQueries, {cs.QUERY_LANGUAGE: mock_lang}
+            )
         }
 
         mixin._ingest_es6_exports(
-            MagicMock(),
+            _as_ast(MagicMock()),
             "test_module",
             cs.SupportedLanguage.JS,
             queries,
@@ -358,7 +382,9 @@ class TestEdgeCases:
             fields={cs.FIELD_VALUE: call_expr},
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -373,7 +399,9 @@ class TestEdgeCases:
             fields={cs.FIELD_NAME: object_pattern},
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -392,7 +420,9 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -415,7 +445,9 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -448,7 +480,9 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()
 
@@ -489,6 +523,8 @@ class TestEdgeCases:
             },
         )
 
-        mixin._process_variable_declarator_for_commonjs(declarator, "test_module")
+        mixin._process_variable_declarator_for_commonjs(
+            _as_ast(declarator), "test_module"
+        )
 
         mock_import_processor._resolve_js_module_path.assert_not_called()

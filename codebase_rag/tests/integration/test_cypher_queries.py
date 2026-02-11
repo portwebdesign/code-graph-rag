@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -110,15 +110,17 @@ class TestCypherDeleteAllIntegration:
             "CREATE (n:TestNode {name: 'test1'}), (m:TestNode {name: 'test2'})"
         )
 
-        count_before = memgraph_ingestor._execute_query(
-            "MATCH (n) RETURN count(n) as count"
+        count_before = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query("MATCH (n) RETURN count(n) as count"),
         )
         assert count_before[0]["count"] == 2
 
         memgraph_ingestor._execute_query(CYPHER_DELETE_ALL)
 
-        count_after = memgraph_ingestor._execute_query(
-            "MATCH (n) RETURN count(n) as count"
+        count_after = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query("MATCH (n) RETURN count(n) as count"),
         )
         assert count_after[0]["count"] == 0
 
@@ -132,7 +134,10 @@ class TestCypherExportNodesIntegration:
             "CREATE (n:Function {qualified_name: 'module.func', name: 'func'})"
         )
 
-        results = memgraph_ingestor._execute_query(CYPHER_EXPORT_NODES)
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(CYPHER_EXPORT_NODES),
+        )
 
         assert len(results) == 1
         assert "node_id" in results[0]
@@ -146,7 +151,10 @@ class TestCypherExportNodesIntegration:
             "(b:Method {qualified_name: 'MyClass.method'})"
         )
 
-        results = memgraph_ingestor._execute_query(CYPHER_EXPORT_NODES)
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(CYPHER_EXPORT_NODES),
+        )
 
         assert len(results) == 2
         labels = {tuple(r["labels"]) for r in results}
@@ -164,7 +172,10 @@ class TestCypherExportRelationshipsIntegration:
             "(f:Function {qualified_name: 'mymodule.func'})"
         )
 
-        results = memgraph_ingestor._execute_query(CYPHER_EXPORT_RELATIONSHIPS)
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(CYPHER_EXPORT_RELATIONSHIPS),
+        )
 
         assert len(results) == 1
         assert results[0]["type"] == "DEFINES"
@@ -184,8 +195,11 @@ class TestCypherFindByQualifiedNameIntegration:
             "start_line: 10, end_line: 20})"
         )
 
-        results = memgraph_ingestor._execute_query(
-            CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "mymodule.calculate"}
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(
+                CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "mymodule.calculate"}
+            ),
         )
 
         assert len(results) == 1
@@ -197,8 +211,11 @@ class TestCypherFindByQualifiedNameIntegration:
     def test_returns_empty_for_nonexistent_name(
         self, memgraph_ingestor: MemgraphIngestor
     ) -> None:
-        results = memgraph_ingestor._execute_query(
-            CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "nonexistent.func"}
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(
+                CYPHER_FIND_BY_QUALIFIED_NAME, {"qn": "nonexistent.func"}
+            ),
         )
 
         assert len(results) == 0
@@ -221,8 +238,11 @@ class TestCypherGetFunctionSourceLocationIntegration:
         )
         node_id = node_result[0]["id"]
 
-        results = memgraph_ingestor._execute_query(
-            CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(
+                CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}
+            ),
         )
 
         assert len(results) == 1
@@ -249,9 +269,12 @@ class TestBuildMergeNodeQueryIntegration:
             },
         )
 
-        results = memgraph_ingestor._execute_query(
-            "MATCH (f:Function) RETURN f.qualified_name as qn, f.name as name, "
-            "f.start_line as start"
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(
+                "MATCH (f:Function) RETURN f.qualified_name as qn, f.name as name, "
+                "f.start_line as start"
+            ),
         )
 
         assert len(results) == 1
@@ -273,8 +296,11 @@ class TestBuildMergeNodeQueryIntegration:
             {"batch": [{"id": "mod.func", "props": {"name": "new_name"}}]},
         )
 
-        results = memgraph_ingestor._execute_query(
-            "MATCH (f:Function) RETURN f.name as name"
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(
+                "MATCH (f:Function) RETURN f.name as name"
+            ),
         )
 
         assert len(results) == 1
@@ -295,9 +321,12 @@ class TestBuildMergeRelationshipQueryIntegration:
             "Module", "qualified_name", "DEFINES", "Function", "qualified_name"
         )
 
-        results = memgraph_ingestor._execute_query(
-            wrap_with_unwind(query),
-            {"batch": [{"from_val": "mymod", "to_val": "mymod.func", "props": {}}]},
+        results = cast(
+            "list[dict[str, Any]]",
+            memgraph_ingestor._execute_query(
+                wrap_with_unwind(query),
+                {"batch": [{"from_val": "mymod", "to_val": "mymod.func", "props": {}}]},
+            ),
         )
 
         assert results[0]["created"] == 1
@@ -358,10 +387,12 @@ class TestBuildNodesByIdsQueryIntegration:
         )
         node_ids = [r["id"] for r in id_results]
 
-        query = build_nodes_by_ids_query(node_ids)
+        query = build_nodes_by_ids_query(cast("list[int]", node_ids))
         params = {str(i): nid for i, nid in enumerate(node_ids)}
 
-        results = memgraph_ingestor._execute_query(query, params)
+        results = cast(
+            "list[dict[str, Any]]", memgraph_ingestor._execute_query(query, params)
+        )
 
         assert len(results) == 2
         names = {r["name"] for r in results}
@@ -373,6 +404,8 @@ class TestBuildNodesByIdsQueryIntegration:
         query = build_nodes_by_ids_query([99999, 99998])
         params = {"0": 99999, "1": 99998}
 
-        results = memgraph_ingestor._execute_query(query, params)
+        results = cast(
+            "list[dict[str, Any]]", memgraph_ingestor._execute_query(query, params)
+        )
 
         assert len(results) == 0

@@ -1,22 +1,3 @@
-"""
-Main Command Line Interface (CLI) entry point for the Graph-Code RAG system.
-
-This module defines the CLI commands and arguments using the `typer` library.
-It serves as the user-facing interface that delegates actual execution to core
-logic components.
-
-Key Responsibilities:
-- Command Definitions: Defines commands like `start`, `index`, `export`, `optimize`.
-- Argument Parsing: Handles CLI arguments and options using Typer.
-- Configuration Integration: Updates global settings in `config.py` based on user input.
-- Execution Delegation: Calls async functions in `main.py` (e.g., `main_async`) to perform tasks.
-
-Dependencies:
-- `typer`: Used for CLI construction.
-- `codebase_rag.main`: Contains the core application logic and workflows.
-- `codebase_rag.config`: Manages application configuration and environment variables.
-"""
-
 import asyncio
 from pathlib import Path
 
@@ -476,7 +457,7 @@ def graph_loader_command(
     Args:
         graph_file (str): Path to the graph file to load.
     """
-    from .graph_loader import load_graph
+    from codebase_rag.graph_db.graph_loader import load_graph
 
     try:
         graph = load_graph(graph_file)

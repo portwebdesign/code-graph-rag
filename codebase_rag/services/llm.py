@@ -1,16 +1,3 @@
-"""
-This module provides services for interacting with Large Language Models (LLMs).
-
-It includes a `CypherGenerator` class that uses an LLM agent to translate
-natural language questions into Cypher queries for the knowledge graph. It also
-provides a factory function, `create_rag_orchestrator`, to construct the main
-RAG agent responsible for orchestrating tool calls and generating user-facing
-responses.
-
-The module dynamically selects the appropriate system prompt based on the configured
-LLM provider (e.g., using a stricter prompt for local models).
-"""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

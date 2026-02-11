@@ -7,7 +7,7 @@ from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure.parser_loader import load_parsers
 
 
-@pytest.mark.parametrize("style", ["parens", "no_parens"])  # type: ignore
+@pytest.mark.parametrize("style", ["parens", "no_parens"])
 def test_lua_require_imports(
     temp_repo: Path, style: str, mock_ingestor: MagicMock
 ) -> None:

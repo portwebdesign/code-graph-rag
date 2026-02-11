@@ -1,19 +1,3 @@
-"""
-This module defines the `JsTsModuleSystemMixin`, a component responsible for
-handling the complexities of JavaScript and TypeScript module systems.
-
-As a mixin, it's designed to be used by other processors. It encapsulates the
-logic for parsing and ingesting various module patterns, including CommonJS
-(`require`, `module.exports`) and ES6 (`export`).
-
-Key functionalities:
--   Ingesting CommonJS `require` calls, including destructuring assignments.
--   Creating `IMPORTS` relationships for discovered module dependencies.
--   Ingesting functions and classes exported via `exports.myFunc = ...` or
-    `module.exports.myFunc = ...`.
--   Ingesting functions and classes exported using ES6 `export` syntax.
-"""
-
 from __future__ import annotations
 
 import textwrap
@@ -24,10 +8,10 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from tree_sitter import Query, QueryCursor
 
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import ASTNode
 
-from ...core import constants as cs
-from ...core import logs as ls
 from ..utils import (
     ingest_exported_function,
     safe_decode_text,
@@ -41,14 +25,17 @@ if TYPE_CHECKING:
         LanguageQueries,
         SimpleNameLookup,
     )
+    from codebase_rag.services import IngestorProtocol
 
-    from ...services import IngestorProtocol
     from ..import_processor import ImportProcessor
 
 
 class JsTsModuleSystemMixin:
     """
-    A mixin for ingesting JavaScript and TypeScript module system constructs.
+    Mixin for handling JavaScript/TypeScript module operations.
+
+    Detects and processes CommonJS ('require', 'module.exports') and ES6 ('import', 'export')
+    statements to build module dependency graphs.
     """
 
     ingestor: IngestorProtocol
@@ -57,20 +44,16 @@ class JsTsModuleSystemMixin:
     function_registry: FunctionRegistryTrieProtocol
     simple_name_lookup: SimpleNameLookup
     import_processor: ImportProcessor
+    module_qn_to_file_path: dict[str, Path]
     _processed_imports: set[str]
 
     @abstractmethod
-    def _get_docstring(self, node: ASTNode) -> str | None:
-        """Abstract method to extract a docstring from a node."""
-        ...
+    def _get_docstring(self, node: ASTNode) -> str | None: ...
 
     @abstractmethod
-    def _is_export_inside_function(self, node: ASTNode) -> bool:
-        """Abstract method to check if an export is nested inside a function."""
-        ...
+    def _is_export_inside_function(self, node: ASTNode) -> bool: ...
 
     def __init__(self) -> None:
-        """Initializes the mixin."""
         self._processed_imports = set()
 
     def _ingest_missing_import_patterns(
@@ -81,14 +64,13 @@ class JsTsModuleSystemMixin:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         """
-        Ingests import relationships that might be missed by the main import processor,
-        specifically for CommonJS destructuring.
+        Ingest imports that might be missing from standard queries (e.g., CommonJS destructuring).
 
         Args:
-            root_node (ASTNode): The root node of the file's AST.
-            module_qn (str): The qualified name of the module.
-            language (cs.SupportedLanguage): The language of the source file.
-            queries (dict): A dictionary of tree-sitter queries.
+            root_node: The root AST node.
+            module_qn: The module qualified name.
+            language: The supported language.
+            queries: Dictionary of language queries.
         """
         language_obj = get_js_ts_language_obj(language, queries)
         if not language_obj:
@@ -114,7 +96,15 @@ class JsTsModuleSystemMixin:
             logger.debug(ls.JS_MISSING_IMPORT_PATTERNS_FAILED.format(error=e))
 
     def _extract_require_module_name(self, declarator: ASTNode) -> str | None:
-        """Extracts the module name from a `require('...')` call in a declarator."""
+        """
+        Extract the module name from a 'require' call in a variable declarator.
+
+        Args:
+            declarator: The variable declarator AST node.
+
+        Returns:
+            The module name string, or None.
+        """
         name_node = declarator.child_by_field_name(cs.FIELD_NAME)
         if not name_node or name_node.type != cs.TS_OBJECT_PATTERN:
             return None
@@ -133,7 +123,7 @@ class JsTsModuleSystemMixin:
         ):
             return None
 
-        arguments_node = value_node.child_by_field_name(cs.FIELD_ARGUMENTS)
+        arguments_node = value_node.child_by_field_name(cs.TS_FIELD_ARGUMENTS)
         if not arguments_node or not arguments_node.children:
             return None
 
@@ -149,7 +139,14 @@ class JsTsModuleSystemMixin:
     def _process_destructured_child(
         self, child: ASTNode, module_name: str, module_qn: str
     ) -> None:
-        """Processes a single item from a destructuring assignment."""
+        """
+        Process a child node in a destructuring pattern (e.g. { a, b } = require('...')).
+
+        Args:
+            child: The child AST node within the pattern.
+            module_name: The name of the required module.
+            module_qn: The current module qualified name.
+        """
         if child.type == cs.TS_SHORTHAND_PROPERTY_IDENTIFIER_PATTERN:
             if child.text is not None and (name := safe_decode_text(child)):
                 self._process_commonjs_import(name, module_name, module_qn)
@@ -174,7 +171,13 @@ class JsTsModuleSystemMixin:
     def _process_variable_declarator_for_commonjs(
         self, declarator: ASTNode, module_qn: str
     ) -> None:
-        """Processes a `variable_declarator` to find destructured `require` calls."""
+        """
+        Process a variable declarator to identify CommonJS require imports.
+
+        Args:
+            declarator: The variable declarator AST node.
+            module_qn: The module qualified name.
+        """
         try:
             module_name = self._extract_require_module_name(declarator)
             if not module_name:
@@ -193,7 +196,14 @@ class JsTsModuleSystemMixin:
     def _process_commonjs_import(
         self, imported_name: str, module_name: str, module_qn: str
     ) -> None:
-        """Processes a single CommonJS imported entity."""
+        """
+        Record a CommonJS import in the graph.
+
+        Args:
+            imported_name: The name of the imported symbol.
+            module_name: The name of the module being required.
+            module_qn: The current module qualified name.
+        """
         try:
             resolved_source_module = self.import_processor._resolve_js_module_path(
                 module_name, module_qn
@@ -243,7 +253,16 @@ class JsTsModuleSystemMixin:
         module_qn: str,
         export_type: str,
     ) -> None:
-        """Helper to ingest a function found in an export statement."""
+        """
+        Ingest an exported function.
+
+        Args:
+            export_function: The function AST node.
+            function_name: The name of the function.
+            module_qn: The module qualified name.
+            export_type: Type of export (CommonJS, ES6, etc.).
+        """
+        file_path = self.module_qn_to_file_path.get(module_qn)
         ingest_exported_function(
             export_function,
             function_name,
@@ -254,6 +273,8 @@ class JsTsModuleSystemMixin:
             self.simple_name_lookup,
             self._get_docstring,
             self._is_export_inside_function,
+            file_path,
+            self.repo_path,
         )
 
     def _process_exports_pattern(
@@ -263,7 +284,15 @@ class JsTsModuleSystemMixin:
         export_functions: list[ASTNode],
         module_qn: str,
     ) -> None:
-        """Processes `exports.foo = ...` patterns."""
+        """
+        Process 'exports.name = ...' pattern.
+
+        Args:
+            exports_objs: List of 'exports' identifier nodes.
+            export_names: List of exported name nodes.
+            export_functions: List of assigned function nodes.
+            module_qn: The module qualified name.
+        """
         for exports_obj, export_name, export_function in zip(
             exports_objs, export_names, export_functions
         ):
@@ -287,7 +316,16 @@ class JsTsModuleSystemMixin:
         export_functions: list[ASTNode],
         module_qn: str,
     ) -> None:
-        """Processes `module.exports.foo = ...` patterns."""
+        """
+        Process 'module.exports.name = ...' or 'module.exports = { ... }' patterns.
+
+        Args:
+            module_objs: List of 'module' identifier nodes.
+            exports_props: List of 'exports' property nodes.
+            export_names: List of exported name nodes.
+            export_functions: List of assigned function nodes.
+            module_qn: The module qualified name.
+        """
         for module_obj, exports_prop, export_name, export_function in zip(
             module_objs, exports_props, export_names, export_functions
         ):
@@ -313,13 +351,13 @@ class JsTsModuleSystemMixin:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         """
-        Finds and ingests functions exported using CommonJS patterns.
+        Ingest CommonJS exports from the AST.
 
         Args:
-            root_node (ASTNode): The root node of the file's AST.
-            module_qn (str): The qualified name of the module.
-            language (cs.SupportedLanguage): The language of the source file.
-            queries (dict): A dictionary of tree-sitter queries.
+            root_node: The root AST node.
+            module_qn: The module qualified name.
+            language: The supported language.
+            queries: Dictionary of language queries.
         """
         if language not in cs.JS_TS_LANGUAGES:
             return
@@ -365,13 +403,13 @@ class JsTsModuleSystemMixin:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         """
-        Finds and ingests functions exported using ES6 `export` syntax.
+        Ingest ES6 export statements (export const ..., export function ...).
 
         Args:
-            root_node (ASTNode): The root node of the file's AST.
-            module_qn (str): The qualified name of the module.
-            language (cs.SupportedLanguage): The language of the source file.
-            queries (dict): A dictionary of tree-sitter queries.
+            root_node: The root AST node.
+            module_qn: The module qualified name.
+            language: The supported language.
+            queries: Dictionary of language queries.
         """
         try:
             lang_query = queries[language][cs.QUERY_LANGUAGE]

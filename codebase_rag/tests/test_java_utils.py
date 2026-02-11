@@ -1,4 +1,7 @@
+from typing import cast
+
 from codebase_rag.data_models.types_defs import (
+    ASTNode,
     JavaAnnotationInfo,
     JavaClassInfo,
     JavaFieldInfo,
@@ -20,27 +23,31 @@ from codebase_rag.parsers.java.utils import (
 from codebase_rag.tests.conftest import create_mock_node
 
 
+def _as_ast(node: object) -> ASTNode:
+    return cast(ASTNode, node)
+
+
 class TestExtractJavaPackageName:
     def test_scoped_identifier_package(self) -> None:
         scoped_id = create_mock_node("scoped_identifier", "com.example.app")
         package_node = create_mock_node("package_declaration", children=[scoped_id])
-        result = extract_package_name(package_node)
+        result = extract_package_name(_as_ast(package_node))
         assert result == "com.example.app"
 
     def test_simple_identifier_package(self) -> None:
         identifier = create_mock_node("identifier", "mypackage")
         package_node = create_mock_node("package_declaration", children=[identifier])
-        result = extract_package_name(package_node)
+        result = extract_package_name(_as_ast(package_node))
         assert result == "mypackage"
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("class_declaration")
-        result = extract_package_name(node)
+        result = extract_package_name(_as_ast(node))
         assert result is None
 
     def test_empty_package_declaration(self) -> None:
         package_node = create_mock_node("package_declaration", children=[])
-        result = extract_package_name(package_node)
+        result = extract_package_name(_as_ast(package_node))
         assert result is None
 
 
@@ -48,7 +55,7 @@ class TestExtractJavaImportPath:
     def test_regular_import(self) -> None:
         scoped_id = create_mock_node("scoped_identifier", "java.util.List")
         import_node = create_mock_node("import_declaration", children=[scoped_id])
-        result = extract_import_path(import_node)
+        result = extract_import_path(_as_ast(import_node))
         assert result == {"List": "java.util.List"}
 
     def test_wildcard_import(self) -> None:
@@ -57,7 +64,7 @@ class TestExtractJavaImportPath:
         import_node = create_mock_node(
             "import_declaration", children=[scoped_id, asterisk]
         )
-        result = extract_import_path(import_node)
+        result = extract_import_path(_as_ast(import_node))
         assert result == {"*java.util": "java.util"}
 
     def test_static_import(self) -> None:
@@ -66,23 +73,23 @@ class TestExtractJavaImportPath:
         import_node = create_mock_node(
             "import_declaration", children=[static_kw, scoped_id]
         )
-        result = extract_import_path(import_node)
+        result = extract_import_path(_as_ast(import_node))
         assert result == {"PI": "java.lang.Math.PI"}
 
     def test_simple_identifier_import(self) -> None:
         identifier = create_mock_node("identifier", "MyClass")
         import_node = create_mock_node("import_declaration", children=[identifier])
-        result = extract_import_path(import_node)
+        result = extract_import_path(_as_ast(import_node))
         assert result == {"MyClass": "MyClass"}
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("class_declaration")
-        result = extract_import_path(node)
+        result = extract_import_path(_as_ast(node))
         assert result == {}
 
     def test_empty_import_declaration(self) -> None:
         import_node = create_mock_node("import_declaration", children=[])
-        result = extract_import_path(import_node)
+        result = extract_import_path(_as_ast(import_node))
         assert result == {}
 
 
@@ -93,7 +100,7 @@ class TestExtractJavaClassInfo:
             "class_declaration",
             fields={"name": name_node},
         )
-        result = extract_class_info(class_node)
+        result = extract_class_info(_as_ast(class_node))
         assert result["name"] == "MyClass"
         assert result["type"] == "class"
         assert result["superclass"] is None
@@ -106,7 +113,7 @@ class TestExtractJavaClassInfo:
             "class_declaration",
             fields={"name": name_node, "superclass": superclass_node},
         )
-        result = extract_class_info(class_node)
+        result = extract_class_info(_as_ast(class_node))
         assert result["name"] == "Child"
         assert result["superclass"] == "Parent"
 
@@ -118,7 +125,7 @@ class TestExtractJavaClassInfo:
             "class_declaration",
             fields={"name": name_node, "superclass": generic_type},
         )
-        result = extract_class_info(class_node)
+        result = extract_class_info(_as_ast(class_node))
         assert result["superclass"] == "ArrayList"
 
     def test_interface_declaration(self) -> None:
@@ -127,7 +134,7 @@ class TestExtractJavaClassInfo:
             "interface_declaration",
             fields={"name": name_node},
         )
-        result = extract_class_info(interface_node)
+        result = extract_class_info(_as_ast(interface_node))
         assert result["name"] == "MyInterface"
         assert result["type"] == "interface"
 
@@ -137,7 +144,7 @@ class TestExtractJavaClassInfo:
             "enum_declaration",
             fields={"name": name_node},
         )
-        result = extract_class_info(enum_node)
+        result = extract_class_info(_as_ast(enum_node))
         assert result["name"] == "Status"
         assert result["type"] == "enum"
 
@@ -147,7 +154,7 @@ class TestExtractJavaClassInfo:
             "annotation_type_declaration",
             fields={"name": name_node},
         )
-        result = extract_class_info(annotation_node)
+        result = extract_class_info(_as_ast(annotation_node))
         assert result["name"] == "MyAnnotation"
         assert result["type"] == "annotation_type"
 
@@ -157,7 +164,7 @@ class TestExtractJavaClassInfo:
             "record_declaration",
             fields={"name": name_node},
         )
-        result = extract_class_info(record_node)
+        result = extract_class_info(_as_ast(record_node))
         assert result["name"] == "Person"
         assert result["type"] == "record"
 
@@ -171,7 +178,7 @@ class TestExtractJavaClassInfo:
             fields={"name": name_node},
             children=[modifiers],
         )
-        result = extract_class_info(class_node)
+        result = extract_class_info(_as_ast(class_node))
         assert "public" in result["modifiers"]
         assert "abstract" in result["modifiers"]
 
@@ -184,12 +191,12 @@ class TestExtractJavaClassInfo:
             "class_declaration",
             fields={"name": name_node, "type_parameters": type_params},
         )
-        result = extract_class_info(class_node)
+        result = extract_class_info(_as_ast(class_node))
         assert "T" in result["type_parameters"]
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("method_declaration")
-        result = extract_class_info(node)
+        result = extract_class_info(_as_ast(node))
         assert result == JavaClassInfo(
             name=None,
             type="",
@@ -208,7 +215,7 @@ class TestExtractJavaMethodInfo:
             "method_declaration",
             fields={"name": name_node, "type": type_node},
         )
-        result = extract_method_info(method_node)
+        result = extract_method_info(_as_ast(method_node))
         assert result["name"] == "process"
         assert result["type"] == "method"
         assert result["return_type"] == "void"
@@ -219,7 +226,7 @@ class TestExtractJavaMethodInfo:
             "constructor_declaration",
             fields={"name": name_node},
         )
-        result = extract_method_info(constructor_node)
+        result = extract_method_info(_as_ast(constructor_node))
         assert result["name"] == "MyClass"
         assert result["type"] == "constructor"
         assert result["return_type"] is None
@@ -234,7 +241,7 @@ class TestExtractJavaMethodInfo:
             "method_declaration",
             fields={"name": name_node, "type": type_node, "parameters": params},
         )
-        result = extract_method_info(method_node)
+        result = extract_method_info(_as_ast(method_node))
         assert "String" in result["parameters"]
 
     def test_method_with_varargs(self) -> None:
@@ -247,7 +254,7 @@ class TestExtractJavaMethodInfo:
             "method_declaration",
             fields={"name": name_node, "type": type_node, "parameters": params},
         )
-        result = extract_method_info(method_node)
+        result = extract_method_info(_as_ast(method_node))
         assert "Object..." in result["parameters"]
 
     def test_method_with_modifiers_and_annotations(self) -> None:
@@ -264,14 +271,14 @@ class TestExtractJavaMethodInfo:
             fields={"name": name_node, "type": type_node},
             children=[modifiers],
         )
-        result = extract_method_info(method_node)
+        result = extract_method_info(_as_ast(method_node))
         assert "public" in result["modifiers"]
         assert "static" in result["modifiers"]
         assert "@Override" in result["annotations"]
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("class_declaration")
-        result = extract_method_info(node)
+        result = extract_method_info(_as_ast(node))
         assert result == JavaMethodInfo(
             name=None,
             type="",
@@ -292,7 +299,7 @@ class TestExtractJavaFieldInfo:
             "field_declaration",
             fields={"type": type_node, "declarator": declarator},
         )
-        result = extract_field_info(field_node)
+        result = extract_field_info(_as_ast(field_node))
         assert result["name"] == "name"
         assert result["type"] == "String"
 
@@ -311,7 +318,7 @@ class TestExtractJavaFieldInfo:
             fields={"type": type_node, "declarator": declarator},
             children=[modifiers],
         )
-        result = extract_field_info(field_node)
+        result = extract_field_info(_as_ast(field_node))
         assert "private" in result["modifiers"]
         assert "static" in result["modifiers"]
         assert "final" in result["modifiers"]
@@ -327,12 +334,12 @@ class TestExtractJavaFieldInfo:
             fields={"type": type_node, "declarator": declarator},
             children=[modifiers],
         )
-        result = extract_field_info(field_node)
+        result = extract_field_info(_as_ast(field_node))
         assert "@Id" in result["annotations"]
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("method_declaration")
-        result = extract_field_info(node)
+        result = extract_field_info(_as_ast(node))
         assert result == JavaFieldInfo(
             name=None,
             type=None,
@@ -349,7 +356,8 @@ class TestExtractJavaMethodCallInfo:
             "method_invocation",
             fields={"name": name_node, "arguments": args_node},
         )
-        result = extract_method_call_info(call_node)
+        result = extract_method_call_info(_as_ast(call_node))
+        assert result is not None
         assert result["name"] == "process"
         assert result["object"] is None
         assert result["arguments"] == 0
@@ -362,7 +370,8 @@ class TestExtractJavaMethodCallInfo:
             "method_invocation",
             fields={"name": name_node, "object": object_node, "arguments": args_node},
         )
-        result = extract_method_call_info(call_node)
+        result = extract_method_call_info(_as_ast(call_node))
+        assert result is not None
         assert result["name"] == "getName"
         assert result["object"] == "user"
 
@@ -374,7 +383,8 @@ class TestExtractJavaMethodCallInfo:
             "method_invocation",
             fields={"name": name_node, "object": this_node, "arguments": args_node},
         )
-        result = extract_method_call_info(call_node)
+        result = extract_method_call_info(_as_ast(call_node))
+        assert result is not None
         assert result["object"] == "this"
 
     def test_method_call_on_super(self) -> None:
@@ -385,7 +395,8 @@ class TestExtractJavaMethodCallInfo:
             "method_invocation",
             fields={"name": name_node, "object": super_node, "arguments": args_node},
         )
-        result = extract_method_call_info(call_node)
+        result = extract_method_call_info(_as_ast(call_node))
+        assert result is not None
         assert result["object"] == "super"
 
     def test_method_call_with_arguments(self) -> None:
@@ -403,12 +414,13 @@ class TestExtractJavaMethodCallInfo:
             "method_invocation",
             fields={"name": name_node, "arguments": args_node},
         )
-        result = extract_method_call_info(call_node)
+        result = extract_method_call_info(_as_ast(call_node))
+        assert result is not None
         assert result["arguments"] == 2
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("class_declaration")
-        result = extract_method_call_info(node)
+        result = extract_method_call_info(_as_ast(node))
         assert result is None
 
 
@@ -427,7 +439,7 @@ class TestIsJavaMainMethod:
             fields={"name": name_node, "type": void_type, "parameters": params},
             children=[modifiers],
         )
-        result = is_main_method(method_node)
+        result = is_main_method(_as_ast(method_node))
         assert result is True
 
     def test_valid_main_method_with_varargs(self) -> None:
@@ -444,7 +456,7 @@ class TestIsJavaMainMethod:
             fields={"name": name_node, "type": void_type, "parameters": params},
             children=[modifiers],
         )
-        result = is_main_method(method_node)
+        result = is_main_method(_as_ast(method_node))
         assert result is True
 
     def test_not_main_wrong_name(self) -> None:
@@ -454,7 +466,7 @@ class TestIsJavaMainMethod:
             "method_declaration",
             fields={"name": name_node, "type": void_type},
         )
-        result = is_main_method(method_node)
+        result = is_main_method(_as_ast(method_node))
         assert result is False
 
     def test_not_main_not_void(self) -> None:
@@ -468,7 +480,7 @@ class TestIsJavaMainMethod:
             fields={"name": name_node, "type": int_type},
             children=[modifiers],
         )
-        result = is_main_method(method_node)
+        result = is_main_method(_as_ast(method_node))
         assert result is False
 
     def test_not_main_missing_public(self) -> None:
@@ -484,7 +496,7 @@ class TestIsJavaMainMethod:
             fields={"name": name_node, "type": void_type, "parameters": params},
             children=[modifiers],
         )
-        result = is_main_method(method_node)
+        result = is_main_method(_as_ast(method_node))
         assert result is False
 
     def test_not_main_missing_static(self) -> None:
@@ -500,12 +512,12 @@ class TestIsJavaMainMethod:
             fields={"name": name_node, "type": void_type, "parameters": params},
             children=[modifiers],
         )
-        result = is_main_method(method_node)
+        result = is_main_method(_as_ast(method_node))
         assert result is False
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("constructor_declaration")
-        result = is_main_method(node)
+        result = is_main_method(_as_ast(node))
         assert result is False
 
 
@@ -513,24 +525,24 @@ class TestGetJavaVisibility:
     def test_public_visibility(self) -> None:
         public_node = create_mock_node("public", "public")
         node = create_mock_node("method_declaration", children=[public_node])
-        result = get_java_visibility(node)
+        result = get_java_visibility(_as_ast(node))
         assert result == "public"
 
     def test_protected_visibility(self) -> None:
         protected_node = create_mock_node("protected", "protected")
         node = create_mock_node("method_declaration", children=[protected_node])
-        result = get_java_visibility(node)
+        result = get_java_visibility(_as_ast(node))
         assert result == "protected"
 
     def test_private_visibility(self) -> None:
         private_node = create_mock_node("private", "private")
         node = create_mock_node("method_declaration", children=[private_node])
-        result = get_java_visibility(node)
+        result = get_java_visibility(_as_ast(node))
         assert result == "private"
 
     def test_package_private_visibility(self) -> None:
         node = create_mock_node("method_declaration", children=[])
-        result = get_java_visibility(node)
+        result = get_java_visibility(_as_ast(node))
         assert result == "package"
 
 
@@ -555,7 +567,7 @@ class TestBuildJavaQualifiedName:
             fields={"name": method_name},
             parent=inner_class,
         )
-        result = build_qualified_name(method)
+        result = build_qualified_name(_as_ast(method))
         assert result == ["Outer", "Inner"]
 
     def test_include_methods(self) -> None:
@@ -573,7 +585,7 @@ class TestBuildJavaQualifiedName:
             parent=class_node,
         )
         inner_node = create_mock_node("identifier", "x", parent=method)
-        result = build_qualified_name(inner_node, include_methods=True)
+        result = build_qualified_name(_as_ast(inner_node), include_methods=True)
         assert result == ["MyClass", "process"]
 
     def test_exclude_classes(self) -> None:
@@ -590,13 +602,13 @@ class TestBuildJavaQualifiedName:
             fields={"name": method_name},
             parent=class_node,
         )
-        result = build_qualified_name(method, include_classes=False)
+        result = build_qualified_name(_as_ast(method), include_classes=False)
         assert result == []
 
     def test_empty_path(self) -> None:
         program = create_mock_node("program")
         node = create_mock_node("identifier", "x", parent=program)
-        result = build_qualified_name(node)
+        result = build_qualified_name(_as_ast(node))
         assert result == []
 
 
@@ -607,7 +619,7 @@ class TestExtractJavaAnnotationInfo:
             "annotation",
             fields={"name": name_node},
         )
-        result = extract_annotation_info(annotation_node)
+        result = extract_annotation_info(_as_ast(annotation_node))
         assert result["name"] == "Override"
         assert result["arguments"] == []
 
@@ -624,13 +636,13 @@ class TestExtractJavaAnnotationInfo:
             "annotation",
             fields={"name": name_node, "arguments": args_node},
         )
-        result = extract_annotation_info(annotation_node)
+        result = extract_annotation_info(_as_ast(annotation_node))
         assert result["name"] == "SuppressWarnings"
         assert '"unchecked"' in result["arguments"]
 
     def test_invalid_node_type(self) -> None:
         node = create_mock_node("identifier")
-        result = extract_annotation_info(node)
+        result = extract_annotation_info(_as_ast(node))
         assert result == JavaAnnotationInfo(name=None, arguments=[])
 
 

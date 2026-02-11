@@ -1,19 +1,3 @@
-"""
-This module provides the `ProtobufFileIngestor`, a service for ingesting graph
-data and serializing it into Protocol Buffers (protobuf) format.
-
-This serves as an alternative to a live database connection, allowing the graph
-to be built and saved to a file for later use. It implements the same
-`IngestorProtocol` as `MemgraphIngestor`, enabling it to be used interchangeably
-by the `GraphUpdater`.
-
-Key functionalities:
--   Buffering nodes and relationships in memory.
--   Mapping application-level graph data to protobuf messages.
--   Serializing the entire graph to a single `.bin` file or splitting it into
-    separate `nodes.bin` and `relationships.bin` files.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -101,6 +85,7 @@ class ProtobufFileIngestor:
             label (str): The label of the node.
             properties (PropertyDict): The properties of the node.
         """
+        self._apply_project_context(label, properties)
         node_label = cs.NodeLabel(label)
         node_id = self._get_node_id(node_label, properties)
         if not node_id or node_id in self._nodes:
@@ -176,8 +161,16 @@ class ProtobufFileIngestor:
             )
             return
 
-        if properties:
-            rel.properties.update(properties)
+        rel_props: PropertyDict = dict(properties) if properties else {}
+        project_name = getattr(self, "project_name", None)
+        if project_name and cs.KEY_PROJECT_NAME not in rel_props:
+            rel_props[cs.KEY_PROJECT_NAME] = project_name
+        if from_spec[1] == cs.KEY_PATH and cs.KEY_FROM_PATH not in rel_props:
+            rel_props[cs.KEY_FROM_PATH] = from_spec[2]
+        if to_spec[1] == cs.KEY_PATH and cs.KEY_TO_PATH not in rel_props:
+            rel_props[cs.KEY_TO_PATH] = to_spec[2]
+        if rel_props:
+            rel.properties.update(rel_props)
 
         unique_key = (rel.source_id, rel.type, rel.target_id)
         if unique_key in self._relationships:
@@ -245,3 +238,40 @@ class ProtobufFileIngestor:
         logger.info(ls.PROTOBUF_FLUSHING.format(path=self.output_dir))
 
         return self._flush_split() if self.split_index else self._flush_joint()
+
+    def _apply_project_context(self, label: str, properties: PropertyDict) -> None:
+        project_name = getattr(self, "project_name", None)
+        if project_name and cs.KEY_PROJECT_NAME not in properties:
+            properties[cs.KEY_PROJECT_NAME] = project_name
+
+        path_value = properties.get(cs.KEY_PATH)
+        if not path_value:
+            return
+
+        folder_path, folder_name = self._derive_folder_props(
+            label, str(path_value), project_name
+        )
+        if folder_path and cs.KEY_FOLDER_PATH not in properties:
+            properties[cs.KEY_FOLDER_PATH] = folder_path
+        if folder_name and cs.KEY_FOLDER_NAME not in properties:
+            properties[cs.KEY_FOLDER_NAME] = folder_name
+
+    @staticmethod
+    def _derive_folder_props(
+        label: str, path_value: str, project_name: str | None
+    ) -> tuple[str, str]:
+        try:
+            node_label = cs.NodeLabel(label)
+        except Exception:
+            node_label = None
+
+        path_obj = Path(path_value)
+        if node_label in {cs.NodeLabel.FOLDER, cs.NodeLabel.PACKAGE}:
+            folder_path = path_obj.as_posix()
+        else:
+            folder_path = path_obj.parent.as_posix()
+
+        if folder_path in {"", "."}:
+            return ".", project_name or path_obj.name
+
+        return folder_path, Path(folder_path).name

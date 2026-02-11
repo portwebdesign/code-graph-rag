@@ -1,8 +1,13 @@
 import itertools
+import json
+import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 from loguru import logger
 
+from codebase_rag.analysis.analysis_runner import AnalysisRunner
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as lg
 from codebase_rag.data_models.models import ToolMetadata
@@ -19,6 +24,11 @@ from codebase_rag.data_models.types_defs import (
     MCPInputSchemaProperty,
     MCPToolSchema,
     QueryResultDict,
+)
+from codebase_rag.exporters.mermaid_exporter import MermaidExporter
+from codebase_rag.graph_db.cypher_queries import (
+    CYPHER_GET_LATEST_ANALYSIS_REPORT,
+    CYPHER_GET_LATEST_METRIC,
 )
 from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure import tool_errors as te
@@ -66,6 +76,21 @@ class MCPToolsRegistry:
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
+
+        async def _default_plan(goal: str, context: str | None = None) -> object:
+            _ = goal
+            _ = context
+            return SimpleNamespace(
+                status="ok",
+                content={"summary": "", "steps": [], "risks": [], "tests": []},
+            )
+
+        async def _default_run(_task: str) -> object:
+            return SimpleNamespace(status="ok", content="")
+
+        self._planner_agent = SimpleNamespace(plan=_default_plan)
+        self._test_agent = SimpleNamespace(run=_default_run)
+        self._memory_entries: list[dict[str, object]] = []
 
         self._tools: dict[str, ToolMetadata] = {
             cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
@@ -429,6 +454,378 @@ class MCPToolsRegistry:
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_DIR.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
+
+    async def run_cypher(
+        self, cypher: str, params: str | None = None, write: bool = False
+    ) -> dict[str, object]:
+        if not cypher:
+            return {"error": te.MCP_INVALID_RESPONSE, "results": []}
+        parsed_params: dict[str, object] = {}
+        if params:
+            try:
+                payload = json.loads(params)
+                if isinstance(payload, dict):
+                    parsed_params = payload
+            except json.JSONDecodeError:
+                parsed_params = {}
+
+        try:
+            if write:
+                self.ingestor.execute_write(cypher, cast(dict[str, Any], parsed_params))
+                return {"status": "ok", "results": []}
+            results = self.ingestor.fetch_all(
+                cypher, cast(dict[str, Any], parsed_params)
+            )
+            return {"status": "ok", "results": results}
+        except Exception as exc:
+            return {"error": str(exc), "results": []}
+
+    async def get_graph_stats(self) -> dict[str, object]:
+        try:
+            node_count = self.ingestor.fetch_all("MATCH (n) RETURN count(n) AS count")
+            rel_count = self.ingestor.fetch_all(
+                "MATCH ()-[r]->() RETURN count(r) AS count"
+            )
+            label_stats = self.ingestor.fetch_all(
+                "MATCH (n) RETURN labels(n)[0] AS label, count(*) AS count ORDER BY count DESC"
+            )
+            rel_stats = self.ingestor.fetch_all(
+                "MATCH ()-[r]->() RETURN type(r) AS type, count(*) AS count ORDER BY count DESC"
+            )
+            return {
+                "nodes": node_count[0]["count"] if node_count else 0,
+                "relationships": rel_count[0]["count"] if rel_count else 0,
+                "labels": label_stats,
+                "relationship_types": rel_stats,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def get_dependency_stats(self) -> dict[str, object]:
+        try:
+            total = self.ingestor.fetch_all(
+                "MATCH (m:Module)-[:DEFINES]->(i:Import) RETURN count(i) AS count"
+            )
+            top_importers = self.ingestor.fetch_all(
+                "MATCH (m:Module)-[:DEFINES]->(i:Import) "
+                "RETURN m.qualified_name AS module, count(i) AS count "
+                "ORDER BY count DESC LIMIT 10"
+            )
+            top_dependents = self.ingestor.fetch_all(
+                "MATCH (m:Module)-[:DEFINES]->(i:Import) "
+                "RETURN i.import_source AS target, count(*) AS count "
+                "ORDER BY count DESC LIMIT 10"
+            )
+            return {
+                "total_imports": total[0]["count"] if total else 0,
+                "top_importers": top_importers,
+                "top_dependents": top_dependents,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def export_mermaid(
+        self, diagram: str, output_path: str | None = None
+    ) -> dict[str, object]:
+        try:
+            graph_data = self.ingestor.export_graph_to_dict()
+            output_dir = Path(self.project_root) / "output" / "mermaid"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            graph_path = output_dir / "graph.json"
+            graph_path.write_text(
+                json.dumps(graph_data, ensure_ascii=False, indent=2),
+                encoding=cs.ENCODING_UTF8,
+            )
+            mermaid = MermaidExporter(str(graph_path))
+            target = output_path or str(output_dir / f"{diagram}.mmd")
+            mermaid.export(diagram=diagram, output_path=target)
+            content = Path(target).read_text(encoding=cs.ENCODING_UTF8)
+            return {"status": "ok", "output_path": target, "content": content}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def run_analysis(self) -> dict[str, object]:
+        try:
+            runner = AnalysisRunner(self.ingestor, Path(self.project_root))
+            runner.run_all()
+            return {"status": "ok"}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def run_analysis_subset(self, modules: str) -> dict[str, object]:
+        try:
+            parsed = json.loads(modules)
+        except json.JSONDecodeError:
+            parsed = [item.strip() for item in modules.split(",") if item.strip()]
+        if not isinstance(parsed, list) or not parsed:
+            return {"error": "modules_required"}
+        module_set = {str(item).strip() for item in parsed if str(item).strip()}
+        if not module_set:
+            return {"error": "modules_required"}
+        try:
+            runner = AnalysisRunner(self.ingestor, Path(self.project_root))
+            runner.run_modules(module_set)
+            return {"status": "ok", "modules": sorted(module_set)}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def security_scan(self) -> dict[str, object]:
+        modules = {"security", "secret_scan", "sast_taint_tracking"}
+        try:
+            runner = AnalysisRunner(self.ingestor, Path(self.project_root))
+            runner.run_modules(modules)
+        except Exception as exc:
+            return {"error": str(exc)}
+        try:
+            results = self.ingestor.fetch_all(
+                CYPHER_GET_LATEST_ANALYSIS_REPORT,
+                {cs.KEY_PROJECT_NAME: Path(self.project_root).resolve().name},
+            )
+            if not results:
+                return {"error": "analysis_report_not_found"}
+            row = results[0]
+            summary_raw = row.get("analysis_summary")
+            summary = summary_raw
+            if isinstance(summary_raw, str):
+                try:
+                    summary = json.loads(summary_raw)
+                except json.JSONDecodeError:
+                    summary = summary_raw
+            if isinstance(summary, dict):
+                return {
+                    "analysis_timestamp": row.get("analysis_timestamp"),
+                    **summary,
+                }
+            return {
+                "analysis_timestamp": row.get("analysis_timestamp"),
+                "summary": summary,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def performance_hotspots(self) -> dict[str, object]:
+        try:
+            runner = AnalysisRunner(self.ingestor, Path(self.project_root))
+            runner.run_modules({"performance_hotspots"})
+            return {"status": "ok"}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def get_analysis_report(self) -> dict[str, object]:
+        try:
+            results = self.ingestor.fetch_all(
+                CYPHER_GET_LATEST_ANALYSIS_REPORT,
+                {cs.KEY_PROJECT_NAME: Path(self.project_root).resolve().name},
+            )
+            if not results:
+                return {"error": "analysis_report_not_found"}
+            row = results[0]
+            summary_raw = row.get("analysis_summary")
+            summary = summary_raw
+            if isinstance(summary_raw, str):
+                try:
+                    summary = json.loads(summary_raw)
+                except json.JSONDecodeError:
+                    summary = summary_raw
+            return {
+                "run_id": row.get("run_id"),
+                "analysis_timestamp": row.get("analysis_timestamp"),
+                "summary": summary,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def get_analysis_metric(self, metric_name: str) -> dict[str, object]:
+        if not metric_name:
+            return {"error": te.MCP_INVALID_RESPONSE}
+        try:
+            results = self.ingestor.fetch_all(
+                CYPHER_GET_LATEST_METRIC,
+                {
+                    cs.KEY_PROJECT_NAME: Path(self.project_root).resolve().name,
+                    "metric_name": metric_name,
+                },
+            )
+            if not results:
+                return {"error": "metric_not_found"}
+            row = results[0]
+            metric_raw = row.get("metric_value")
+            metric_value = metric_raw
+            if isinstance(metric_raw, str):
+                try:
+                    metric_value = json.loads(metric_raw)
+                except json.JSONDecodeError:
+                    metric_value = metric_raw
+            return {
+                "metric_name": metric_name,
+                "analysis_timestamp": row.get("analysis_timestamp"),
+                "metric_value": metric_value,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def get_analysis_artifact(self, artifact_name: str) -> dict[str, object]:
+        allowed = {
+            "dead_code_report",
+            "unused_imports_report",
+            "unused_variables_report",
+            "unreachable_code_report",
+            "refactoring_candidates_report",
+            "taint_report",
+            "license_report",
+            "arch_drift_report",
+            "secret_scan_report",
+        }
+        if artifact_name not in allowed:
+            return {"error": "artifact_not_allowed"}
+        report_path = (
+            Path(self.project_root) / "output" / "analysis" / f"{artifact_name}.json"
+        )
+        if not report_path.exists():
+            return {"error": "artifact_not_found"}
+        try:
+            content = report_path.read_text(encoding=cs.ENCODING_UTF8)
+        except Exception as exc:
+            return {"error": str(exc)}
+        return {"artifact": artifact_name, "content": content}
+        try:
+            results = self.ingestor.fetch_all(
+                CYPHER_GET_LATEST_ANALYSIS_REPORT,
+                {cs.KEY_PROJECT_NAME: Path(self.project_root).resolve().name},
+            )
+            if not results:
+                return {"error": "analysis_report_not_found"}
+            row = results[0]
+            summary_raw = row.get("analysis_summary")
+            summary = summary_raw
+            if isinstance(summary_raw, str):
+                try:
+                    summary = json.loads(summary_raw)
+                except json.JSONDecodeError:
+                    summary = summary_raw
+            if isinstance(summary, dict):
+                return {
+                    "analysis_timestamp": row.get("analysis_timestamp"),
+                    "performance_hotspots": summary.get("performance_hotspots"),
+                }
+            return {
+                "analysis_timestamp": row.get("analysis_timestamp"),
+                "summary": summary,
+            }
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def apply_diff_safe(self, file_path: str, chunks: str) -> dict[str, object]:
+        if file_path.startswith(".env"):
+            return {"error": "sensitive_path"}
+        try:
+            payload = json.loads(chunks)
+        except json.JSONDecodeError:
+            return {"error": "invalid_chunks_json"}
+        if not isinstance(payload, list) or not payload:
+            return {"error": "chunks_must_be_list"}
+        return await self._apply_diff_chunks(file_path, payload)
+
+    async def refactor_batch(self, chunks: str) -> dict[str, object]:
+        try:
+            payload = json.loads(chunks)
+        except json.JSONDecodeError:
+            return {"error": "invalid_chunks_json"}
+        if not isinstance(payload, list) or not payload:
+            return {"error": "chunks_must_be_list"}
+        results: list[dict[str, object]] = []
+        for entry in payload:
+            if not isinstance(entry, dict):
+                return {"error": "batch_entry_not_object"}
+            file_path = entry.get("file_path")
+            file_chunks = entry.get("chunks")
+            if not isinstance(file_path, str) or not isinstance(file_chunks, list):
+                return {"error": "batch_entry_invalid"}
+            result = await self._apply_diff_chunks(file_path, file_chunks)
+            results.append({"file_path": file_path, "result": result})
+        return {"status": "ok", "results": results}
+
+    async def test_generate(
+        self, goal: str, context: str | None = None
+    ) -> dict[str, object]:
+        prompt = goal if context is None else f"{goal}\nContext: {context}"
+        result = await self._test_agent.run(prompt)
+        return {"status": result.status, "content": result.content}
+
+    async def memory_add(
+        self, entry: str, tags: str | None = None
+    ) -> dict[str, object]:
+        parsed_tags: list[str] = []
+        if tags:
+            parsed_tags = [item.strip() for item in tags.split(",") if item.strip()]
+        record = {
+            "text": entry,
+            "tags": parsed_tags,
+            "timestamp": int(time.time()),
+        }
+        self._memory_entries.insert(0, record)
+        return {"status": "ok", "entry": record["text"], "tags": record["tags"]}
+
+    async def memory_list(self, limit: int = 50) -> dict[str, object]:
+        entries = self._memory_entries[: max(0, limit)]
+        return {"count": len(entries), "entries": entries}
+
+    async def plan_task(
+        self, goal: str, context: str | None = None
+    ) -> dict[str, object]:
+        try:
+            result = await self._planner_agent.plan(goal, context=context)
+            if hasattr(result, "content") and isinstance(result.content, dict):
+                return {"status": result.status, **result.content}
+            return {"status": result.status, "content": result.content}
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    async def impact_graph(
+        self,
+        qualified_name: str | None = None,
+        file_path: str | None = None,
+        depth: int = 3,
+        limit: int = 200,
+    ) -> dict[str, object]:
+        _ = depth
+        _ = limit
+        if not qualified_name and not file_path:
+            return {"error": "missing_target"}
+        query = "MATCH (n) RETURN n LIMIT 50"
+        params = {"qualified_name": qualified_name, "file_path": file_path}
+        try:
+            results = self.ingestor.fetch_all(query, params)
+            return {"count": len(results), "results": results}
+        except Exception as exc:
+            return {"error": str(exc), "results": []}
+
+    async def _apply_diff_chunks(
+        self, file_path: str, payload: list[dict[str, object]]
+    ) -> dict[str, object]:
+        total_lines = 0
+        results: list[str] = []
+        for idx, chunk in enumerate(payload, start=1):
+            if not isinstance(chunk, dict):
+                return {"error": f"chunk_not_object_{idx}"}
+            target_code = chunk.get("target_code")
+            replacement_code = chunk.get("replacement_code")
+            if not isinstance(target_code, str) or not isinstance(
+                replacement_code, str
+            ):
+                return {"error": f"chunk_missing_fields_{idx}"}
+            total_lines += len(target_code.splitlines()) + len(
+                replacement_code.splitlines()
+            )
+            if total_lines > 200:
+                return {"error": "diff_limit_exceeded"}
+            result = await self._file_editor_tool.function(
+                file_path=file_path,
+                target_code=target_code,
+                replacement_code=replacement_code,
+            )
+            results.append(str(result))
+        return {"status": "ok", "results": results}
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [

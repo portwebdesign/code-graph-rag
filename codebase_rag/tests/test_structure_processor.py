@@ -1,41 +1,44 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.core.constants import SupportedLanguage
 from codebase_rag.data_models.models import LanguageSpec
+from codebase_rag.data_models.types_defs import LanguageQueries
 from codebase_rag.parsers.structure_processor import StructureProcessor
 
 
 def _make_mock_queries(
     package_indicators: tuple[str, ...],
-) -> dict[str, MagicMock | LanguageSpec | None]:
-    return {
-        "functions": None,
-        "classes": None,
-        "calls": None,
-        "imports": None,
-        "locals": None,
-        "config": LanguageSpec(
-            language=SupportedLanguage.PYTHON,
-            file_extensions=(".py",),
-            function_node_types=(),
-            class_node_types=(),
-            module_node_types=(),
-            package_indicators=package_indicators,
-        ),
-        "language": MagicMock(),
-        "parser": MagicMock(),
-    }
+) -> LanguageQueries:
+    return cast(
+        LanguageQueries,
+        {
+            "functions": None,
+            "classes": None,
+            "calls": None,
+            "imports": None,
+            "locals": None,
+            "config": LanguageSpec(
+                language=SupportedLanguage.PYTHON,
+                file_extensions=(".py",),
+                function_node_types=(),
+                class_node_types=(),
+                module_node_types=(),
+                package_indicators=package_indicators,
+            ),
+            "language": MagicMock(),
+            "parser": MagicMock(),
+        },
+    )
 
 
 @pytest.fixture
-def mock_language_queries() -> dict[
-    SupportedLanguage, dict[str, MagicMock | LanguageSpec | None]
-]:
+def mock_language_queries() -> dict[SupportedLanguage, LanguageQueries]:
     return {SupportedLanguage.PYTHON: _make_mock_queries(("__init__.py",))}
 
 
@@ -43,9 +46,7 @@ def mock_language_queries() -> dict[
 def processor(
     temp_repo: Path,
     mock_ingestor: MagicMock,
-    mock_language_queries: dict[
-        SupportedLanguage, dict[str, MagicMock | LanguageSpec | None]
-    ],
+    mock_language_queries: dict[SupportedLanguage, LanguageQueries],
 ) -> StructureProcessor:
     return StructureProcessor(
         ingestor=mock_ingestor,

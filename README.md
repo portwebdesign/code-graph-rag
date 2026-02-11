@@ -43,17 +43,29 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 <!-- SECTION:supported_languages -->
 | Language | Status | Extensions | Functions | Classes/Structs | Modules | Package Detection | Additional Features |
 |--------|------|----------|---------|---------------|-------|-----------------|-------------------|
+| C# | Fully Supported | .cs | ✓ | ✓ | ✓ | - | Classes, interfaces, generics, records |
 | C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
+| CSS | Fully Supported | .css | - | - | ✓ | - | Selectors, imports, stylesheets |
+| Dockerfile | Fully Supported | .dockerfile | - | - | ✓ | - | Images, stages, build instructions |
+| Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Methods, type declarations, interfaces |
+| GraphQL | Fully Supported | .graphql, .gql | - | - | ✓ | - | Schemas, types, queries |
+| HTML | Fully Supported | .html, .htm | - | - | ✓ | - | Document structure, components |
 | Java | Fully Supported | .java | ✓ | ✓ | ✓ | - | Generics, annotations, modern features (records/sealed classes), concurrency, reflection |
 | JavaScript | Fully Supported | .js, .jsx | ✓ | ✓ | ✓ | - | ES6 modules, CommonJS, prototype methods, object methods, arrow functions |
+| JSON | Fully Supported | .json | - | - | ✓ | - | Config structures, package.json |
+| Kotlin | Fully Supported | .kt, .kts | ✓ | ✓ | ✓ | - | Classes, coroutines, DSLs, type inference |
 | Lua | Fully Supported | .lua | ✓ | - | ✓ | - | Local/global functions, metatables, closures, coroutines |
+| PHP | Fully Supported | .php | ✓ | ✓ | ✓ | - | Classes, functions, namespaces, attributes |
 | Python | Fully Supported | .py | ✓ | ✓ | ✓ | ✓ | Type inference, decorators, nested functions |
+| Ruby | Fully Supported | .rb, .rake, .gemspec | ✓ | ✓ | ✓ | - | Classes, modules, require/rails patterns |
 | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions |
+| Scala | Fully Supported | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects, traits |
+| SCSS | Fully Supported | .scss | - | - | ✓ | - | Variables, mixins, nested rules |
+| SQL | Fully Supported | .sql | - | - | ✓ | - | Tables, views, statements |
+| Svelte | Fully Supported | .svelte | - | - | ✓ | - | Single-file components, markup |
 | TypeScript | Fully Supported | .ts, .tsx | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
-| C# | In Development | .cs | ✓ | ✓ | ✓ | - | Classes, interfaces, generics (planned) |
-| Go | In Development | .go | ✓ | ✓ | ✓ | - | Methods, type declarations |
-| PHP | In Development | .php | ✓ | ✓ | ✓ | - | Classes, functions, namespaces |
-| Scala | In Development | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects |
+| Vue | Fully Supported | .vue | - | - | ✓ | - | Single-file components, templates |
+| YAML | Fully Supported | .yaml, .yml | - | - | ✓ | - | Config structures, Kubernetes/Docker Compose |
 <!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
@@ -559,37 +571,46 @@ The knowledge graph uses the following node types and relationships:
 <!-- SECTION:node_schemas -->
 | Label | Properties |
 |-----|----------|
-| Project | `{name: string}` |
+| Project | `{name: string, path: string, language: string}` |
 | Package | `{qualified_name: string, name: string, path: string}` |
 | Folder | `{path: string, name: string}` |
 | File | `{path: string, name: string, extension: string}` |
-| Module | `{qualified_name: string, name: string, path: string}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string]}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string]}` |
+| Module | `{qualified_name: string, name: string, path: string, pagerank: float, community_id: int, has_cycle: boolean}` |
+| Class | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
+| Function | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
+| Method | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
 | Interface | `{qualified_name: string, name: string}` |
 | Enum | `{qualified_name: string, name: string}` |
 | Type | `{qualified_name: string, name: string}` |
 | Union | `{qualified_name: string, name: string}` |
 | ModuleInterface | `{qualified_name: string, name: string, path: string}` |
 | ModuleImplementation | `{qualified_name: string, name: string, path: string, implements_module: string}` |
-| ExternalPackage | `{name: string, version_spec: string}` |
+| ExternalPackage | `{name: string, version: string}` |
+| Library | `{name: string, library_id: string}` |
+| DocChunk | `{qualified_name: string, title: string, topic: string, doc_version: string, status: string}` |
+| Concept | `{name: string}` |
+| Source | `{name: string}` |
+| AnalysisReport | `{title: string, type: string, generated_at: string}` |
+| AnalysisMetric | `{name: string, value: float, unit: string}` |
+| AnalysisRun | `{timestamp: string, status: string, duration: float}` |
 <!-- /SECTION:node_schemas -->
 
 ### Language-Specific Mappings
 
 <!-- SECTION:language_mappings -->
+- **C#**: `anonymous_method_expression`, `class_declaration`, `constructor_declaration`, `destructor_declaration`, `enum_declaration`, `function_pointer_type`, `interface_declaration`, `lambda_expression`, `local_function_statement`, `method_declaration`, `struct_declaration`
 - **C++**: `class_specifier`, `declaration`, `enum_specifier`, `field_declaration`, `function_definition`, `lambda_expression`, `struct_specifier`, `template_declaration`, `union_specifier`
+- **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
+- **Kotlin**: `class_declaration`, `function_declaration`, `interface_declaration`, `object_declaration`
 - **Lua**: `function_declaration`, `function_definition`
-- **Python**: `class_definition`, `function_definition`
-- **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
-- **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
-- **C#**: `anonymous_method_expression`, `class_declaration`, `constructor_declaration`, `destructor_declaration`, `enum_declaration`, `function_pointer_type`, `interface_declaration`, `lambda_expression`, `local_function_statement`, `method_declaration`, `struct_declaration`
-- **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 - **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `function_static_declaration`, `interface_declaration`, `trait_declaration`
+- **Python**: `class_definition`, `function_definition`
+- **Ruby**: `class`, `method`, `module`, `singleton_method`
+- **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
+- **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 <!-- /SECTION:language_mappings -->
 
 ### Relationships
@@ -612,7 +633,25 @@ The knowledge graph uses the following node types and relationships:
 | Method | OVERRIDES | Method |
 | ModuleImplementation | IMPLEMENTS | ModuleInterface |
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
+| Module, Class, Function, Method | REQUIRES_LIBRARY | ExternalPackage |
+| Module, Class, Function, Method | DEPENDS_ON | Module, Class, Function, Method |
+| Library | HAS_DOC | DocChunk |
+| DocChunk | DESCRIBES | Concept |
+| DocChunk | USED_IN | Project |
+| Project | USES_LIBRARY | Library |
+| DocChunk | SOURCED_FROM | Source |
+| DocChunk | DOCUMENTS_EXTERNAL | ExternalPackage |
+| Function, Method | RETURNS_TYPE | Type |
+| Function, Method | PARAMETER_TYPE | Type |
+| Type | CAUGHT_BY | Function, Method |
+| Function, Method | THROWS | Type |
+| Function, Method, Class | DECORATES | Function, Method, Class |
+| Function, Method, Class | ANNOTATES | Function, Method, Class |
 | Function, Method | CALLS | Function, Method |
+| Project | HAS_METRIC | AnalysisMetric |
+| Project | HAS_RUN | AnalysisRun |
+| AnalysisRun | HAS_REPORT | AnalysisReport |
+| AnalysisReport | REQUIRES_DOC | DocChunk |
 <!-- /SECTION:relationship_schemas -->
 
 ## 🔧 Configuration
@@ -679,6 +718,7 @@ my_build_output
 - **pymgclient**: Memgraph database adapter for Python language
 - **python-dotenv**: Read key-value pairs from a .env file and set them as environment variables
 - **toml**: Python Library for Tom's Obvious, Minimal Language
+- **tree-sitter-javascript**: JavaScript grammar for tree-sitter
 - **tree-sitter-python**: Python grammar for tree-sitter
 - **tree-sitter**: Python bindings to the Tree-sitter parsing library
 - **watchdog**: Filesystem events monitoring

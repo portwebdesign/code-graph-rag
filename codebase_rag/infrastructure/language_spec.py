@@ -1,22 +1,3 @@
-"""
-This module defines the language-specific configurations for parsing and
-analyzing source code with `tree-sitter`.
-
-It provides detailed specifications for each supported programming language,
-including:
--   `LanguageSpec`: A data class that holds information about file extensions,
-    `tree-sitter` node types for various code constructs (functions, classes,
-    imports, etc.), and custom queries.
--   `FQNSpec`: A named tuple that defines the logic for constructing Fully
-    Qualified Names (FQNs) for a language, including scope resolution and
-    name extraction functions.
-
-This centralized configuration allows the rest of the application to handle
-different languages in a generic way by looking up the appropriate specification.
-The module defines specs for Python, JavaScript, TypeScript, Rust, Java, C++,
-and other languages.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -140,7 +121,6 @@ def _cpp_get_name(node: Node) -> str | None:
     return _generic_get_name(node)
 
 
-# FQN Specifications for each language
 PYTHON_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_PY_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_PY_FUNCTION_TYPES),
@@ -218,6 +198,90 @@ PHP_FQN_SPEC = FQNSpec(
     file_to_module_parts=_generic_file_to_module,
 )
 
+RUBY_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_RUBY_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_RUBY_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+KOTLIN_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_KOTLIN_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_KOTLIN_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+YAML_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_YAML_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_YAML_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+JSON_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_JSON_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_JSON_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+HTML_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_HTML_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_HTML_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+CSS_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_CSS_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_CSS_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+SCSS_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_SCSS_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_SCSS_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+GRAPHQL_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_GRAPHQL_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_GRAPHQL_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+DOCKERFILE_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_DOCKERFILE_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_DOCKERFILE_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+SQL_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_SQL_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_SQL_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+VUE_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_VUE_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_VUE_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+SVELTE_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_SVELTE_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_SVELTE_FUNCTION_TYPES),
+    get_name=_generic_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
@@ -230,6 +294,18 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.SCALA: SCALA_FQN_SPEC,
     cs.SupportedLanguage.CSHARP: CSHARP_FQN_SPEC,
     cs.SupportedLanguage.PHP: PHP_FQN_SPEC,
+    cs.SupportedLanguage.RUBY: RUBY_FQN_SPEC,
+    cs.SupportedLanguage.KOTLIN: KOTLIN_FQN_SPEC,
+    cs.SupportedLanguage.YAML: YAML_FQN_SPEC,
+    cs.SupportedLanguage.JSON: JSON_FQN_SPEC,
+    cs.SupportedLanguage.HTML: HTML_FQN_SPEC,
+    cs.SupportedLanguage.CSS: CSS_FQN_SPEC,
+    cs.SupportedLanguage.SCSS: SCSS_FQN_SPEC,
+    cs.SupportedLanguage.GRAPHQL: GRAPHQL_FQN_SPEC,
+    cs.SupportedLanguage.DOCKERFILE: DOCKERFILE_FQN_SPEC,
+    cs.SupportedLanguage.SQL: SQL_FQN_SPEC,
+    cs.SupportedLanguage.VUE: VUE_FQN_SPEC,
+    cs.SupportedLanguage.SVELTE: SVELTE_FQN_SPEC,
 }
 """A dictionary mapping supported languages to their FQN specifications."""
 
@@ -429,6 +505,46 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         module_node_types=cs.SPEC_PHP_MODULE_TYPES,
         call_node_types=cs.SPEC_PHP_CALL_TYPES,
     ),
+    cs.SupportedLanguage.RUBY: LanguageSpec(
+        language=cs.SupportedLanguage.RUBY,
+        file_extensions=cs.RUBY_EXTENSIONS,
+        function_node_types=cs.SPEC_RUBY_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_RUBY_CLASS_TYPES,
+        module_node_types=cs.SPEC_RUBY_MODULE_TYPES,
+        call_node_types=cs.SPEC_RUBY_CALL_TYPES,
+        import_node_types=cs.SPEC_RUBY_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_RUBY_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.KOTLIN: LanguageSpec(
+        language=cs.SupportedLanguage.KOTLIN,
+        file_extensions=cs.KOTLIN_EXTENSIONS,
+        function_node_types=cs.SPEC_KOTLIN_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_KOTLIN_CLASS_TYPES,
+        module_node_types=cs.SPEC_KOTLIN_MODULE_TYPES,
+        call_node_types=cs.SPEC_KOTLIN_CALL_TYPES,
+        import_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_KOTLIN_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.YAML: LanguageSpec(
+        language=cs.SupportedLanguage.YAML,
+        file_extensions=cs.YAML_EXTENSIONS,
+        function_node_types=cs.SPEC_YAML_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_YAML_CLASS_TYPES,
+        module_node_types=cs.SPEC_YAML_MODULE_TYPES,
+        call_node_types=cs.SPEC_YAML_CALL_TYPES,
+        import_node_types=cs.SPEC_YAML_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_YAML_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.JSON: LanguageSpec(
+        language=cs.SupportedLanguage.JSON,
+        file_extensions=cs.JSON_EXTENSIONS,
+        function_node_types=cs.SPEC_JSON_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_JSON_CLASS_TYPES,
+        module_node_types=cs.SPEC_JSON_MODULE_TYPES,
+        call_node_types=cs.SPEC_JSON_CALL_TYPES,
+        import_node_types=cs.SPEC_JSON_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_JSON_IMPORT_TYPES,
+    ),
     cs.SupportedLanguage.LUA: LanguageSpec(
         language=cs.SupportedLanguage.LUA,
         file_extensions=cs.LUA_EXTENSIONS,
@@ -438,6 +554,86 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_node_types=cs.SPEC_LUA_CALL_TYPES,
         import_node_types=cs.SPEC_LUA_IMPORT_TYPES,
     ),
+    cs.SupportedLanguage.HTML: LanguageSpec(
+        language=cs.SupportedLanguage.HTML,
+        file_extensions=cs.HTML_EXTENSIONS,
+        function_node_types=cs.SPEC_HTML_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_HTML_CLASS_TYPES,
+        module_node_types=cs.SPEC_HTML_MODULE_TYPES,
+        call_node_types=cs.SPEC_HTML_CALL_TYPES,
+        import_node_types=cs.SPEC_HTML_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_HTML_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.CSS: LanguageSpec(
+        language=cs.SupportedLanguage.CSS,
+        file_extensions=cs.CSS_EXTENSIONS,
+        function_node_types=cs.SPEC_CSS_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_CSS_CLASS_TYPES,
+        module_node_types=cs.SPEC_CSS_MODULE_TYPES,
+        call_node_types=cs.SPEC_CSS_CALL_TYPES,
+        import_node_types=cs.SPEC_CSS_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_CSS_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.SCSS: LanguageSpec(
+        language=cs.SupportedLanguage.SCSS,
+        file_extensions=cs.SCSS_EXTENSIONS,
+        function_node_types=cs.SPEC_SCSS_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_SCSS_CLASS_TYPES,
+        module_node_types=cs.SPEC_SCSS_MODULE_TYPES,
+        call_node_types=cs.SPEC_SCSS_CALL_TYPES,
+        import_node_types=cs.SPEC_SCSS_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_SCSS_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.GRAPHQL: LanguageSpec(
+        language=cs.SupportedLanguage.GRAPHQL,
+        file_extensions=cs.GRAPHQL_EXTENSIONS,
+        function_node_types=cs.SPEC_GRAPHQL_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_GRAPHQL_CLASS_TYPES,
+        module_node_types=cs.SPEC_GRAPHQL_MODULE_TYPES,
+        call_node_types=cs.SPEC_GRAPHQL_CALL_TYPES,
+        import_node_types=cs.SPEC_GRAPHQL_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_GRAPHQL_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.DOCKERFILE: LanguageSpec(
+        language=cs.SupportedLanguage.DOCKERFILE,
+        file_extensions=cs.DOCKERFILE_EXTENSIONS,
+        function_node_types=cs.SPEC_DOCKERFILE_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_DOCKERFILE_CLASS_TYPES,
+        module_node_types=cs.SPEC_DOCKERFILE_MODULE_TYPES,
+        call_node_types=cs.SPEC_DOCKERFILE_CALL_TYPES,
+        import_node_types=cs.SPEC_DOCKERFILE_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_DOCKERFILE_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.SQL: LanguageSpec(
+        language=cs.SupportedLanguage.SQL,
+        file_extensions=cs.SQL_EXTENSIONS,
+        function_node_types=cs.SPEC_SQL_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_SQL_CLASS_TYPES,
+        module_node_types=cs.SPEC_SQL_MODULE_TYPES,
+        call_node_types=cs.SPEC_SQL_CALL_TYPES,
+        import_node_types=cs.SPEC_SQL_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_SQL_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.VUE: LanguageSpec(
+        language=cs.SupportedLanguage.VUE,
+        file_extensions=cs.VUE_EXTENSIONS,
+        function_node_types=cs.SPEC_VUE_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_VUE_CLASS_TYPES,
+        module_node_types=cs.SPEC_VUE_MODULE_TYPES,
+        call_node_types=cs.SPEC_VUE_CALL_TYPES,
+        import_node_types=cs.SPEC_VUE_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_VUE_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.SVELTE: LanguageSpec(
+        language=cs.SupportedLanguage.SVELTE,
+        file_extensions=cs.SVELTE_EXTENSIONS,
+        function_node_types=cs.SPEC_SVELTE_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_SVELTE_CLASS_TYPES,
+        module_node_types=cs.SPEC_SVELTE_MODULE_TYPES,
+        call_node_types=cs.SPEC_SVELTE_CALL_TYPES,
+        import_node_types=cs.SPEC_SVELTE_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_SVELTE_IMPORT_TYPES,
+    ),
 }
 """A dictionary mapping supported languages to their parsing and structural specifications."""
 
@@ -445,6 +641,10 @@ _EXTENSION_TO_SPEC: dict[str, LanguageSpec] = {}
 for _config in LANGUAGE_SPECS.values():
     for _ext in _config.file_extensions:
         _EXTENSION_TO_SPEC[_ext] = _config
+
+_FILENAME_TO_SPEC: dict[str, LanguageSpec] = {
+    cs.DOCKERFILE_NAME: LANGUAGE_SPECS[cs.SupportedLanguage.DOCKERFILE],
+}
 
 
 def get_language_spec(file_extension: str) -> LanguageSpec | None:
@@ -458,6 +658,12 @@ def get_language_spec(file_extension: str) -> LanguageSpec | None:
         LanguageSpec | None: The corresponding language specification, or None if not found.
     """
     return _EXTENSION_TO_SPEC.get(file_extension)
+
+
+def get_language_spec_for_path(file_path: Path) -> LanguageSpec | None:
+    if file_path.suffix:
+        return get_language_spec(file_path.suffix)
+    return _FILENAME_TO_SPEC.get(file_path.name)
 
 
 def get_language_for_extension(file_extension: str) -> cs.SupportedLanguage | None:

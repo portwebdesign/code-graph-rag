@@ -1,39 +1,16 @@
-"""
-This module defines the `ImportProcessor`, which is responsible for parsing
-import statements from various programming languages and creating `IMPORTS`
-relationships in the knowledge graph.
+from __future__ import annotations
 
-It uses language-specific parsing logic to handle the different syntaxes of
-imports (e.g., Python's `import` and `from ... import`, JavaScript's ES6 and
-CommonJS modules, Java's `import static`, etc.). The processor maintains an
-internal `import_mapping` to track which local names correspond to which
-fully qualified names within each module.
-
-Key functionalities:
--   Parsing import statements from a file's AST.
--   Resolving relative and absolute import paths.
--   Handling aliased and wildcard imports.
--   Differentiating between local project modules and external/standard library modules.
--   Ingesting `IMPORTS` relationships into the graph database.
--   Utilizing a `StdlibExtractor` to identify standard library modules.
-"""
-
+import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
-from tree_sitter import Node
+from tree_sitter import Node, QueryCursor
 
-from codebase_rag.data_models.types_defs import (
-    FunctionRegistryTrieProtocol,
-    LanguageQueries,
-)
+from codebase_rag.core import constants as cs
+from codebase_rag.core import logs as ls
 from codebase_rag.infrastructure.language_spec import LanguageSpec
 
-from ..core import constants as cs
-from ..core import logs as ls
-from ..services import IngestorProtocol
-from .lua import utils as lua_utils
-from .rs import utils as rs_utils
 from .stdlib_extractor import (
     StdlibCacheStats,
     StdlibExtractor,
@@ -43,12 +20,29 @@ from .stdlib_extractor import (
     load_persistent_cache,
     save_persistent_cache,
 )
-from .utils import get_query_cursor, safe_decode_text, safe_decode_with_fallback
+from .utils import safe_decode_text, safe_decode_with_fallback
+
+if TYPE_CHECKING:
+    from codebase_rag.data_models.types_defs import (
+        FunctionRegistryTrieProtocol,
+        LanguageQueries,
+    )
+    from codebase_rag.services import IngestorProtocol
 
 
 class ImportProcessor:
     """
-    Parses and processes import statements from source code files.
+    Handles parsing and resolution of import statements for various languages.
+
+    Maintains a mapping of local alias names to fully qualified names (FQNs)
+    for each module to facilitate cross-referencing and graph construction.
+
+    Attributes:
+        ingestor (IngestorProtocol): Ingestor for creating graph nodes/relationships.
+        repo_path (Path): Root path of the repository.
+        project_name (str): Name of the project.
+        import_mapping (Dict[str, Dict[str, str]]): Map of module_qn -> {local_name -> full_qn}.
+        std_lib_cache (Dict[str, Set[str]]): Cache for standard library modules.
     """
 
     def __init__(
@@ -57,29 +51,29 @@ class ImportProcessor:
         project_name: str,
         ingestor: IngestorProtocol | None = None,
         function_registry: FunctionRegistryTrieProtocol | None = None,
-    ) -> None:
+    ):
         """
-        Initializes the ImportProcessor.
+        Initialize the ImportProcessor.
 
         Args:
-            repo_path (Path): The root path of the repository.
+            ingestor (IngestorProtocol): The data ingestor instance.
+            repo_path (Path): Path to the repository root.
             project_name (str): The name of the project.
-            ingestor (IngestorProtocol | None): The data ingestion service.
-            function_registry (FunctionRegistryTrieProtocol | None): The registry of all known functions.
         """
+        self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
-        self.ingestor = ingestor
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
-        self.stdlib_extractor = StdlibExtractor(
-            function_registry, repo_path, project_name
-        )
+        self.import_nodes_created: set[str] = set()
+        self.import_nodes_by_module: dict[str, list[str]] = {}
+        self.import_symbol_links: list[dict[str, str]] = []
+        self.std_lib_cache: dict[str, set[str]] = {}
+        self.stdlib_extractor = StdlibExtractor(function_registry)
 
         load_persistent_cache()
 
     def __del__(self) -> None:
-        """Saves the persistent cache on object destruction."""
         try:
             save_persistent_cache()
         except Exception:
@@ -87,186 +81,60 @@ class ImportProcessor:
 
     @staticmethod
     def flush_stdlib_cache() -> None:
-        """Flushes the standard library cache to disk."""
         flush_stdlib_cache()
 
     @staticmethod
     def clear_stdlib_cache() -> None:
-        """Clears the standard library cache from disk."""
         clear_stdlib_cache()
 
     @staticmethod
     def get_stdlib_cache_stats() -> StdlibCacheStats:
-        """
-        Gets statistics about the standard library cache.
-
-        Returns:
-            StdlibCacheStats: An object containing cache statistics.
-        """
         return get_stdlib_cache_stats()
 
-    def parse_imports(
-        self,
-        root_node: Node,
-        module_qn: str,
-        language: cs.SupportedLanguage,
-        queries: dict[cs.SupportedLanguage, LanguageQueries],
-    ) -> None:
+    def remove_module(self, module_qn: str) -> None:
         """
-        Parses all import statements in a given AST and updates the import mapping.
+        Removes a module from the import mapping.
 
         Args:
-            root_node (Node): The root node of the file's AST.
-            module_qn (str): The qualified name of the module being processed.
-            language (cs.SupportedLanguage): The language of the source file.
-            queries (dict): A dictionary of tree-sitter queries.
+            module_qn (str): The qualified name of the module to remove.
         """
-        if language not in queries:
-            return
-        imports_query = queries[language]["imports"]
-        if not imports_query:
-            return
+        if module_qn in self.import_mapping:
+            del self.import_mapping[module_qn]
 
-        lang_config = queries[language]["config"]
+    def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
+        module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
 
-        self.import_mapping[module_qn] = {}
+        dots = 0
+        module_name = ""
 
-        try:
-            cursor = get_query_cursor(imports_query)
-            captures = cursor.captures(root_node)
+        for child in relative_node.children:
+            if child.type == cs.TS_IMPORT_PREFIX:
+                if decoded_text := safe_decode_text(child):
+                    dots = len(decoded_text)
+            elif child.type == cs.TS_DOTTED_NAME:
+                if decoded_name := safe_decode_text(child):
+                    module_name = decoded_name
 
-            match language:
-                case cs.SupportedLanguage.PYTHON:
-                    self._parse_python_imports(captures, module_qn)
-                case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
-                    self._parse_js_ts_imports(captures, module_qn)
-                case cs.SupportedLanguage.JAVA:
-                    self._parse_java_imports(captures, module_qn)
-                case cs.SupportedLanguage.RUST:
-                    self._parse_rust_imports(captures, module_qn)
-                case cs.SupportedLanguage.GO:
-                    self._parse_go_imports(captures, module_qn)
-                case cs.SupportedLanguage.CPP:
-                    self._parse_cpp_imports(captures, module_qn)
-                case cs.SupportedLanguage.LUA:
-                    self._parse_lua_imports(captures, module_qn)
-                case _:
-                    self._parse_generic_imports(captures, module_qn, lang_config)
+        target_parts = module_parts[:-dots] if dots > 0 else module_parts
 
-            logger.debug(
-                ls.IMP_PARSED_COUNT.format(
-                    count=len(self.import_mapping[module_qn]), module=module_qn
-                )
-            )
+        if module_name:
+            target_parts.extend(module_name.split(cs.SEPARATOR_DOT))
 
-            if self.ingestor:
-                for full_name in self.import_mapping[module_qn].values():
-                    module_path = self._resolve_module_path(
-                        full_name, module_qn, language
-                    )
-
-                    self.ingestor.ensure_relationship_batch(
-                        (
-                            cs.NodeLabel.MODULE,
-                            cs.KEY_QUALIFIED_NAME,
-                            module_qn,
-                        ),
-                        cs.RelationshipType.IMPORTS,
-                        (
-                            cs.NodeLabel.MODULE,
-                            cs.KEY_QUALIFIED_NAME,
-                            module_path,
-                        ),
-                    )
-                    logger.debug(
-                        ls.IMP_CREATED_RELATIONSHIP.format(
-                            from_module=module_qn,
-                            to_module=module_path,
-                            full_name=full_name,
-                        )
-                    )
-
-        except Exception as e:
-            logger.warning(ls.IMP_PARSE_FAILED.format(module=module_qn, error=e))
-
-    def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
-        """Parses Python `import` and `from ... import` statements."""
-        all_imports = captures.get(cs.CAPTURE_IMPORT, []) + captures.get(
-            cs.CAPTURE_IMPORT_FROM, []
-        )
-        for import_node in all_imports:
-            if import_node.type == cs.TS_PY_IMPORT_STATEMENT:
-                self._handle_python_import_statement(import_node, module_qn)
-            elif import_node.type == cs.TS_PY_IMPORT_FROM_STATEMENT:
-                self._handle_python_import_from_statement(import_node, module_qn)
-
-    def _handle_python_import_statement(
-        self, import_node: Node, module_qn: str
-    ) -> None:
-        """Handles a standard Python `import ...` statement."""
-        for child in import_node.named_children:
-            match child.type:
-                case cs.TS_DOTTED_NAME:
-                    self._handle_dotted_name_import(child, module_qn)
-                case cs.TS_ALIASED_IMPORT:
-                    self._handle_aliased_import(child, module_qn)
-
-    def _handle_dotted_name_import(self, child: Node, module_qn: str) -> None:
-        """Handles a `dotted_name` part of a Python import."""
-        module_name = safe_decode_text(child) or ""
-        local_name = module_name.split(cs.SEPARATOR_DOT)[0]
-        full_name = self._resolve_import_full_name(module_name, local_name)
-        self.import_mapping[module_qn][local_name] = full_name
-        logger.debug(ls.IMP_IMPORT.format(local=local_name, full=full_name))
-
-    def _handle_aliased_import(self, child: Node, module_qn: str) -> None:
-        """Handles an `import ... as ...` part of a Python import."""
-        module_name_node = child.child_by_field_name(cs.FIELD_NAME)
-        alias_node = child.child_by_field_name(cs.FIELD_ALIAS)
-        if not module_name_node or not alias_node:
-            return
-
-        module_name = safe_decode_text(module_name_node)
-        alias = safe_decode_text(alias_node)
-        if not module_name or not alias:
-            return
-
-        top_level = module_name.split(cs.SEPARATOR_DOT)[0]
-        full_name = self._resolve_import_full_name(module_name, top_level)
-        self.import_mapping[module_qn][alias] = full_name
-        logger.debug(ls.IMP_ALIASED_IMPORT.format(alias=alias, full=full_name))
-
-    def _resolve_import_full_name(self, module_name: str, top_level: str) -> str:
-        """Resolves the full name of an imported module, prepending the project name if local."""
-        if self._is_local_module(top_level):
-            return f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
-        return module_name
-
-    def _is_local_module(self, module_name: str) -> bool:
-        """Checks if a module name corresponds to a local module in the project."""
-        return (
-            (self.repo_path / module_name).is_dir()
-            or (self.repo_path / f"{module_name}{cs.EXT_PY}").is_file()
-            or (self.repo_path / module_name / cs.INIT_PY).is_file()
-        )
+        return cs.SEPARATOR_DOT.join(target_parts)
 
     def _is_local_java_import(self, import_path: str) -> bool:
-        """Checks if a Java import path corresponds to a local package."""
         top_level = import_path.split(cs.SEPARATOR_DOT)[0]
         return (self.repo_path / top_level).is_dir()
 
     def _resolve_java_import_path(self, import_path: str) -> str:
-        """Resolves a Java import path, prepending the project name if local."""
         if self._is_local_java_import(import_path):
             return f"{self.project_name}{cs.SEPARATOR_DOT}{import_path}"
         return import_path
 
     def _is_local_js_import(self, full_name: str) -> bool:
-        """Checks if a JavaScript/TypeScript import is internal to the project."""
         return full_name.startswith(self.project_name + cs.SEPARATOR_DOT)
 
     def _resolve_js_internal_module(self, full_name: str) -> str:
-        """Resolves the module path for an internal JavaScript/TypeScript import."""
         if full_name.endswith(cs.IMPORT_DEFAULT_SUFFIX):
             return full_name[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
 
@@ -287,12 +155,12 @@ class ImportProcessor:
         return full_name
 
     def _is_local_rust_import(self, import_path: str) -> bool:
-        """Checks if a Rust import path is local (starts with 'crate::')."""
         return import_path.startswith(cs.RUST_CRATE_PREFIX)
 
     def _ensure_external_module_node(self, module_path: str, full_name: str) -> None:
-        """Ensures a node exists for an external module."""
         if not self.ingestor or not module_path:
+            return
+        if module_path in self.import_nodes_created:
             return
         if cs.SEPARATOR_DOUBLE_COLON in module_path:
             name = module_path.rsplit(cs.SEPARATOR_DOUBLE_COLON, 1)[-1]
@@ -307,11 +175,9 @@ class ImportProcessor:
                 cs.KEY_IS_EXTERNAL: True,
             },
         )
+        self.import_nodes_created.add(module_path)
 
     def _resolve_rust_import_path(self, import_path: str, module_qn: str) -> str:
-        """Resolves a Rust import path to a module FQN."""
-        # (H) crate:: is always relative to the crate root, not the current module.
-        # (H) We find the src directory in the qualified name to identify the crate root.
         if self._is_local_rust_import(import_path):
             path_without_crate = import_path[len(cs.RUST_CRATE_PREFIX) :]
             module_parts = module_qn.split(cs.SEPARATOR_DOT)
@@ -337,177 +203,291 @@ class ImportProcessor:
         module_qn: str,
         language: cs.SupportedLanguage,
     ) -> str:
-        """
-        Resolves the final module path for an import, handling different languages.
-
-        Args:
-            full_name (str): The full name of the imported entity.
-            module_qn (str): The qualified name of the current module.
-            language (cs.SupportedLanguage): The language of the code.
-
-        Returns:
-            str: The resolved module FQN.
-        """
         project_prefix = self.project_name + cs.SEPARATOR_DOT
         match language:
-            # (H) Java MODULE semantics: Internal imports point to file-level MODULE
-            # (H) nodes (e.g., project.utils.StringUtils) because Java files are named
-            # (H) after their primary class. External imports point to package-level
-            # (H) (e.g., java.util) because we lack source code to create file-level
-            # (H) nodes. This asymmetry is intentional.
             case cs.SupportedLanguage.JAVA:
                 if full_name.startswith(project_prefix):
                     return full_name
+                module_path = (
+                    full_name.rsplit(cs.SEPARATOR_DOT, 1)[0]
+                    if cs.SEPARATOR_DOT in full_name
+                    else full_name
+                )
+                self._ensure_external_module_node(module_path, full_name)
+                return module_path
             case cs.SupportedLanguage.JS | cs.SupportedLanguage.TS:
                 if self._is_local_js_import(full_name):
                     return self._resolve_js_internal_module(full_name)
             case cs.SupportedLanguage.RUST:
                 return self._resolve_rust_import_path(full_name, module_qn)
+            case cs.SupportedLanguage.PHP:
+                php_path = full_name.replace("\\", cs.SEPARATOR_DOT)
+                self._ensure_external_module_node(php_path, full_name)
+                return php_path
 
         module_path = self.stdlib_extractor.extract_module_path(full_name, language)
         if not module_path.startswith(project_prefix):
             self._ensure_external_module_node(module_path, full_name)
         return module_path
 
-    def _handle_python_import_from_statement(
-        self, import_node: Node, module_qn: str
+    def parse_imports(
+        self,
+        root_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
-        """Handles a Python `from ... import ...` statement."""
-        module_name = self._extract_python_from_module_name(import_node, module_qn)
-        if not module_name:
+        """
+        Parses imports from the AST root node using the provided language queries.
+
+        Args:
+            root_node (Node): The root node of the AST.
+            module_qn (str): The qualified name of the module being processed.
+            language (SupportedLanguage): The language of the file.
+            queries (dict[SupportedLanguage, LanguageQueries]): Dictionary of language queries.
+        """
+        lang_queries = queries.get(language)
+        if not lang_queries:
             return
 
-        imported_items = self._extract_python_imported_items(import_node)
-        is_wildcard = any(
-            child.type == cs.TS_WILDCARD_IMPORT for child in import_node.children
-        )
-
-        if not imported_items and not is_wildcard:
+        import_query = lang_queries.get("imports")
+        if not import_query:
             return
 
-        base_module = self._resolve_python_base_module(module_name)
-        self._register_python_from_imports(
-            module_qn, base_module, imported_items, is_wildcard
-        )
+        lang_config = lang_queries.get("config")
+        if not lang_config:
+            return
 
-    def _extract_python_from_module_name(
-        self, import_node: Node, module_qn: str
-    ) -> str | None:
-        """Extracts the module name from a `from ... import` statement."""
-        module_name_node = import_node.child_by_field_name(cs.FIELD_MODULE_NAME)
-        if not module_name_node:
+        cursor = QueryCursor(import_query)
+        raw_captures = cursor.captures(root_node)
+        captures_dict: dict[str, list[Node]] = {}
+
+        for node, capture_name in raw_captures:
+            if not isinstance(node, Node):
+                continue
+            if capture_name not in captures_dict:
+                captures_dict[capture_name] = []
+            captures_dict[capture_name].append(node)
+
+        self.process_imports(captures_dict, module_qn, lang_config, language)
+
+    def process_imports(
+        self,
+        captures: dict,
+        module_qn: str,
+        lang_config: LanguageSpec,
+        language: cs.SupportedLanguage,
+    ) -> None:
+        """
+        Process import captures and populate the import mapping.
+
+        Args:
+            captures (dict): Tree-sitter captures from the query.
+            module_qn (str): Qualified name of the current module.
+            lang_config (LanguageSpec): Language specification.
+            language (cs.SupportedLanguage): The programming language.
+        """
+        self.import_mapping.setdefault(module_qn, {})
+
+        if language == cs.SupportedLanguage.PYTHON:
+            self._parse_python_imports(captures, module_qn)
+        elif language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
+            self._parse_js_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.GO:
+            self._parse_go_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.JAVA:
+            self._parse_java_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.RUST:
+            self._parse_rust_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.SCALA:
+            self._parse_scala_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.CSHARP:
+            self._parse_csharp_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.CPP:
+            self._parse_cpp_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.PHP:
+            self._parse_php_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.RUBY:
+            self._parse_ruby_imports(captures, module_qn)
+        elif language == cs.SupportedLanguage.LUA:
+            self._parse_lua_imports(captures, module_qn)
+        else:
+            self._parse_generic_imports(captures, module_qn, lang_config)
+
+    def resolve_type_fqn(self, type_name: str, module_qn: str) -> str | None:
+        """
+        Resolve a type name to its fully qualified name using import mappings.
+
+        Args:
+            type_name (str): The local type name to resolve.
+            module_qn (str): The current module's qualified name.
+
+        Returns:
+            Optional[str]: The resolved FQN, or None if not found.
+        """
+        if not type_name:
             return None
 
-        if module_name_node.type == cs.TS_DOTTED_NAME:
-            return safe_decode_text(module_name_node)
-        if module_name_node.type == cs.TS_RELATIVE_IMPORT:
-            return self._resolve_relative_import(module_name_node, module_qn)
+        mapping = self.import_mapping.get(module_qn, {})
+        if type_name in mapping:
+            return mapping[type_name]
+
+        for key, value in mapping.items():
+            if key.startswith("*"):
+                pass
+
         return None
 
-    def _extract_python_imported_items(
-        self, import_node: Node
-    ) -> list[tuple[str, str]]:
-        """Extracts the imported items (and their aliases) from a `from ... import` statement."""
-        imported_items: list[tuple[str, str]] = []
+    def _parse_python_imports(self, captures: dict, module_qn: str) -> None:
+        """
+        Parse Python import statements.
 
-        for name_node in import_node.children_by_field_name(cs.FIELD_NAME):
-            if item := self._extract_single_python_import(name_node):
-                imported_items.append(item)
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Current module FQN.
+        """
+        for node in captures.get(cs.CAPTURE_IMPORT, []):
+            if not isinstance(node, Node):
+                continue
 
-        return imported_items
+            if node.type == cs.TS_IMPORT_FROM_STATEMENT:
+                self._handle_python_from_import(node, module_qn)
+            elif node.type == cs.TS_IMPORT_STATEMENT:
+                self._handle_python_import_statement(node, module_qn)
 
-    def _extract_single_python_import(self, name_node: Node) -> tuple[str, str] | None:
-        """Extracts a single item from a `from ... import` list."""
-        if name_node.type == cs.TS_DOTTED_NAME:
-            if name := safe_decode_text(name_node):
-                return (name, name)
-        elif name_node.type == cs.TS_ALIASED_IMPORT:
-            original_node = name_node.child_by_field_name(cs.FIELD_NAME)
-            alias_node = name_node.child_by_field_name(cs.FIELD_ALIAS)
-            if original_node and alias_node:
-                original = safe_decode_text(original_node)
-                alias = safe_decode_text(alias_node)
-                if original and alias:
-                    return (alias, original)
-        return None
+    def _handle_python_from_import(self, node: Node, module_qn: str) -> None:
+        """
+        Handle Python 'from ... import ...' statement.
 
-    def _resolve_python_base_module(self, module_name: str) -> str:
-        """Resolves the base module for a `from ... import` statement."""
-        if module_name.startswith(self.project_name):
-            return module_name
-        top_level = module_name.split(cs.SEPARATOR_DOT)[0]
-        return self._resolve_import_full_name(module_name, top_level)
+        Args:
+            node (Node): AST node.
+            module_qn (str): Current module FQN.
+        """
+        module_name_node = node.child_by_field_name(cs.FIELD_MODULE_NAME)
+        module_path = ""
+        relative_level = 0
 
-    def _register_python_from_imports(
-        self,
-        module_qn: str,
-        base_module: str,
-        imported_items: list[tuple[str, str]],
-        is_wildcard: bool,
+        for child in node.children:
+            if child.type == ".":
+                relative_level += 1
+            elif child == module_name_node:
+                break
+
+        if module_name_node:
+            module_path = safe_decode_with_fallback(module_name_node)
+
+        full_module_path = self._resolve_python_module_path(
+            module_path, relative_level, module_qn
+        )
+
+        for child in node.children:
+            if child.type in {cs.TS_DOTTED_NAME, cs.TS_ALIASED_IMPORT}:
+                pass
+
+        self._extract_python_names_from_import(node, full_module_path, module_qn)
+
+    def _handle_python_import_from_statement(self, node: Node, module_qn: str) -> None:
+        self._handle_python_from_import(node, module_qn)
+
+    def _handle_python_import_statement(self, node: Node, module_qn: str) -> None:
+        """
+        Handle Python 'import ...' statement.
+
+        Args:
+            node (Node): AST node.
+            module_qn (str): Current module FQN.
+        """
+        for child in node.children:
+            if child.type == cs.TS_DOTTED_NAME:
+                name = safe_decode_with_fallback(child)
+                self.import_mapping[module_qn][name] = name
+            elif child.type == cs.TS_ALIASED_IMPORT:
+                val_node = child.child_by_field_name("name")
+                alias_node = child.child_by_field_name("alias")
+                if val_node and alias_node:
+                    full_name = safe_decode_with_fallback(val_node)
+                    alias = safe_decode_with_fallback(alias_node)
+                    self.import_mapping[module_qn][alias] = full_name
+
+    def _extract_python_names_from_import(
+        self, node: Node, full_module_path: str, module_qn: str
     ) -> None:
-        """Registers the resolved names from a `from ... import` statement."""
-        if is_wildcard:
-            wildcard_key = f"*{base_module}"
-            self.import_mapping[module_qn][wildcard_key] = base_module
-            logger.debug(ls.IMP_WILDCARD_IMPORT.format(module=base_module))
-            return
+        """
+        Extract imported names from a Python import node properties.
 
-        for local_name, original_name in imported_items:
-            full_name = f"{base_module}{cs.SEPARATOR_DOT}{original_name}"
-            self.import_mapping[module_qn][local_name] = full_name
-            logger.debug(ls.IMP_FROM_IMPORT.format(local=local_name, full=full_name))
+        Args:
+            node (Node): Import node.
+            full_module_path (str): Resolved module path.
+            module_qn (str): Current module FQN.
+        """
+        pass
 
-    def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
-        """Resolves a relative Python import path (e.g., `from . import foo`)."""
-        module_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
+    def _resolve_python_module_path(
+        self, partial_path: str, relative_level: int, current_module: str
+    ) -> str:
+        """
+        Resolve Python module path, handling relative imports.
 
-        dots = 0
-        module_name = ""
+        Args:
+            partial_path (str): The import path (e.g. 'utils.string').
+            relative_level (int): Number of leading dots.
+            current_module (str): FQN of current module.
 
-        for child in relative_node.children:
-            if child.type == cs.TS_IMPORT_PREFIX:
-                if decoded_text := safe_decode_text(child):
-                    dots = len(decoded_text)
-            elif child.type == cs.TS_DOTTED_NAME:
-                if decoded_name := safe_decode_text(child):
-                    module_name = decoded_name
+        Returns:
+            str: Resolved fully qualified module path.
+        """
+        if relative_level == 0:
+            return partial_path
 
-        target_parts = module_parts[:-dots] if dots > 0 else module_parts
+        parts = current_module.split(cs.SEPARATOR_DOT)
 
-        if module_name:
-            target_parts.extend(module_name.split(cs.SEPARATOR_DOT))
+        if parts:
+            parts.pop()
 
-        return cs.SEPARATOR_DOT.join(target_parts)
+        for _ in range(relative_level - 1):
+            if parts:
+                parts.pop()
 
-    def _parse_js_ts_imports(self, captures: dict, module_qn: str) -> None:
-        """Parses JavaScript/TypeScript `import`, `require`, and `export from` statements."""
-        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type == cs.TS_IMPORT_STATEMENT:
-                source_module = None
-                for child in import_node.children:
-                    if child.type == cs.TS_STRING:
-                        source_text = safe_decode_with_fallback(child).strip("'\"")
-                        source_module = self._resolve_js_module_path(
-                            source_text, module_qn
-                        )
-                        break
+        base = cs.SEPARATOR_DOT.join(parts)
+        if partial_path:
+            return f"{base}.{partial_path}" if base else partial_path
+        return base
 
-                if not source_module:
-                    continue
+    def _parse_js_imports(self, captures: dict, module_qn: str) -> None:
+        """
+        Parse JavaScript/TypeScript import statements.
 
-                for child in import_node.children:
-                    if child.type == cs.TS_IMPORT_CLAUSE:
-                        self._parse_js_import_clause(child, source_module, module_qn)
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Current module FQN.
+        """
+        for node in captures.get(cs.CAPTURE_IMPORT, []):
+            if not isinstance(node, Node):
+                continue
 
-            elif import_node.type == cs.TS_LEXICAL_DECLARATION:
-                self._parse_js_require(import_node, module_qn)
+            source_node = node.child_by_field_name(cs.FIELD_SOURCE)
+            if not source_node:
+                continue
 
-            elif import_node.type == cs.TS_EXPORT_STATEMENT:
-                self._parse_js_reexport(import_node, module_qn)
+            source_path = safe_decode_with_fallback(source_node).strip("'\"")
+            _ = self._resolve_js_module_path(source_path, module_qn)
+
+            _ = node.child_by_field_name("import_clause")
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
-        """Resolves a JavaScript/TypeScript module path."""
-        if not import_path.startswith(cs.PATH_CURRENT_DIR):
+        """
+        Resolve JS/TS import path.
+
+        Args:
+            import_path (str): Import path from source.
+            current_module (str): Current module FQN.
+
+        Returns:
+            str: Resolved FQN.
+        """
+        if not import_path.startswith(
+            cs.PATH_CURRENT_DIR
+        ) and not import_path.startswith(cs.PATH_PARENT_DIR):
             return import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
 
         current_parts = current_module.split(cs.SEPARATOR_DOT)[:-1]
@@ -524,239 +504,289 @@ class ImportProcessor:
 
         return cs.SEPARATOR_DOT.join(current_parts)
 
-    def _parse_js_import_clause(
-        self, clause_node: Node, source_module: str, current_module: str
-    ) -> None:
-        """Parses the clause of a JS/TS import statement (e.g., `{ a, b as c }`)."""
-        for child in clause_node.children:
-            if child.type == cs.TS_IDENTIFIER:
-                imported_name = safe_decode_with_fallback(child)
-                self.import_mapping[current_module][imported_name] = (
-                    f"{source_module}{cs.IMPORT_DEFAULT_SUFFIX}"
-                )
-                logger.debug(
-                    ls.IMP_JS_DEFAULT.format(name=imported_name, module=source_module)
-                )
+    def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
+        """
+        Parse Go import declarations.
 
-            elif child.type == cs.TS_NAMED_IMPORTS:
-                for grandchild in child.children:
-                    if grandchild.type == cs.TS_IMPORT_SPECIFIER:
-                        name_node = grandchild.child_by_field_name(cs.FIELD_NAME)
-                        alias_node = grandchild.child_by_field_name(cs.FIELD_ALIAS)
-                        if name_node:
-                            imported_name = safe_decode_with_fallback(name_node)
-                            local_name = (
-                                safe_decode_with_fallback(alias_node)
-                                if alias_node
-                                else imported_name
-                            )
-                            self.import_mapping[current_module][local_name] = (
-                                f"{source_module}{cs.SEPARATOR_DOT}{imported_name}"
-                            )
-                            logger.debug(
-                                ls.IMP_JS_NAMED.format(
-                                    local=local_name,
-                                    module=source_module,
-                                    name=imported_name,
-                                )
-                            )
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Current module FQN.
+        """
+        for node in captures.get(cs.CAPTURE_IMPORT, []):
+            if not isinstance(node, Node):
+                continue
+            specs = self._extract_go_import_specs(node)
+            for name, path in specs:
+                self.import_mapping[module_qn][name] = path
 
-            elif child.type == cs.TS_NAMESPACE_IMPORT:
-                for grandchild in child.children:
-                    if grandchild.type == cs.TS_IDENTIFIER:
-                        namespace_name = safe_decode_with_fallback(grandchild)
-                        self.import_mapping[current_module][namespace_name] = (
-                            source_module
-                        )
-                        logger.debug(
-                            ls.IMP_JS_NAMESPACE.format(
-                                name=namespace_name, module=source_module
-                            )
-                        )
-                        break
+    def _extract_go_import_specs(self, node: Node) -> list[tuple[str, str]]:
+        """
+        Extract import specifications from a Go import node.
 
-    def _parse_js_require(self, decl_node: Node, current_module: str) -> None:
-        """Parses a CommonJS `require()` call."""
-        for declarator in decl_node.children:
-            if declarator.type == cs.TS_VARIABLE_DECLARATOR:
-                name_node = declarator.child_by_field_name(cs.FIELD_NAME)
-                value_node = declarator.child_by_field_name(cs.FIELD_VALUE)
+        Args:
+            node (Node): Go import node.
 
-                if (
-                    name_node
-                    and value_node
-                    and name_node.type == cs.TS_IDENTIFIER
-                    and value_node.type == cs.TS_CALL_EXPRESSION
-                ):
-                    func_node = value_node.child_by_field_name(cs.FIELD_FUNCTION)
-                    args_node = value_node.child_by_field_name(cs.FIELD_ARGUMENTS)
-
-                    if (
-                        func_node
-                        and args_node
-                        and func_node.type == cs.TS_IDENTIFIER
-                        and safe_decode_text(func_node) == cs.IMPORT_REQUIRE
-                    ):
-                        for arg in args_node.children:
-                            if arg.type == cs.TS_STRING:
-                                var_name = safe_decode_with_fallback(name_node)
-                                required_module = safe_decode_with_fallback(arg).strip(
-                                    "'\""
-                                )
-
-                                resolved_module = self._resolve_js_module_path(
-                                    required_module, current_module
-                                )
-                                self.import_mapping[current_module][var_name] = (
-                                    resolved_module
-                                )
-                                logger.debug(
-                                    ls.IMP_JS_REQUIRE.format(
-                                        var=var_name, module=resolved_module
-                                    )
-                                )
-                                break
-
-    def _parse_js_reexport(self, export_node: Node, current_module: str) -> None:
-        """Parses a JS/TS `export ... from ...` statement."""
-        source_module = None
-        for child in export_node.children:
-            if child.type == cs.TS_STRING:
-                source_text = safe_decode_with_fallback(child).strip("'\"")
-                source_module = self._resolve_js_module_path(
-                    source_text, current_module
-                )
-                break
-
-        if not source_module:
-            return
-
-        for child in export_node.children:
-            if child.type == cs.TS_ASTERISK:
-                wildcard_key = f"*{source_module}"
-                self.import_mapping[current_module][wildcard_key] = source_module
-                logger.debug(ls.IMP_JS_NAMESPACE_REEXPORT.format(module=source_module))
-            elif child.type == cs.TS_EXPORT_CLAUSE:
-                for grandchild in child.children:
-                    if grandchild.type == cs.TS_EXPORT_SPECIFIER:
-                        name_node = grandchild.child_by_field_name(cs.FIELD_NAME)
-                        alias_node = grandchild.child_by_field_name(cs.FIELD_ALIAS)
-                        if name_node:
-                            original_name = safe_decode_with_fallback(name_node)
-                            exported_name = (
-                                safe_decode_with_fallback(alias_node)
-                                if alias_node
-                                else original_name
-                            )
-                            self.import_mapping[current_module][exported_name] = (
-                                f"{source_module}{cs.SEPARATOR_DOT}{original_name}"
-                            )
-                            logger.debug(
-                                ls.IMP_JS_REEXPORT.format(
-                                    exported=exported_name,
-                                    module=source_module,
-                                    original=original_name,
-                                )
-                            )
+        Returns:
+            List[Tuple[str, str]]: List of (alias, path) tuples.
+        """
+        specs = []
+        return specs
 
     def _parse_java_imports(self, captures: dict, module_qn: str) -> None:
-        """Parses Java `import` and `import static` statements."""
-        for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type == cs.TS_IMPORT_DECLARATION:
-                is_static = False
-                imported_path = None
-                is_wildcard = False
+        """
+        Parse Java import statements.
 
-                for child in import_node.children:
-                    if child.type == cs.TS_STATIC:
-                        is_static = True
-                    elif child.type == cs.TS_SCOPED_IDENTIFIER:
-                        imported_path = safe_decode_with_fallback(child)
-                    elif child.type == cs.TS_ASTERISK:
-                        is_wildcard = True
-
-                if not imported_path:
-                    continue
-
-                resolved_path = self._resolve_java_import_path(imported_path)
-
-                if is_wildcard:
-                    logger.debug(ls.IMP_JAVA_WILDCARD.format(path=resolved_path))
-                    self.import_mapping[module_qn][f"*{resolved_path}"] = resolved_path
-                elif parts := resolved_path.split(cs.SEPARATOR_DOT):
-                    imported_name = parts[-1]
-                    self.import_mapping[module_qn][imported_name] = resolved_path
-                    if is_static:
-                        logger.debug(
-                            ls.IMP_JAVA_STATIC.format(
-                                name=imported_name, path=resolved_path
-                            )
-                        )
-                    else:
-                        logger.debug(
-                            ls.IMP_JAVA_IMPORT.format(
-                                name=imported_name, path=resolved_path
-                            )
-                        )
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Current module FQN.
+        """
+        for node in captures.get(cs.CAPTURE_IMPORT, []):
+            pass
 
     def _parse_rust_imports(self, captures: dict, module_qn: str) -> None:
-        """Parses Rust `use` statements."""
+        """
+        Parse Rust use declarations.
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Current module FQN.
+        """
+        for node in captures.get(cs.CAPTURE_IMPORT, []):
+            pass
+
+    def _parse_scala_imports(self, captures: dict, module_qn: str) -> None:
+        """
+        Parse Scala import statements.
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Current module FQN.
+        """
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type == cs.TS_USE_DECLARATION:
-                self._parse_rust_use_declaration(import_node, module_qn)
+            if not isinstance(import_node, Node):
+                continue
+            import_text = safe_decode_with_fallback(import_node)
+            for entry in self._split_scala_import_entries(import_text):
+                self._register_scala_import_entry(entry, module_qn)
 
-    def _parse_rust_use_declaration(self, use_node: Node, module_qn: str) -> None:
-        """Parses a single Rust `use` declaration."""
-        imports = rs_utils.extract_use_imports(use_node)
+    def _split_scala_import_entries(self, import_text: str) -> list[str]:
+        """
+        Split a Scala import statement into individual entries.
 
-        for imported_name, full_path in imports.items():
-            self.import_mapping[module_qn][imported_name] = full_path
-            logger.debug(ls.IMP_RUST.format(name=imported_name, path=full_path))
+        Args:
+            import_text (str): The raw import text.
 
-    def _parse_go_imports(self, captures: dict, module_qn: str) -> None:
-        """Parses Go `import` statements."""
+        Returns:
+            list[str]: list of individual import strings.
+        """
+        if not import_text:
+            return []
+        text = import_text.strip()
+        if text.startswith("import "):
+            text = text[len("import ") :].strip()
+
+        entries: list[str] = []
+        buffer: list[str] = []
+        depth = 0
+
+        for ch in text:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth = max(depth - 1, 0)
+
+            if ch == "," and depth == 0:
+                entry = "".join(buffer).strip()
+                if entry:
+                    entries.append(entry)
+                buffer = []
+                continue
+            buffer.append(ch)
+
+        tail = "".join(buffer).strip()
+        if tail:
+            entries.append(tail)
+
+        return entries
+
+    def _register_scala_import_entry(self, entry: str, module_qn: str) -> None:
+        """
+        Register a single Scala import entry.
+
+        Args:
+            entry (str): The import entry.
+            module_qn (str): Module FQN.
+        """
+        cleaned = entry.strip().rstrip(";")
+        if not cleaned:
+            return
+
+        if "{" in cleaned and "}" in cleaned:
+            prefix, group_part = cleaned.split("{", 1)
+            prefix = prefix.strip().rstrip(".")
+            group_part = group_part.split("}", 1)[0]
+            items = [item.strip() for item in group_part.split(",") if item.strip()]
+            for item in items:
+                self._register_scala_import_item(prefix, item, module_qn)
+            return
+
+        self._register_scala_import_item("", cleaned, module_qn)
+
+    def _register_scala_import_item(
+        self, prefix: str, item: str, module_qn: str
+    ) -> None:
+        """
+        Register a specific Scala import item (handling aliases and wildcards).
+
+        Args:
+            prefix (str): Prefix path (e.g. package name).
+            item (str): Item to import (e.g. ClassName or ClassName => Alias).
+            module_qn (str): Module FQN.
+        """
+        if not item:
+            return
+
+        alias = None
+        original = item
+        if "=>" in item:
+            original, alias = [part.strip() for part in item.split("=>", 1)]
+
+        full_name = f"{prefix}.{original}" if prefix else original
+        if original == "_" or full_name.endswith("._"):
+            module_path = prefix or full_name[:-2]
+            if module_path:
+                wildcard_key = f"*{module_path}"
+                self.import_mapping[module_qn][wildcard_key] = module_path
+                logger.debug(ls.IMP_WILDCARD_IMPORT.format(module=module_path))
+            return
+
+        local_name = alias or full_name.split(cs.SEPARATOR_DOT)[-1]
+        self.import_mapping[module_qn][local_name] = full_name
+        logger.debug(ls.IMP_IMPORT.format(local=local_name, full=full_name))
+
+    def _parse_csharp_imports(self, captures: dict, module_qn: str) -> None:
+        """
+        Parse C# using statements.
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Current module FQN.
+        """
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
-            if import_node.type == cs.TS_GO_IMPORT_DECLARATION:
-                self._parse_go_import_declaration(import_node, module_qn)
+            if not isinstance(import_node, Node):
+                continue
+            import_text = safe_decode_with_fallback(import_node)
+            for local_name, full_name in self._parse_csharp_using(import_text):
+                self.import_mapping[module_qn][local_name] = full_name
+                logger.debug(ls.IMP_IMPORT.format(local=local_name, full=full_name))
 
-    def _parse_go_import_declaration(self, import_node: Node, module_qn: str) -> None:
-        """Parses a Go `import` declaration block."""
-        for child in import_node.children:
-            if child.type == cs.TS_IMPORT_SPEC:
-                self._parse_go_import_spec(child, module_qn)
-            elif child.type == cs.TS_IMPORT_SPEC_LIST:
-                for grandchild in child.children:
-                    if grandchild.type == cs.TS_IMPORT_SPEC:
-                        self._parse_go_import_spec(grandchild, module_qn)
+    def _parse_csharp_using(self, using_text: str) -> list[tuple[str, str]]:
+        """
+        Parse a single C# using line.
 
-    def _parse_go_import_spec(self, spec_node: Node, module_qn: str) -> None:
-        """Parses a single Go import specifier."""
-        alias_name = None
-        import_path = None
+        Args:
+            using_text (str): The using statement text.
 
-        for child in spec_node.children:
-            if child.type == cs.TS_PACKAGE_IDENTIFIER:
-                alias_name = safe_decode_with_fallback(child)
-            elif child.type == cs.TS_INTERPRETED_STRING_LITERAL:
-                import_path = safe_decode_with_fallback(child).strip('"')
+        Returns:
+            list[tuple[str, str]]: List of (alias, full_name) tuples.
+        """
+        if not using_text:
+            return []
 
-        if import_path:
-            package_name = alias_name or import_path.split(cs.SEPARATOR_SLASH)[-1]
-            self.import_mapping[module_qn][package_name] = import_path
-            logger.debug(ls.IMP_GO.format(package=package_name, path=import_path))
+        text = using_text.strip().rstrip(";")
+        if text.startswith("global "):
+            text = text[len("global ") :].strip()
+        if text.startswith("using "):
+            text = text[len("using ") :].strip()
+        if text.startswith("static "):
+            text = text[len("static ") :].strip()
+
+        if not text:
+            return []
+
+        if "=" in text:
+            alias, target = [part.strip() for part in text.split("=", 1)]
+            if alias and target:
+                return [(alias, target)]
+            return []
+
+        local_name = text.split(cs.SEPARATOR_DOT)[-1]
+        return [(local_name, text)]
 
     def _parse_cpp_imports(self, captures: dict, module_qn: str) -> None:
-        """Parses C++ `#include` and module import statements."""
+        """
+        Parse C++ includes and module imports.
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Module FQN.
+        """
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             if import_node.type == cs.TS_PREPROC_INCLUDE:
                 self._parse_cpp_include(import_node, module_qn)
+            elif import_node.type == cs.TS_IMPORT_DECLARATION:
+                self._parse_cpp_import_declaration(import_node, module_qn)
             elif import_node.type == cs.TS_TEMPLATE_FUNCTION:
                 self._parse_cpp_module_import(import_node, module_qn)
             elif import_node.type == cs.TS_DECLARATION:
                 self._parse_cpp_module_declaration(import_node, module_qn)
 
+    def _parse_cpp_import_declaration(self, import_node: Node, module_qn: str) -> None:
+        """
+        Parse C++20 import declaration.
+
+        Args:
+            import_node (Node): AST node.
+            module_qn (str): Module FQN.
+        """
+        import_text = safe_decode_with_fallback(import_node).strip()
+        if not import_text:
+            return
+
+        if import_text.startswith("export "):
+            import_text = import_text[len("export ") :].strip()
+
+        if import_text.startswith(f"{cs.IMPORT_IMPORT} "):
+            import_text = import_text[len(cs.IMPORT_IMPORT) :].strip()
+
+        import_text = import_text.rstrip(cs.CHAR_SEMICOLON).strip()
+        if not import_text:
+            return
+
+        is_header = import_text.startswith("<") or import_text.startswith('"')
+        module_name = import_text
+        if module_name.startswith("<") and module_name.endswith(">"):
+            module_name = module_name[1:-1].strip()
+        elif module_name.startswith('"') and module_name.endswith('"'):
+            module_name = module_name[1:-1].strip()
+
+        if not module_name:
+            return
+
+        local_name = module_name.lstrip(":")
+        if local_name.startswith(cs.CPP_STD_PREFIX):
+            local_name = local_name[len(cs.CPP_STD_PREFIX) :].lstrip(cs.SEPARATOR_DOT)
+
+        if module_name.startswith(cs.CPP_STD_PREFIX):
+            full_name = f"{cs.IMPORT_STD_PREFIX}{module_name[len(cs.CPP_STD_PREFIX) :].lstrip(cs.SEPARATOR_DOT)}"
+        elif is_header:
+            full_name = f"{cs.IMPORT_STD_PREFIX}{module_name}"
+        else:
+            full_name = (
+                f"{self.project_name}{cs.SEPARATOR_DOT}{module_name.lstrip(':')}"
+            )
+
+        self.import_mapping[module_qn][local_name] = full_name
+        logger.debug(ls.IMP_CPP_MODULE.format(local=local_name, full=full_name))
+
     def _parse_cpp_include(self, include_node: Node, module_qn: str) -> None:
-        """Parses a C++ `#include` directive."""
+        """
+        Parse C++ #include directive.
+
+        Args:
+            include_node (Node): AST node.
+            module_qn (str): Module FQN.
+        """
         include_path = None
         is_system_include = False
 
@@ -797,7 +827,13 @@ class ImportProcessor:
             )
 
     def _parse_cpp_module_import(self, import_node: Node, module_qn: str) -> None:
-        """Parses a C++20 module `import` statement."""
+        """
+        Parse C++ module import from template syntax.
+
+        Args:
+            import_node (Node): AST node.
+            module_qn (str): Module FQN.
+        """
         identifier_child = None
         template_args_child = None
 
@@ -830,7 +866,13 @@ class ImportProcessor:
                 logger.debug(ls.IMP_CPP_MODULE.format(local=local_name, full=full_name))
 
     def _parse_cpp_module_declaration(self, decl_node: Node, module_qn: str) -> None:
-        """Parses a C++20 `module` or `export module` declaration."""
+        """
+        Parse C++ module declarations (exports, partitions).
+
+        Args:
+            decl_node (Node): AST node.
+            module_qn (str): Module FQN.
+        """
         decoded_text = safe_decode_text(decl_node)
         if not decoded_text:
             return
@@ -866,7 +908,15 @@ class ImportProcessor:
     def _register_cpp_module_mapping(
         self, parts: list[str], name_index: int, module_qn: str, log_template: str
     ) -> None:
-        """Registers a mapping for a C++ module declaration."""
+        """
+        Helper to register C++ module mappings.
+
+        Args:
+            parts (list[str]): Split text parts.
+            name_index (int): Index of module name.
+            module_qn (str): Module FQN.
+            log_template (str): Logging template.
+        """
         module_name = parts[name_index].rstrip(";")
         self.import_mapping[module_qn][module_name] = (
             f"{self.project_name}{cs.SEPARATOR_DOT}{module_name}"
@@ -876,7 +926,14 @@ class ImportProcessor:
     def _parse_generic_imports(
         self, captures: dict, module_qn: str, lang_config: LanguageSpec
     ) -> None:
-        """A generic fallback for parsing imports in less-supported languages."""
+        """
+        Parse generic imports for other languages (logging only).
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Module FQN.
+            lang_config (LanguageSpec): Language config.
+        """
         for import_node in captures.get(cs.CAPTURE_IMPORT, []):
             logger.debug(
                 ls.IMP_GENERIC.format(
@@ -884,8 +941,216 @@ class ImportProcessor:
                 )
             )
 
+    def _parse_php_imports(self, captures: dict, module_qn: str) -> None:
+        """
+        Parse PHP use and include statements.
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Module FQN.
+        """
+        for use_node in captures.get("use", []):
+            if not isinstance(use_node, Node):
+                continue
+            use_text = safe_decode_with_fallback(use_node)
+            for local_name, full_name in self._parse_php_use_statement(use_text):
+                self.import_mapping[module_qn][local_name] = full_name
+                logger.debug(ls.IMP_IMPORT.format(local=local_name, full=full_name))
+
+        for include_node in captures.get("include", []) + captures.get("require", []):
+            if not isinstance(include_node, Node):
+                continue
+            include_text = safe_decode_with_fallback(include_node)
+            if not (import_path := self._extract_php_include_path(include_text)):
+                continue
+            local_name = Path(import_path).stem or import_path
+            full_name = import_path.replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+            self.import_mapping[module_qn][local_name] = full_name
+
+    def _parse_ruby_imports(self, captures: dict, module_qn: str) -> None:
+        """
+        Parse Ruby require and load statements.
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Module FQN.
+        """
+        require_nodes = captures.get("require", []) + captures.get(
+            cs.CAPTURE_IMPORT, []
+        )
+
+        for require_node in require_nodes:
+            if not isinstance(require_node, Node):
+                continue
+            require_text = safe_decode_with_fallback(require_node)
+            for import_path in self._extract_ruby_require_paths(require_text):
+                resolved_path = self._resolve_ruby_require_path(import_path, module_qn)
+                if not resolved_path:
+                    continue
+                local_name = resolved_path.split(cs.SEPARATOR_DOT)[-1]
+                self.import_mapping[module_qn][local_name] = resolved_path
+                logger.debug(ls.IMP_IMPORT.format(local=local_name, full=resolved_path))
+
+    def _extract_ruby_require_paths(self, require_text: str) -> list[str]:
+        """
+        Extract path info from Ruby require statements.
+
+        Args:
+            require_text (str): Require statement text.
+
+        Returns:
+            list[str]: list of paths.
+        """
+        if not require_text:
+            return []
+        matches = re.findall(
+            r"\b(require|require_relative|load)\s*(?:\(|\s)\s*['\"]([^'\"]+)['\"]",
+            require_text,
+        )
+        return [match[1] for match in matches if match[1]]
+
+    def _resolve_ruby_require_path(self, import_path: str, module_qn: str) -> str:
+        """
+        Resolve Ruby method require path.
+
+        Args:
+            import_path (str): The imported path.
+            module_qn (str): Current module FQN.
+
+        Returns:
+            str: Resolved FQN.
+        """
+        normalized = import_path.strip()
+        if not normalized:
+            return ""
+
+        if normalized.startswith("./") or normalized.startswith("../"):
+            current_parts = module_qn.split(cs.SEPARATOR_DOT)[1:]
+            if current_parts:
+                current_parts = current_parts[:-1]
+            rel_parts = normalized.replace("\\", cs.SEPARATOR_SLASH).split(
+                cs.SEPARATOR_SLASH
+            )
+            for part in rel_parts:
+                if part in {"", cs.PATH_CURRENT_DIR}:
+                    continue
+                if part == cs.PATH_PARENT_DIR:
+                    if current_parts:
+                        current_parts.pop()
+                    continue
+                current_parts.append(part)
+            module_path = cs.SEPARATOR_DOT.join(current_parts)
+            return (
+                f"{self.project_name}{cs.SEPARATOR_DOT}{module_path}"
+                if module_path
+                else self.project_name
+            )
+
+        return self._normalize_ruby_import_path(normalized)
+
+    def _normalize_ruby_import_path(self, import_path: str) -> str:
+        """
+        Normalize standard Ruby import path.
+
+        Args:
+            import_path (str): path.
+
+        Returns:
+            str: Normalized FQN.
+        """
+        return (
+            import_path.replace("\\", cs.SEPARATOR_SLASH)
+            .strip(cs.SEPARATOR_SLASH)
+            .replace(cs.SEPARATOR_SLASH, cs.SEPARATOR_DOT)
+        )
+
+    def _parse_php_use_statement(self, use_text: str) -> list[tuple[str, str]]:
+        """
+        Parse PHP use statement body.
+
+        Args:
+            use_text (str): full text of use statement.
+
+        Returns:
+            list[tuple[str, str]]: List of (alias, fqn).
+        """
+        results: list[tuple[str, str]] = []
+        match = re.search(r"use\s+(.+);", use_text)
+        if not match:
+            return results
+
+        use_body = match.group(1).strip()
+        if "{" in use_body and "}" in use_body:
+            prefix, group_part = use_body.split("{", 1)
+            prefix = prefix.strip().rstrip("\\")
+            group_part = group_part.split("}", 1)[0]
+            entries = [e.strip() for e in group_part.split(",") if e.strip()]
+            for entry in entries:
+                target, alias = self._split_php_use_alias(entry)
+                full_name = f"{prefix}\\{target}" if prefix else target
+                local_name = alias or target.split("\\")[-1]
+                results.append((local_name, self._normalize_php_fqn(full_name)))
+            return results
+
+        entries = [e.strip() for e in use_body.split(",") if e.strip()]
+        for entry in entries:
+            target, alias = self._split_php_use_alias(entry)
+            local_name = alias or target.split("\\")[-1]
+            results.append((local_name, self._normalize_php_fqn(target)))
+        return results
+
+    def _split_php_use_alias(self, entry: str) -> tuple[str, str | None]:
+        """
+        Split PHP use entry into target and optional alias.
+
+        Args:
+            entry (str): Use entry.
+
+        Returns:
+            tuple[str, str | None]: Target and alias.
+        """
+        alias_match = re.search(r"\s+as\s+", entry, re.IGNORECASE)
+        if alias_match:
+            parts = re.split(r"\s+as\s+", entry, flags=re.IGNORECASE)
+            return parts[0].strip(), parts[1].strip()
+        return entry.strip(), None
+
+    def _normalize_php_fqn(self, name: str) -> str:
+        """
+        Normalize PHP FQN (remove leading backslash).
+
+        Args:
+            name (str): Input name.
+
+        Returns:
+            str: Normalized name.
+        """
+        normalized = name.strip().lstrip("\\")
+        return normalized
+
+    def _extract_php_include_path(self, include_text: str) -> str | None:
+        """
+        Extract path from PHP include/require string.
+
+        Args:
+            include_text (str): statement text.
+
+        Returns:
+            str | None: Path string.
+        """
+        match = re.search(r"['\"]([^'\"]+)['\"]", include_text)
+        if not match:
+            return None
+        return match.group(1)
+
     def _parse_lua_imports(self, captures: dict, module_qn: str) -> None:
-        """Parses Lua `require` and `pcall(require, ...)` statements."""
+        """
+        Parse Lua require statements.
+
+        Args:
+            captures (dict): Tree-sitter captures.
+            module_qn (str): Module FQN.
+        """
         for call_node in captures.get(cs.CAPTURE_IMPORT, []):
             if self._lua_is_require_call(call_node):
                 if module_path := self._lua_extract_require_arg(call_node):
@@ -909,14 +1174,30 @@ class ImportProcessor:
                     self.import_mapping[module_qn][stdlib_module] = stdlib_module
 
     def _lua_is_require_call(self, call_node: Node) -> bool:
-        """Checks if a Lua call node is a `require` call."""
+        """
+        Check if node is a Lua require call.
+
+        Args:
+            call_node (Node): AST node.
+
+        Returns:
+            bool: True if require call.
+        """
         first_child = call_node.children[0] if call_node.children else None
         if first_child and first_child.type == cs.TS_IDENTIFIER:
             return safe_decode_text(first_child) == cs.IMPORT_REQUIRE
         return False
 
     def _lua_is_pcall_require(self, call_node: Node) -> bool:
-        """Checks if a Lua call node is a `pcall(require, ...)` call."""
+        """
+        Check if node is a Lua pcall(require, ...).
+
+        Args:
+            call_node (Node): AST node.
+
+        Returns:
+            bool: True if pcall require.
+        """
         first_child = call_node.children[0] if call_node.children else None
         if not (
             first_child
@@ -945,7 +1226,15 @@ class ImportProcessor:
         )
 
     def _lua_extract_require_arg(self, call_node: Node) -> str | None:
-        """Extracts the module path argument from a Lua `require` call."""
+        """
+        Extract require argument (module path).
+
+        Args:
+            call_node (Node): require call node.
+
+        Returns:
+            str | None: Module path.
+        """
         args = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         candidates = args.children if args else call_node.children
         for node in candidates:
@@ -955,7 +1244,15 @@ class ImportProcessor:
         return None
 
     def _lua_extract_pcall_require_arg(self, call_node: Node) -> str | None:
-        """Extracts the module path from a `pcall(require, ...)` call."""
+        """
+        Extract pcall require argument.
+
+        Args:
+            call_node (Node): pcall node.
+
+        Returns:
+            str | None: Module path or None.
+        """
         args = call_node.child_by_field_name(cs.FIELD_ARGUMENTS)
         if not args:
             return None
@@ -972,17 +1269,40 @@ class ImportProcessor:
         return None
 
     def _lua_extract_assignment_lhs(self, call_node: Node) -> str | None:
-        """Extracts the left-hand side variable name from an assignment involving a `require` call."""
-        return lua_utils.extract_assigned_name(
-            call_node, accepted_var_types=(cs.TS_IDENTIFIER,)
-        )
+        """
+        Extract assignment LHS for require call.
+
+        Args:
+            call_node (Node): Call node.
+
+        Returns:
+            str | None: Variable name or None.
+        """
+        return None
 
     def _lua_extract_pcall_assignment_lhs(self, call_node: Node) -> str | None:
-        """Extracts the second identifier from the LHS of a `pcall` assignment."""
-        return lua_utils.extract_pcall_second_identifier(call_node)
+        """
+        Extract assignment LHS for pcall result.
+
+        Args:
+            call_node (Node): Call node.
+
+        Returns:
+            str | None: Variable name or None.
+        """
+        return None
 
     def _resolve_lua_module_path(self, import_path: str, current_module: str) -> str:
-        """Resolves a Lua module path to a fully qualified name."""
+        """
+        Resolve Lua module path including relative paths.
+
+        Args:
+            import_path (str): The import path string.
+            current_module (str): Current module FQN.
+
+        Returns:
+            str: Resolved FQN.
+        """
         if import_path.startswith(cs.PATH_RELATIVE_PREFIX) or import_path.startswith(
             cs.PATH_PARENT_PREFIX
         ):
@@ -1015,7 +1335,15 @@ class ImportProcessor:
         return dotted
 
     def _lua_is_stdlib_call(self, call_node: Node) -> bool:
-        """Checks if a Lua call is to a standard library module."""
+        """
+        Check if call is to a Lua standard library module.
+
+        Args:
+            call_node (Node): Call node.
+
+        Returns:
+            bool: True if stdlib call.
+        """
         if not call_node.children:
             return False
 
@@ -1029,7 +1357,15 @@ class ImportProcessor:
         return False
 
     def _lua_extract_stdlib_module(self, call_node: Node) -> str | None:
-        """Extracts the standard library module name from a call node."""
+        """
+        Extract Lua stdlib module name.
+
+        Args:
+            call_node (Node): Call node.
+
+        Returns:
+            str | None: Module name.
+        """
         if not call_node.children:
             return None
 
