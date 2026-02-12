@@ -105,32 +105,45 @@ class GraphAlgorithms:
         """
         Detects cycles in dependency graph and marks nodes participating in cycles.
         Sets 'has_cycle = true' on nodes that are part of a loop.
+
+        Can be configured with:
+        - CODEGRAPH_CYCLE_LIMIT: Max number of cycles to process (default: 100)
+        - CODEGRAPH_CYCLE_MIN_SIZE: Minimum cycle size to consider (default: 2)
         """
         logger.info("Running MAGE Cycle Detection...")
 
         try:
-            cycle_limit = int(os.getenv("CODEGRAPH_CYCLE_LIMIT", "1000"))
+            cycle_limit = int(os.getenv("CODEGRAPH_CYCLE_LIMIT", "100"))
+            min_cycle_size = int(os.getenv("CODEGRAPH_CYCLE_MIN_SIZE", "2"))
 
             reset_query = """
             MATCH (n) WHERE n.has_cycle = true
-            REMOVE n.has_cycle;
+            REMOVE n.has_cycle, n.cycle_size;
             """
             self.query_engine.execute_write(reset_query)
 
             write_query = f"""
             CALL cycles.get()
             YIELD cycle
-            WHERE cycle IS NOT NULL
-            WITH cycle LIMIT {cycle_limit}
+            WHERE cycle IS NOT NULL AND size(cycle) >= {min_cycle_size}
+            WITH cycle, size(cycle) AS cycle_size
+            ORDER BY cycle_size DESC
+            LIMIT {cycle_limit}
             UNWIND cycle AS n
-            SET n.has_cycle = true
-            RETURN count(DISTINCT n) AS nodes_marked;
+            SET n.has_cycle = true, n.cycle_size = cycle_size
+            RETURN count(DISTINCT n) AS nodes_marked,
+                   max(cycle_size) AS max_cycle_size,
+                   min(cycle_size) AS min_cycle_size,
+                   avg(cycle_size) AS avg_cycle_size;
             """
 
             result = self.query_engine.fetch_all(write_query)
             if result and result[0].get("nodes_marked", 0) > 0:
+                stats = result[0]
                 logger.info(
-                    f"MAGE Cycle Detection completed: {result[0]['nodes_marked']} nodes marked (max {cycle_limit} cycles)."
+                    f"MAGE Cycle Detection completed: {stats['nodes_marked']} nodes marked "
+                    f"(cycle sizes: {stats['min_cycle_size']}-{stats['max_cycle_size']}, "
+                    f"avg: {stats['avg_cycle_size']:.1f}, limit: {cycle_limit})"
                 )
             else:
                 logger.info("MAGE Cycle Detection completed: No cycles found.")
