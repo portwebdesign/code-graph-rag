@@ -15,6 +15,8 @@ from codebase_rag.data_models.types_defs import (
 from codebase_rag.infrastructure.language_spec import LanguageSpec
 from codebase_rag.services import IngestorProtocol
 
+from .utils import normalize_query_captures
+
 
 class ReparseRegistryResolver:
     """
@@ -116,7 +118,7 @@ class ReparseRegistryResolver:
 
         module_qn = self._module_qn_for_path(file_path)
         cursor = QueryCursor(calls_query)
-        captures = cursor.captures(root_node)
+        captures = normalize_query_captures(cursor.captures(root_node))
         call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
         for call_node in call_nodes:

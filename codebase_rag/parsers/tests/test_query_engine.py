@@ -212,11 +212,15 @@ class MyClass:
 
         assert len(captures) > 0
 
-        func_names = [
-            c[1].text.decode()
-            for c in captures
-            if c[0] == "defined_function"  # ty: ignore[possibly-missing-attribute]
-        ]
+        func_names = []
+        for capture_name, node in captures:
+            if capture_name != "defined_function":
+                continue
+            text = node.text
+            if isinstance(text, bytes):
+                func_names.append(text.decode())
+            elif text is not None:
+                func_names.append(str(text))
         assert "foo" in func_names
 
     def test_javascript_query(self):

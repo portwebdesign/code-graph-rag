@@ -11,6 +11,7 @@ from tree_sitter import Node, Query, QueryCursor
 from codebase_rag.core import constants as cs
 
 from .cache_manager import CacheManager
+from .utils import normalize_query_captures
 
 _SCM_LANGUAGE_ALIAS: dict[str, str] = {
     cs.SupportedLanguage.CSHARP.value: "csharp",
@@ -301,7 +302,7 @@ class QueryEngine:
 
         try:
             cursor = QueryCursor(query)
-            captures = cursor.captures(node)
+            captures = normalize_query_captures(cursor.captures(node))
             results: list[tuple[str, Node]] = []
             for capture_name, nodes in captures.items():
                 results.extend((capture_name, capture_node) for capture_node in nodes)

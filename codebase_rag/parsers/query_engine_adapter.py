@@ -268,6 +268,129 @@ _SCM_LANGUAGE_ALIAS: dict[cs.SupportedLanguage, str] = {
     cs.SupportedLanguage.CSHARP: "csharp",
 }
 
+_CAPTURE_ALIAS_MAP: dict[str, tuple[str, ...]] = {
+    "functions": (
+        "function_definition",
+        "async_function_definition",
+        "generator_definition",
+        "function_expression_definition",
+        "arrow_function_definition",
+        "method_definition",
+        "function_declaration",
+        "async_function",
+        "generator_function",
+        "arrow_function",
+        "function_definitions",
+        "method_definitions",
+        "async_functions",
+        "function_declarations",
+        "constructor_declarations",
+        "destructor_declarations",
+        "lambda_expressions",
+        "method",
+        "constructor",
+        "local_function",
+        "lambda",
+        "anonymous_method",
+        "instance_method_node",
+        "class_method_node",
+        "function_node",
+        "method_node",
+    ),
+    "classes": (
+        "class_definition",
+        "class_expression",
+        "interface_definition",
+        "enum_definition",
+        "type_alias",
+        "class_declarations",
+        "interface_declarations",
+        "enum_declarations",
+        "record_declarations",
+        "annotation_type_declarations",
+        "struct_declarations",
+        "union_declarations",
+        "trait_declarations",
+        "impl_blocks",
+        "macro_definitions",
+        "class_definitions",
+        "struct_definitions",
+        "union_definitions",
+        "enum_definitions",
+        "class",
+        "struct",
+        "interface",
+        "record",
+        "class_node",
+        "interface_node",
+        "enum_node",
+        "type_alias_node",
+        "module_definitions",
+        "module_node",
+        "element_definition",
+    ),
+    "calls": (
+        "call_edge",
+        "method_call_edge",
+        "constructor_call_edge",
+        "call_expression",
+        "method_call",
+        "constructor_call",
+        "method_invocations",
+        "object_creation",
+        "method_references",
+        "call_expressions",
+        "method_calls",
+        "macro_invocations",
+        "function_calls",
+        "call",
+        "member_call",
+        "linq_call",
+        "minimal_api_call",
+        "infix_calls",
+        "apply_calls",
+        "coroutine_calls",
+        "select_statement",
+        "insert_statement",
+        "update_statement",
+        "delete_statement",
+        "v_if_directive",
+        "v_for_directive",
+        "v_model_directive",
+        "event_handler",
+    ),
+    "imports": (
+        "import_edge",
+        "named_import_edge",
+        "export_edge",
+        "import_statement",
+        "named_import",
+        "export_statement",
+        "import_statements",
+        "use_statements",
+        "include_directives",
+        "module_imports",
+        "import",
+        "require_statements",
+        "imports",
+        "external_scripts",
+        "css_links",
+        "import_script",
+        "parent_child_key_edge",
+        "key_value_pair",
+        "from_clause",
+        "join_clause",
+        "include_statements",
+        "namespaces",
+        "copy_instruction",
+        "copy_package_json",
+        "copy_requirements",
+        "copy_go_mod",
+        "copy_cargo_toml",
+        "copy_pyproject",
+    ),
+}
+
 
 def _parse_scm_queries(scm_text: str) -> dict[str, str]:
     """
@@ -306,6 +429,26 @@ def _combine_queries(query_strings: Iterable[str]) -> str:
         str: The combined query string.
     """
     return "\n\n".join(q for q in query_strings if q)
+
+
+def _normalize_query_captures(
+    query_strings: Iterable[str],
+    standard_capture: str,
+    aliases: Iterable[str],
+) -> str:
+    normalized_parts: list[str] = []
+    for query_text in query_strings:
+        if not query_text:
+            continue
+        normalized = query_text
+        for alias in aliases:
+            normalized = normalized.replace(f"@{alias}", f"@{standard_capture}")
+        normalized_parts.append(normalized)
+
+    combined = _combine_queries(normalized_parts)
+    if f"@{standard_capture}" not in combined:
+        return ""
+    return combined
 
 
 def _compile_query(language: Language, query_text: str) -> Query | None:
@@ -373,18 +516,35 @@ def _apply_language_override(
     overrides: dict[str, Query | None] = {}
     query_names = _QUERY_NAME_MAP[language]
 
+    standard_captures = {
+        "functions": cs.CAPTURE_FUNCTION,
+        "classes": cs.CAPTURE_CLASS,
+        "calls": cs.CAPTURE_CALL,
+        "imports": cs.CAPTURE_IMPORT,
+    }
+
     for key in ("functions", "classes", "calls", "imports"):
         name_or_names = query_names.get(key)
         if not name_or_names:
             continue
 
+        alias_list: list[str] = list(_CAPTURE_ALIAS_MAP.get(key, ()))
         if isinstance(name_or_names, list):
+            alias_list.extend(name_or_names)
             parts = [scm_queries.get(name, "") for name in name_or_names]
-            combined = _combine_queries(parts)
-            overrides[key] = _compile_query(language_obj, combined)
         else:
-            query_text = scm_queries.get(name_or_names, "")
-            overrides[key] = _compile_query(language_obj, query_text)
+            alias_list.append(name_or_names)
+            parts = [scm_queries.get(name_or_names, "")]
+
+        normalized = _normalize_query_captures(
+            parts,
+            standard_captures[key],
+            dict.fromkeys(alias_list),
+        )
+
+        overrides[key] = (
+            _compile_query(language_obj, normalized) if normalized else None
+        )
 
     merged: LanguageQueries = {
         "functions": overrides.get("functions") or base_queries["functions"],

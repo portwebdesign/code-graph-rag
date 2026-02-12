@@ -13,17 +13,16 @@
 
 @query: function_definition
 (function_definition
-  name: (identifier) @defined_function
+  name: (identifier) @function_name
   parameters: (parameters)? @function_params
-  body: (block)? @function_body) @function_definition
+  body: (block)? @function_body) @function
 
 
 @query: async_function_definition
-(function_definition
-  "async"
-  name: (identifier) @defined_async_function
+(async_function_definition
+  name: (identifier) @function_name
   parameters: (parameters)? @function_params
-  body: (block)? @function_body) @async_function_definition
+  body: (block)? @function_body) @function
 
 
 @query: method_definition
@@ -31,16 +30,16 @@
   name: (identifier) @class_name
   body: (block
     (function_definition
-      name: (identifier) @defined_method
+      name: (identifier) @method_name
       parameters: (parameters)? @method_params
-      body: (block)? @method_body) @method_definition))
+      body: (block)? @method_body) @function))
 
 
 @query: class_definition
 (class_definition
-  name: (identifier) @defined_class
+  name: (identifier) @class_name
   (argument_list)? @base_list
-  body: (block)? @class_body) @class_definition
+  body: (block)? @class_body) @class
 
 
 @query: inheritance_edge
@@ -69,7 +68,13 @@
 (import_statement
   (aliased_import
     name: (dotted_name) @imported_module
-    alias: (identifier)? @import_alias)) @import_edge
+    alias: (identifier)? @import_alias)) @import
+
+(import_from_statement
+  module_name: (dotted_name)? @from_module
+  (aliased_import
+    name: (identifier) @imported_name
+    alias: (identifier)? @import_alias)) @import
 
 
 ; (import_from_statement) @import_from_edge -- BROKEN PATTERN
@@ -188,7 +193,7 @@
 @query: call_edge
 (call
   function: (identifier) @callee
-  arguments: (argument_list)? @call_args) @call_edge
+  arguments: (argument_list)? @call_args) @call
 
 
 @query: method_call_edge
@@ -197,7 +202,7 @@
     (attribute
       object: (_) @caller_object
       attribute: (identifier) @callee_method)
-  arguments: (argument_list)? @call_args) @method_call_edge
+  arguments: (argument_list)? @call_args) @call
 
 
 @query: chained_call_edge

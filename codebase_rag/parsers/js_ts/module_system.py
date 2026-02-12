@@ -15,6 +15,7 @@ from codebase_rag.infrastructure.language_spec import get_language_spec_for_path
 
 from ..utils import (
     ingest_exported_function,
+    normalize_query_captures,
     safe_decode_text,
     safe_decode_with_fallback,
 )
@@ -82,7 +83,7 @@ class JsTsModuleSystemMixin:
             try:
                 query = Query(language_obj, cs.JS_COMMONJS_DESTRUCTURE_QUERY)
                 cursor = QueryCursor(query)
-                captures = cursor.captures(root_node)
+                captures = normalize_query_captures(cursor.captures(root_node))
 
                 variable_declarators = captures.get(cs.CAPTURE_VARIABLE_DECLARATOR, [])
 
@@ -382,8 +383,8 @@ class JsTsModuleSystemMixin:
 
         for query_text in query_texts:
             try:
-                captures = QueryCursor(Query(language_obj, query_text)).captures(
-                    root_node
+                captures = normalize_query_captures(
+                    QueryCursor(Query(language_obj, query_text)).captures(root_node)
                 )
 
                 self._process_exports_pattern(
@@ -420,6 +421,8 @@ class JsTsModuleSystemMixin:
             language: The supported language.
             queries: Dictionary of language queries.
         """
+        if language not in cs.JS_TS_LANGUAGES:
+            return
         try:
             lang_query = queries[language][cs.QUERY_LANGUAGE]
             file_path = self.module_qn_to_file_path.get(module_qn)
@@ -437,7 +440,7 @@ class JsTsModuleSystemMixin:
                     cleaned_query = textwrap.dedent(query_text).strip()
                     query = Query(lang_query, cleaned_query)
                     cursor = QueryCursor(query)
-                    captures = cursor.captures(root_node)
+                    captures = normalize_query_captures(cursor.captures(root_node))
 
                     export_names = captures.get(cs.CAPTURE_EXPORT_NAME, [])
                     export_functions = captures.get(cs.CAPTURE_EXPORT_FUNCTION, [])

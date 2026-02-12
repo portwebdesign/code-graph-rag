@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -79,6 +80,7 @@ class FrameworkLinker:
         self.simple_name_lookup = simple_name_lookup
         self._template_index: dict[str, str] | None = None
         self._asset_index: dict[str, str] | None = None
+        self._env_values = self._load_env_values()
 
     def link_repo(self) -> None:
         """
@@ -178,21 +180,190 @@ class FrameworkLinker:
             return f"{prefix}/{path}"
         return f"{prefix}{path}"
 
+    def _load_env_values(self) -> dict[str, str]:
+        candidates = (
+            ".env",
+            ".env.local",
+            ".env.development",
+            ".env.production",
+            ".env.test",
+        )
+        values: dict[str, str] = {}
+        for name in candidates:
+            path = self.repo_path / name
+            if not path.exists():
+                continue
+            values.update(self._parse_env_file(path))
+        return values
+
+    @staticmethod
+    def _parse_env_file(path: Path) -> dict[str, str]:
+        values: dict[str, str] = {}
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return values
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("export "):
+                stripped = stripped[len("export ") :]
+            if "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key:
+                values[key] = value
+        return values
+
+    def _resolve_env_value(self, raw: str) -> str:
+        if not raw:
+            return raw
+        pattern = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+
+        def replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            if key in self._env_values:
+                return self._env_values[key]
+            return os.environ.get(key, "")
+
+        return pattern.sub(replace, raw)
+
+    def _resolve_env_expression(self, raw: str) -> str:
+        if not raw:
+            return raw
+        resolved = raw
+        env_pattern = re.compile(
+            r"(?:process\.env|import\.meta\.env)\.([A-Za-z_][A-Za-z0-9_]*)"
+        )
+
+        def replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            if key in self._env_values:
+                return self._env_values[key]
+            return os.environ.get(key, "")
+
+        resolved = env_pattern.sub(replace, resolved)
+        return self._resolve_env_value(resolved)
+
+    @staticmethod
+    def _normalize_template_literal(raw: str) -> str:
+        if not raw:
+            return raw
+        return re.sub(r"\$\{[^}]+\}", "{param}", raw)
+
+    @staticmethod
+    def _join_url(base_url: str, path: str) -> str:
+        if not base_url:
+            return path
+        if not path:
+            return base_url
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", path) or path.startswith("//"):
+            return path
+        if base_url.endswith("/") and path.startswith("/"):
+            return f"{base_url[:-1]}{path}"
+        if not base_url.endswith("/") and not path.startswith("/"):
+            return f"{base_url}/{path}"
+        return f"{base_url}{path}"
+
+    def _resolve_request_path(self, raw_path: str, base_url: str | None) -> str:
+        resolved = self._resolve_env_expression(raw_path)
+        resolved = self._normalize_template_literal(resolved)
+        return self._join_url(base_url or "", resolved)
+
+    def _normalize_endpoint_path(
+        self, raw_path: str
+    ) -> tuple[str, str | None, str | None]:
+        if not raw_path:
+            return "", None, None
+        resolved = self._resolve_env_expression(raw_path)
+        resolved = self._normalize_template_literal(resolved)
+        base_url = None
+        path = resolved
+        match = re.match(r"^(https?://[^/]+)(/.*)?$", resolved)
+        if match:
+            base_url = match.group(1)
+            path = match.group(2) or "/"
+        path = path.replace("\\", "/")
+        path = re.sub(r"\{[^/]+\}", "{param}", path)
+        path = re.sub(r"\[[^/]+\]", "{param}", path)
+        path = re.sub(r":[A-Za-z_][A-Za-z0-9_]*", "{param}", path)
+        path = re.sub(r"\$\{[^}]+\}", "{param}", path)
+        path = re.sub(r"//+", "/", path)
+        if path and not path.startswith("/"):
+            path = f"/{path}"
+        if len(path) > 1 and path.endswith("/"):
+            path = path[:-1]
+        return path, base_url, raw_path
+
+    def _extract_js_constants(self, source: str) -> dict[str, str]:
+        pattern = re.compile(
+            r"(?:const|let|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[^;]+);"
+        )
+        values: dict[str, str] = {}
+        for match in pattern.finditer(source):
+            name = match.group("name")
+            if not name:
+                continue
+            upper_name = name.upper()
+            if (
+                "API" not in upper_name
+                and "BASE" not in upper_name
+                and "URL" not in upper_name
+            ):
+                continue
+            raw_value = match.group("value").strip()
+            value = self._resolve_env_expression(raw_value.strip("'\"`"))
+            if value:
+                values[name] = value
+        return values
+
+    def _extract_js_base_urls(self, source: str) -> dict[str, str]:
+        aliases: dict[str, str] = {}
+        constants = self._extract_js_constants(source)
+        pattern = re.compile(
+            r"(?:const|let|var)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*axios\.create\(\s*\{[^}]*baseURL\s*:\s*(?P<value>[^,}]+)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        for match in pattern.finditer(source):
+            name = match.group("name")
+            raw_value = match.group("value").strip()
+            cleaned = raw_value.strip("'\"`")
+            value = constants.get(cleaned) or self._resolve_env_expression(cleaned)
+            if value:
+                aliases[name] = value
+        return aliases
+
     def _ensure_endpoint_node(self, endpoint: EndpointMatch, relative_path: str) -> str:
         """Creates an endpoint node in the graph and returns its qualified name."""
-        endpoint_qn = self._endpoint_qn(
-            endpoint.framework, endpoint.method, endpoint.path
+        normalized_path, base_url, raw_path = self._normalize_endpoint_path(
+            endpoint.path
         )
+        endpoint_path = normalized_path or endpoint.path
+        endpoint_qn = self._endpoint_qn(
+            endpoint.framework, endpoint.method, endpoint_path
+        )
+        props = {
+            cs.KEY_QUALIFIED_NAME: endpoint_qn,
+            cs.KEY_NAME: f"{endpoint.method} {endpoint_path}",
+            cs.KEY_PATH: relative_path,
+            cs.KEY_FRAMEWORK: endpoint.framework,
+            cs.KEY_HTTP_METHOD: endpoint.method,
+            cs.KEY_ROUTE_PATH: endpoint_path,
+        }
+        if normalized_path and normalized_path != endpoint.path:
+            props[cs.KEY_NORMALIZED_PATH] = normalized_path
+        if raw_path and raw_path != endpoint_path:
+            props[cs.KEY_RAW_PATH] = raw_path
+        if base_url:
+            props[cs.KEY_BASE_URL] = base_url
+        if endpoint.metadata:
+            props.update(endpoint.metadata)
         self.ingestor.ensure_node_batch(
             cs.NodeLabel.ENDPOINT,
-            {
-                cs.KEY_QUALIFIED_NAME: endpoint_qn,
-                cs.KEY_NAME: f"{endpoint.method} {endpoint.path}",
-                cs.KEY_PATH: relative_path,
-                cs.KEY_FRAMEWORK: endpoint.framework,
-                cs.KEY_HTTP_METHOD: endpoint.method,
-                cs.KEY_ROUTE_PATH: endpoint.path,
-            },
+            props,
         )
         return endpoint_qn
 
@@ -1305,23 +1476,40 @@ class FrameworkLinker:
                     {cs.KEY_RELATION_TYPE: "http_request"},
                 )
 
-    @staticmethod
-    def _extract_js_requests(source: str) -> list[EndpointMatch]:
-        """Extracts API requests from JS code (fetch, axios)."""
+    def _extract_js_requests(self, source: str) -> list[EndpointMatch]:
+        """Extracts API requests from JS code (fetch, axios, GraphQL clients)."""
         endpoints: list[EndpointMatch] = []
+        base_aliases = self._extract_js_base_urls(source)
         fetch_pattern = re.compile(
             r"fetch\s*\(\s*['\"]([^'\"]+)['\"](\s*,\s*\{([^}]*)\})?",
             re.IGNORECASE,
         )
+        fetch_template_pattern = re.compile(
+            r"fetch\s*\(\s*`([^`]+)`(\s*,\s*\{([^}]*)\})?",
+            re.IGNORECASE,
+        )
         method_pattern = re.compile(
-            r"method\s*:\s*['\"](GET|POST|PUT|DELETE|PATCH)['\"]", re.IGNORECASE
+            r"method\s*:\s*['\"](GET|POST|PUT|DELETE|PATCH)['\"]",
+            re.IGNORECASE,
         )
         for match in fetch_pattern.finditer(source):
-            path = match.group(1)
+            raw_path = match.group(1)
             options = match.group(3) or ""
             method_match = method_pattern.search(options)
             method = (method_match.group(1) if method_match else "GET").upper()
-            endpoints.append(EndpointMatch(framework="http", method=method, path=path))
+            resolved = self._resolve_request_path(raw_path, None)
+            endpoints.append(
+                EndpointMatch(framework="http", method=method, path=resolved)
+            )
+        for match in fetch_template_pattern.finditer(source):
+            raw_path = match.group(1)
+            options = match.group(3) or ""
+            method_match = method_pattern.search(options)
+            method = (method_match.group(1) if method_match else "GET").upper()
+            resolved = self._resolve_request_path(raw_path, None)
+            endpoints.append(
+                EndpointMatch(framework="http", method=method, path=resolved)
+            )
 
         axios_pattern = re.compile(
             r"axios\.(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
@@ -1329,8 +1517,57 @@ class FrameworkLinker:
         )
         for match in axios_pattern.finditer(source):
             method = match.group(1).upper()
-            path = match.group(2)
-            endpoints.append(EndpointMatch(framework="http", method=method, path=path))
+            raw_path = match.group(2)
+            resolved = self._resolve_request_path(raw_path, None)
+            endpoints.append(
+                EndpointMatch(framework="http", method=method, path=resolved)
+            )
+
+        for alias, base_url in base_aliases.items():
+            alias_pattern = re.compile(
+                rf"\b{re.escape(alias)}\.(get|post|put|delete|patch)\s*\(\s*['\"]([^'\"]+)['\"]",
+                re.IGNORECASE,
+            )
+            for match in alias_pattern.finditer(source):
+                method = match.group(1).upper()
+                raw_path = match.group(2)
+                resolved = self._resolve_request_path(raw_path, base_url)
+                endpoints.append(
+                    EndpointMatch(framework="http", method=method, path=resolved)
+                )
+
+        graphql_client_pattern = re.compile(
+            r"new\s+GraphQLClient\s*\(\s*(['\"])(?P<url>[^'\"]+)\1",
+            re.IGNORECASE,
+        )
+        for match in graphql_client_pattern.finditer(source):
+            raw_url = match.group("url")
+            resolved = self._resolve_request_path(raw_url, None)
+            endpoints.append(
+                EndpointMatch(framework="graphql", method="POST", path=resolved)
+            )
+
+        apollo_pattern = re.compile(
+            r"ApolloClient\s*\(\s*\{[^}]*uri\s*:\s*(['\"])(?P<url>[^'\"]+)\1",
+            re.IGNORECASE | re.DOTALL,
+        )
+        for match in apollo_pattern.finditer(source):
+            raw_url = match.group("url")
+            resolved = self._resolve_request_path(raw_url, None)
+            endpoints.append(
+                EndpointMatch(framework="graphql", method="POST", path=resolved)
+            )
+
+        urql_pattern = re.compile(
+            r"createClient\s*\(\s*\{[^}]*url\s*:\s*(['\"])(?P<url>[^'\"]+)\1",
+            re.IGNORECASE | re.DOTALL,
+        )
+        for match in urql_pattern.finditer(source):
+            raw_url = match.group("url")
+            resolved = self._resolve_request_path(raw_url, None)
+            endpoints.append(
+                EndpointMatch(framework="graphql", method="POST", path=resolved)
+            )
 
         return endpoints
 

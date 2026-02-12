@@ -1,3 +1,4 @@
+from .api_call_chain import ApiCallChainModule
 from .api_compliance import ApiComplianceModule
 from .base_module import AnalysisContext, AnalysisModule
 from .complexity import ComplexityModule
@@ -17,6 +18,7 @@ from .security import SecurityModule
 __all__ = [
     "AnalysisContext",
     "AnalysisModule",
+    "ApiCallChainModule",
     "ComplexityModule",
     "DeadCodeModule",
     "DeadCodeAIModule",

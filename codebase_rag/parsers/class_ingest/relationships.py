@@ -105,6 +105,22 @@ def create_inheritance_relationship(
     Create an `INHERITS` relationship between a child class and a parent class.
     """
     parent_type = get_node_type_for_inheritance(parent_qn, function_registry)
+    if parent_qn not in function_registry:
+        parent_name = parent_qn.split(cs.SEPARATOR_DOUBLE_COLON)[-1].split(
+            cs.SEPARATOR_DOT
+        )[-1]
+        ingestor.ensure_node_batch(
+            parent_type,
+            {
+                cs.KEY_QUALIFIED_NAME: parent_qn,
+                cs.KEY_NAME: parent_name,
+                cs.KEY_IS_EXTERNAL: True,
+            },
+        )
+        try:
+            function_registry[parent_qn] = NodeType.CLASS
+        except Exception:
+            pass
     ingestor.ensure_relationship_batch(
         (child_node_type, cs.KEY_QUALIFIED_NAME, child_qn),
         cs.RelationshipType.INHERITS,

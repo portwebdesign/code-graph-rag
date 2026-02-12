@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
@@ -34,6 +34,48 @@ class FunctionCapturesResult(NamedTuple):
     captures: dict[str, list[ASTNode]]
 
 
+def iter_query_captures(
+    raw_captures: Iterable[object] | dict[str, list[ASTNode]] | None,
+) -> list[tuple[ASTNode, str]]:
+    if raw_captures is None:
+        return []
+    if isinstance(raw_captures, dict):
+        pairs: list[tuple[ASTNode, str]] = []
+        for name, nodes in raw_captures.items():
+            if not isinstance(name, str) or not isinstance(nodes, list):
+                continue
+            pairs.extend((node, name) for node in nodes if isinstance(node, Node))
+        return pairs
+
+    pairs = []
+    for item in raw_captures:
+        node = None
+        name = None
+        if hasattr(item, "node") and hasattr(item, "name"):
+            node = getattr(item, "node", None)
+            name = getattr(item, "name", None)
+        elif hasattr(item, "node") and hasattr(item, "capture_name"):
+            node = getattr(item, "node", None)
+            name = getattr(item, "capture_name", None)
+        elif isinstance(item, tuple | list) and len(item) >= 2:
+            node = item[0]
+            name = item[1]
+
+        if isinstance(node, Node) and isinstance(name, str):
+            pairs.append((node, name))
+
+    return pairs
+
+
+def normalize_query_captures(
+    raw_captures: Iterable[object] | dict[str, list[ASTNode]] | None,
+) -> dict[str, list[ASTNode]]:
+    captures_dict: dict[str, list[ASTNode]] = {}
+    for node, capture_name in iter_query_captures(raw_captures):
+        captures_dict.setdefault(capture_name, []).append(node)
+    return captures_dict
+
+
 def get_function_captures(
     root_node: ASTNode,
     language: cs.SupportedLanguage,
@@ -57,7 +99,7 @@ def get_function_captures(
         return None
 
     cursor = QueryCursor(query)
-    captures = cursor.captures(root_node)
+    captures = normalize_query_captures(cursor.captures(root_node))
     return FunctionCapturesResult(lang_config, captures)
 
 

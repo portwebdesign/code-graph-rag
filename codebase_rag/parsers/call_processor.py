@@ -23,7 +23,12 @@ from .cpp import utils as cpp_utils
 from .dynamic_call_resolver import DynamicCallResolver
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
-from .utils import get_function_captures, is_method_node, safe_decode_text
+from .utils import (
+    get_function_captures,
+    is_method_node,
+    normalize_query_captures,
+    safe_decode_text,
+)
 
 
 class CallProcessor:
@@ -123,6 +128,8 @@ class CallProcessor:
             language (cs.SupportedLanguage): The language of the file.
             queries (dict[cs.SupportedLanguage, LanguageQueries]): Dictionary of queries.
         """
+        if language in {cs.SupportedLanguage.JSON, cs.SupportedLanguage.YAML}:
+            return
         relative_path = file_path.relative_to(self.repo_path)
         logger.debug(ls.CALL_PROCESSING_FILE.format(path=relative_path))
 
@@ -291,7 +298,7 @@ class CallProcessor:
         if not method_query:
             return
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = normalize_query_captures(method_cursor.captures(body_node))
         method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         for method_node in method_nodes:
             if not isinstance(method_node, Node):
@@ -336,7 +343,7 @@ class CallProcessor:
         if not query:
             return
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = normalize_query_captures(cursor.captures(root_node))
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
         for class_node in class_nodes:
@@ -430,7 +437,7 @@ class CallProcessor:
             local_var_types = {}
 
         cursor = QueryCursor(calls_query)
-        captures = cursor.captures(root_node)
+        captures = normalize_query_captures(cursor.captures(root_node))
         call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
         for call_node in call_nodes:
@@ -462,6 +469,9 @@ class CallProcessor:
                 callee_type, callee_qn = self._ensure_placeholder_function(call_name)
             else:
                 continue
+
+            if callee_qn.startswith(f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"):
+                self._ensure_external_callee(callee_type, callee_qn)
 
             self.ingestor.ensure_relationship_batch(
                 (cs.NodeLabel.FILE, cs.KEY_PATH, relative_path),
@@ -526,6 +536,17 @@ class CallProcessor:
             },
         )
         return cs.NodeLabel.FUNCTION, placeholder_qn
+
+    def _ensure_external_callee(self, callee_type: str, callee_qn: str) -> None:
+        callee_name = callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
+        self.ingestor.ensure_node_batch(
+            callee_type,
+            {
+                cs.KEY_QUALIFIED_NAME: callee_qn,
+                cs.KEY_NAME: callee_name,
+                cs.KEY_IS_EXTERNAL: True,
+            },
+        )
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """
@@ -645,7 +666,7 @@ class CallProcessor:
             local_var_types = {}
 
         cursor = QueryCursor(calls_query)
-        captures = cursor.captures(caller_node)
+        captures = normalize_query_captures(cursor.captures(caller_node))
         call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
         logger.debug(
@@ -687,6 +708,9 @@ class CallProcessor:
                 callee_type, callee_qn = operator_info
             else:
                 continue
+
+            if callee_qn.startswith(f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"):
+                self._ensure_external_callee(callee_type, callee_qn)
             logger.debug(
                 ls.CALL_FOUND.format(
                     caller=caller_qn,
@@ -721,6 +745,11 @@ class CallProcessor:
         Returns:
             str | None: The qualified name or None.
         """
+        if lang_config.language in {
+            cs.SupportedLanguage.JSON,
+            cs.SupportedLanguage.YAML,
+        }:
+            return None
         path_parts: list[str] = []
         current = func_node.parent
 

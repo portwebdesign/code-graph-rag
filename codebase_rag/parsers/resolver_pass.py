@@ -19,6 +19,7 @@ from codebase_rag.services import IngestorProtocol
 
 from .import_processor import ImportProcessor
 from .pre_scanner import PreScanIndex
+from .utils import normalize_query_captures
 
 
 class ResolverPass:
@@ -193,8 +194,8 @@ class ResolverPass:
         captures_fn = getattr(query, "captures", None)
         if captures_fn is None:
             return
-        captures = captures_fn(root_node)
-        tags = [node for node, name in captures if name == "tag"]
+        captures = normalize_query_captures(captures_fn(root_node))
+        tags = captures.get("tag", [])
         if not tags:
             return
 
@@ -228,7 +229,7 @@ class ResolverPass:
         captures_fn = getattr(query, "captures", None)
         if captures_fn is None:
             return
-        captures = captures_fn(root_node)
+        captures = normalize_query_captures(captures_fn(root_node))
         if not captures:
             return
 
@@ -262,7 +263,7 @@ class ResolverPass:
             return
 
         cursor = QueryCursor(query)
-        captures = cursor.captures(cast(Node, root_node))
+        captures = normalize_query_captures(cursor.captures(cast(Node, root_node)))
         if not captures:
             return
 

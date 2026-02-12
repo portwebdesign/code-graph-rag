@@ -25,7 +25,7 @@ def extract_source_lines(
         with open(file_path, encoding=encoding) as f:
             lines = f.readlines()
 
-            if start_line > len(lines) or end_line > len(lines):
+            if start_line > len(lines):
                 logger.warning(
                     ls.SOURCE_RANGE_EXCEEDS.format(
                         start=start_line,
@@ -35,6 +35,8 @@ def extract_source_lines(
                     )
                 )
                 return None
+
+            end_line = min(end_line, len(lines))
 
             extracted_lines = lines[start_line - 1 : end_line]
             return "".join(extracted_lines).strip()

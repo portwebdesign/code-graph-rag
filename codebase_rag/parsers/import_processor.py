@@ -20,7 +20,7 @@ from .stdlib_extractor import (
     load_persistent_cache,
     save_persistent_cache,
 )
-from .utils import safe_decode_text, safe_decode_with_fallback
+from .utils import normalize_query_captures, safe_decode_text, safe_decode_with_fallback
 
 if TYPE_CHECKING:
     from codebase_rag.data_models.types_defs import (
@@ -269,16 +269,7 @@ class ImportProcessor:
             return
 
         cursor = QueryCursor(import_query)
-        raw_captures = cursor.captures(root_node)
-        captures_dict: dict[str, list[Node]] = {}
-
-        for node, capture_name in raw_captures:
-            if not isinstance(node, Node):
-                continue
-            if capture_name not in captures_dict:
-                captures_dict[capture_name] = []
-            captures_dict[capture_name].append(node)
-
+        captures_dict = normalize_query_captures(cursor.captures(root_node))
         self.process_imports(captures_dict, module_qn, lang_config, language)
 
     def process_imports(

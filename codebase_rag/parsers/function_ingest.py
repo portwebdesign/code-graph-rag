@@ -717,6 +717,11 @@ class FunctionIngestMixin:
         Returns:
             str | None: Nested FQN.
         """
+        if lang_config.language in {
+            cs.SupportedLanguage.JSON,
+            cs.SupportedLanguage.YAML,
+        }:
+            return None
         current = func_node.parent
         if not isinstance(current, Node):
             logger.warning(

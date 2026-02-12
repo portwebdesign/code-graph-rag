@@ -481,6 +481,11 @@ def _is_windows_unsupported(lang_name: cs.SupportedLanguage) -> bool:
     return lang_name in {
         cs.SupportedLanguage.GRAPHQL,
         cs.SupportedLanguage.VUE,
+        cs.SupportedLanguage.RUBY,
+        cs.SupportedLanguage.KOTLIN,
+        cs.SupportedLanguage.SCSS,
+        cs.SupportedLanguage.CSHARP,
+        cs.SupportedLanguage.DOCKERFILE,
     }
 
 

@@ -16,6 +16,7 @@ class AgenticToolName(StrEnum):
     SEMANTIC_SEARCH = "semantic_search"
     GET_FUNCTION_SOURCE = "get_function_source"
     GET_CODE_SNIPPET = "get_code_snippet"
+    CONTEXT7_DOCS = "context7_docs"
 
 
 ANALYZE_DOCUMENT = (
@@ -57,6 +58,8 @@ GET_FUNCTION_SOURCE = (
     "Retrieves the source code for a specific function or method using its internal node ID, "
     "typically obtained from a semantic search result."
 )
+
+CONTEXT7_DOCS = "Fetches reference documentation from Context7 and caches it in the graph for reuse."
 
 FILE_READER = (
     "Reads the content of text-based files. "
@@ -156,4 +159,5 @@ AGENTIC_TOOLS: dict[AgenticToolName, str] = {
     AgenticToolName.SEMANTIC_SEARCH: SEMANTIC_SEARCH,
     AgenticToolName.GET_FUNCTION_SOURCE: GET_FUNCTION_SOURCE,
     AgenticToolName.GET_CODE_SNIPPET: CODE_RETRIEVAL,
+    AgenticToolName.CONTEXT7_DOCS: CONTEXT7_DOCS,
 }

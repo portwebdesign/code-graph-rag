@@ -31,6 +31,11 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
         "url": "https://platform.openai.com/api-keys",
         "name": "OpenAI",
     },
+    cs.Provider.DEEPSEEK: {
+        "env_var": "DEEPSEEK_API_KEY",
+        "url": "https://platform.deepseek.com/",
+        "name": "DeepSeek",
+    },
     cs.Provider.ANTHROPIC: {
         "env_var": "ANTHROPIC_API_KEY",
         "url": "https://console.anthropic.com/settings/keys",

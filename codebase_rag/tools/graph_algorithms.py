@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Protocol
 
 from loguru import logger
@@ -31,10 +32,9 @@ class GraphAlgorithms:
         self._mage_checked = True
         last_error: Exception | None = None
         checks = (
-            "CALL mage.procedures() YIELD name RETURN name LIMIT 1",
-            "CALL mg.procedures() YIELD name WHERE name STARTS WITH 'pagerank' RETURN name LIMIT 1",
-            "CALL mg.procedures() YIELD name WHERE name STARTS WITH 'community_detection' RETURN name LIMIT 1",
-            "CALL mg.procedures() YIELD name WHERE name STARTS WITH 'cycles' RETURN name LIMIT 1",
+            "CALL mg.procedures() YIELD name WITH name WHERE name STARTS WITH 'pagerank' RETURN name LIMIT 1",
+            "CALL mg.procedures() YIELD name WITH name WHERE name STARTS WITH 'community_detection' RETURN name LIMIT 1",
+            "CALL mg.procedures() YIELD name WITH name WHERE name STARTS WITH 'cycles' RETURN name LIMIT 1",
         )
         for query in checks:
             try:
@@ -126,4 +126,12 @@ class GraphAlgorithms:
             return
         self.run_pagerank()
         self.detect_communities()
-        self.detect_cycles()
+        cycles_enabled = os.getenv("CODEGRAPH_MAGE_CYCLES", "1").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if cycles_enabled:
+            self.detect_cycles()
+        else:
+            logger.info("Skipping MAGE cycle detection: disabled by config.")

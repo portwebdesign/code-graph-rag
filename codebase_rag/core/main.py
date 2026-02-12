@@ -46,11 +46,16 @@ from codebase_rag.data_models.types_defs import (
     ToolArgs,
 )
 from codebase_rag.providers.base import get_provider_from_config
-from codebase_rag.services import QueryProtocol
+from codebase_rag.services.context7_persistence import (
+    Context7KnowledgeStore,
+    Context7MemoryStore,
+    Context7Persistence,
+)
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
 from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from codebase_rag.tools.codebase_query import create_query_tool
+from codebase_rag.tools.context7_docs import create_context7_tool
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
@@ -353,11 +358,12 @@ def _setup_common_initialization(repo_path: str) -> Path:
     """
     project_root = Path(repo_path).resolve()
     output_dir = project_root / "output"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    analysis_dir = output_dir / "analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
 
     logger.remove()
     logger.add(sys.stdout, format=cs.LOG_FORMAT)
-    logger.add(output_dir / "log.txt", format=cs.LOG_FORMAT, mode="w")
+    logger.add(analysis_dir / "parse.log", format=cs.LOG_FORMAT, mode="w")
     tmp_dir = project_root / cs.TMP_DIR
     if tmp_dir.exists():
         if tmp_dir.is_dir():
@@ -1348,14 +1354,14 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
 
 
 def _initialize_services_and_agent(
-    repo_path: str, ingestor: QueryProtocol
+    repo_path: str, ingestor: MemgraphIngestor
 ) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames]:
     """
     Initializes all services, tools, and the main agent for an interactive session.
 
     Args:
         repo_path (str): The path to the target repository.
-        ingestor (QueryProtocol): The database ingestor/query service.
+        ingestor (MemgraphIngestor): The database ingestor/query service.
 
     Returns:
         tuple: A tuple containing the initialized agent and the names of confirmation tools.
@@ -1375,6 +1381,9 @@ def _initialize_services_and_agent(
     )
     directory_lister = DirectoryLister(project_root=repo_path)
     document_analyzer = DocumentAnalyzer(project_root=repo_path)
+    context7_knowledge = Context7KnowledgeStore(ingestor)
+    context7_memory = Context7MemoryStore(repo_path)
+    context7_persistence = Context7Persistence(ingestor, repo_path)
 
     query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
     code_tool = create_code_retrieval_tool(code_retriever)
@@ -1386,6 +1395,11 @@ def _initialize_services_and_agent(
     document_analyzer_tool = create_document_analyzer_tool(document_analyzer)
     semantic_search_tool = create_semantic_search_tool()
     function_source_tool = create_get_function_source_tool()
+    context7_tool = create_context7_tool(
+        knowledge_store=context7_knowledge,
+        memory_store=context7_memory,
+        persistence=context7_persistence,
+    )
 
     confirmation_tool_names = ConfirmationToolNames(
         replace_code=file_editor_tool.name,
@@ -1405,6 +1419,7 @@ def _initialize_services_and_agent(
             document_analyzer_tool,
             semantic_search_tool,
             function_source_tool,
+            context7_tool,
         ]
     )
     return rag_agent, confirmation_tool_names

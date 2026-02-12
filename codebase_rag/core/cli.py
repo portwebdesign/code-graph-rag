@@ -17,6 +17,7 @@ from codebase_rag.tools.language import cli as language_cli
 
 from .config import load_cgrignore_patterns, settings
 from .main import (
+    _setup_common_initialization,
     app_context,
     connect_memgraph,
     export_graph_to_file,
@@ -181,6 +182,7 @@ def start(
     effective_batch_size = settings.resolve_batch_size(batch_size)
 
     if update_graph:
+        _setup_common_initialization(target_repo_path)
         repo_to_update = Path(target_repo_path)
         _info(
             style(cs.CLI_MSG_UPDATING_GRAPH.format(path=repo_to_update), cs.Color.GREEN)

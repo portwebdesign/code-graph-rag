@@ -34,6 +34,7 @@ from .mixins import (
 )
 from .modules import (
     AnalysisContext,
+    ApiCallChainModule,
     ApiComplianceModule,
     ComplexityModule,
     DeadCodeAIModule,
@@ -197,6 +198,7 @@ class AnalysisRunner(
             DependencyHealthModule(),
             ApiComplianceModule(),
             DocumentationQualityModule(),
+            ApiCallChainModule(),
         ]
 
     @staticmethod

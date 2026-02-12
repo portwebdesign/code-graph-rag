@@ -22,6 +22,7 @@ from ...utils.path_utils import is_test_path
 from ..utils import (
     build_lite_signature,
     extract_param_names,
+    normalize_query_captures,
     safe_decode_text,
     safe_decode_with_fallback,
 )
@@ -197,7 +198,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         """
         query = Query(language_obj, cs.JS_PROTOTYPE_INHERITANCE_QUERY)
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = normalize_query_captures(cursor.captures(root_node))
 
         child_classes = captures.get(cs.CAPTURE_CHILD_CLASS, [])
         parent_classes = captures.get(cs.CAPTURE_PARENT_CLASS, [])
@@ -267,7 +268,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         """
         method_query = Query(language_obj, cs.JS_PROTOTYPE_METHOD_QUERY)
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(root_node)
+        method_captures = normalize_query_captures(method_cursor.captures(root_node))
 
         constructor_names = method_captures.get(cs.CAPTURE_CONSTRUCTOR_NAME, [])
         method_names = method_captures.get(cs.CAPTURE_METHOD_NAME, [])
@@ -361,7 +362,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         try:
             query = Query(language_obj, query_text)
             cursor = QueryCursor(query)
-            captures = cursor.captures(root_node)
+            captures = normalize_query_captures(cursor.captures(root_node))
 
             method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
             method_functions = captures.get(cs.CAPTURE_METHOD_FUNCTION, [])
@@ -546,7 +547,7 @@ class JsTsIngestMixin(JsTsModuleSystemMixin):
         try:
             query = Query(lang_query, query_text)
             cursor = QueryCursor(query)
-            captures = cursor.captures(root_node)
+            captures = normalize_query_captures(cursor.captures(root_node))
 
             method_names = captures.get(cs.CAPTURE_METHOD_NAME, [])
             member_exprs = captures.get(cs.CAPTURE_MEMBER_EXPR, [])

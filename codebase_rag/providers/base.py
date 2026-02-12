@@ -1,22 +1,3 @@
-"""
-This module defines the base classes and factory functions for creating
-language model providers.
-
-It establishes a common interface (`ModelProvider`) that all specific provider
-implementations (e.g., `GoogleProvider`, `OpenAIProvider`) must adhere to.
-This allows the application to interact with different LLM services in a
-pluggable and consistent manner.
-
-Key components:
--   `ModelProvider`: An abstract base class defining the contract for all providers.
--   Specific provider classes (`GoogleProvider`, `OpenAIProvider`, `OllamaProvider`):
-    Implementations for different LLM services, handling their unique
-    configuration and model creation logic.
--   `get_provider()` and `get_provider_from_config()`: Factory functions to
-    instantiate the correct provider based on a name or a `ModelConfig` object.
--   `register_provider()`: Allows for dynamically adding new provider implementations.
-"""
-
 from __future__ import annotations
 
 import os
@@ -203,7 +184,7 @@ class OpenAIProvider(ModelProvider):
 
     def create_model(
         self, model_id: str, **kwargs: str | int | None
-    ) -> OpenAIResponsesModel:
+    ) -> OpenAIResponsesModel | OpenAIChatModel:
         """
         Creates an OpenAIResponsesModel instance.
 
@@ -212,7 +193,7 @@ class OpenAIProvider(ModelProvider):
             **kwargs: Additional keyword arguments.
 
         Returns:
-            OpenAIResponsesModel: An initialized OpenAIResponsesModel instance.
+            OpenAIResponsesModel | OpenAIChatModel: An initialized OpenAI model instance.
         """
         self.validate_config()
 
@@ -272,10 +253,47 @@ class OllamaProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class DeepSeekProvider(OpenAIProvider):
+    """Provider for DeepSeek's OpenAI-compatible API."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        resolved_endpoint = endpoint or cs.DEEPSEEK_DEFAULT_ENDPOINT
+        super().__init__(api_key=api_key, endpoint=resolved_endpoint, **kwargs)
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.DEEPSEEK
+
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel:
+        self.validate_config()
+        provider = PydanticOpenAIProvider(api_key=self.api_key, base_url=self.endpoint)
+        resolved_model = model_id
+        allow_reasoner = bool(kwargs.get("allow_reasoner"))
+        force_no_tools = bool(kwargs.get("force_no_tools"))
+        if (
+            model_id.lower() == "deepseek-reasoner"
+            and not allow_reasoner
+            and not force_no_tools
+        ):
+            resolved_model = "deepseek-chat"
+            logger.warning(
+                "DeepSeek reasoner requires reasoning_content for tool calls; using deepseek-chat instead."
+            )
+        return OpenAIChatModel(resolved_model, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
     cs.Provider.OLLAMA: OllamaProvider,
+    cs.Provider.DEEPSEEK: DeepSeekProvider,
 }
 """A registry mapping provider names to their corresponding classes."""
 

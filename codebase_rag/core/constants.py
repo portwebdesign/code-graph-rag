@@ -25,6 +25,7 @@ class Provider(StrEnum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GOOGLE = "google"
+    DEEPSEEK = "deepseek"
     AZURE = "azure"
     COHERE = "cohere"
     LOCAL = "local"
@@ -176,6 +177,7 @@ DEFAULT_API_KEY = "ollama"
 
 ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
 ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
+ENV_DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
 
 HELP_ARG = "help"
 
@@ -189,6 +191,7 @@ class GoogleProviderType(StrEnum):
 
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
+DEEPSEEK_DEFAULT_ENDPOINT = "https://api.deepseek.com/v1"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
@@ -280,6 +283,9 @@ KEY_IS_ASYNC = "is_async"
 KEY_HAS_AWAIT = "has_await"
 KEY_STRING_LITERALS = "string_literals"
 KEY_CALL_EXPRESSION_COUNT = "call_expression_count"
+KEY_BASE_URL = "base_url"
+KEY_RAW_PATH = "raw_path"
+KEY_NORMALIZED_PATH = "normalized_path"
 
 ERR_SUBSTR_ALREADY_EXISTS = "already exists"
 ERR_SUBSTR_CONSTRAINT = "constraint"

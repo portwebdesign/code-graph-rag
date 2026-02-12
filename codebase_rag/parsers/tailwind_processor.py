@@ -13,6 +13,8 @@ from codebase_rag.core import constants as cs
 from codebase_rag.data_models.types_defs import LanguageQueries
 from codebase_rag.services import IngestorProtocol
 
+from .utils import normalize_query_captures
+
 _SCM_LANGUAGE_ALIAS: dict[cs.SupportedLanguage, str] = {
     cs.SupportedLanguage.TS: "javascript",
 }
@@ -134,11 +136,9 @@ class TailwindUsageProcessor:
             return
 
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
-        class_nodes = [
-            node for node, name in captures if name == "tailwind_class_value"
-        ]
-        expr_nodes = [node for node, name in captures if name == "tailwind_class_expr"]
+        captures = normalize_query_captures(cursor.captures(root_node))
+        class_nodes = captures.get("tailwind_class_value", [])
+        expr_nodes = captures.get("tailwind_class_expr", [])
         if not class_nodes and not expr_nodes:
             return
 
@@ -146,9 +146,9 @@ class TailwindUsageProcessor:
         tailwind_used = False
 
         for node in class_nodes:
-            raw_text = self._slice_text(
-                source_text, cast(Node, node).start_byte, cast(Node, node).end_byte
-            )
+            if not isinstance(node, Node):
+                continue
+            raw_text = self._slice_text(source_text, node.start_byte, node.end_byte)
             class_text = self._strip_quotes(raw_text)
             for utility in self._extract_classes_from_value(class_text):
                 utility = self._normalize_utility(utility)
@@ -164,9 +164,9 @@ class TailwindUsageProcessor:
                 )
 
         for node in expr_nodes:
-            raw_text = self._slice_text(
-                source_text, cast(Node, node).start_byte, cast(Node, node).end_byte
-            )
+            if not isinstance(node, Node):
+                continue
+            raw_text = self._slice_text(source_text, node.start_byte, node.end_byte)
             for utility in self._extract_classes_from_expression(raw_text):
                 utility = self._normalize_utility(utility)
                 if not utility:
@@ -210,8 +210,8 @@ class TailwindUsageProcessor:
             return
 
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
-        rule_nodes = [node for node, name in captures if name == "tailwind_at_rule"]
+        captures = normalize_query_captures(cursor.captures(root_node))
+        rule_nodes = captures.get("tailwind_at_rule", [])
         if not rule_nodes:
             return
 
@@ -219,9 +219,9 @@ class TailwindUsageProcessor:
         tailwind_used = False
 
         for node in rule_nodes:
-            rule_text = self._slice_text(
-                source_text, cast(Node, node).start_byte, cast(Node, node).end_byte
-            )
+            if not isinstance(node, Node):
+                continue
+            rule_text = self._slice_text(source_text, node.start_byte, node.end_byte)
             if "@apply" in rule_text:
                 for utility in self._parse_apply_utilities(rule_text):
                     utility = self._normalize_utility(utility)

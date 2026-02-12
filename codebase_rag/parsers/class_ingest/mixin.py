@@ -19,6 +19,7 @@ from ..utils import (
     infer_visibility,
     ingest_method,
     normalize_decorators,
+    normalize_query_captures,
     safe_decode_text,
 )
 from . import cpp_modules
@@ -110,7 +111,7 @@ class ClassIngestMixin:
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = normalize_query_captures(cursor.captures(root_node))
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
         module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
@@ -252,7 +253,7 @@ class ClassIngestMixin:
             return
 
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = normalize_query_captures(method_cursor.captures(body_node))
         file_path = self.module_qn_to_file_path.get(module_qn)
         file_hash = self.module_qn_to_file_hash.get(module_qn)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
@@ -294,7 +295,7 @@ class ClassIngestMixin:
             return
 
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = normalize_query_captures(method_cursor.captures(body_node))
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(method_node, Node):
                 continue

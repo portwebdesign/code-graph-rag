@@ -11,7 +11,7 @@ from codebase_rag.core import logs as lg
 from codebase_rag.data_models.types_defs import LanguageQueries
 
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
-from ..utils import safe_decode_text
+from ..utils import normalize_query_captures, safe_decode_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -294,7 +294,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not class_query:
             return None
         cursor = QueryCursor(class_query)
-        captures = cursor.captures(root_node)
+        captures = normalize_query_captures(cursor.captures(root_node))
 
         method_query = lang_queries[cs.QUERY_KEY_FUNCTIONS]
         if not method_query:
@@ -316,7 +316,9 @@ class PythonAstAnalyzerMixin(_AstBase):
                 continue
 
             method_cursor = QueryCursor(method_query)
-            method_captures = method_cursor.captures(body_node)
+            method_captures = normalize_query_captures(
+                method_cursor.captures(body_node)
+            )
 
             for method_node in method_captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
                 if not isinstance(method_node, Node):
