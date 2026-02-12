@@ -3,7 +3,7 @@ from __future__ import annotations
 from loguru import logger
 
 try:
-    from codebase_rag.parsers.query_engine import QueryEngine
+    from codebase_rag.parsers.query.query_engine import QueryEngine
 
     logger.info("Successfully imported QueryEngine: {}", QueryEngine)
 except ImportError as e:

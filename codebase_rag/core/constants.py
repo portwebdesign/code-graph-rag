@@ -1984,7 +1984,7 @@ TS_RETURN_STATEMENT = "return_statement"
 TS_RETURN = "return"
 TS_NEW_EXPRESSION = "new_expression"
 
-# (H) Tree-sitter class/module node types for class_ingest
+# (H) Tree-sitter class/module node types for class_processing
 TS_MODULE_DECLARATION = "module_declaration"
 TS_IMPL_ITEM = "impl_item"
 TS_INTERFACE_DECLARATION = "interface_declaration"

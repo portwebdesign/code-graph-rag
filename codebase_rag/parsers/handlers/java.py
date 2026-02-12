@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from codebase_rag.core import constants as cs
 
-from ..java import utils as java_utils
+from ..languages.java import utils as java_utils
 from .base import BaseLanguageHandler
 
 if TYPE_CHECKING:

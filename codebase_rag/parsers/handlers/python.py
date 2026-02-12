@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from codebase_rag.core import constants as cs
+from codebase_rag.parsers.core.utils import safe_decode_text
 
-from ..utils import safe_decode_text
 from .base import BaseLanguageHandler
 
 if TYPE_CHECKING:

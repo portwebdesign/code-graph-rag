@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 from codebase_rag.core import constants as cs
 from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS
+from codebase_rag.parsers.core.utils import safe_decode_text
 
 from ...utils.fqn_resolver import resolve_fqn_from_ast
-from ..cpp import utils as cpp_utils
-from ..utils import safe_decode_text
+from ..languages.cpp import utils as cpp_utils
 from .base import BaseLanguageHandler
 
 if TYPE_CHECKING:

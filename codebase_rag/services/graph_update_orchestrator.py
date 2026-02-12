@@ -9,7 +9,7 @@ from codebase_rag.core import logs as ls
 from .graph_update_context import GraphUpdaterContext
 
 if TYPE_CHECKING:
-    from codebase_rag.parsers.declarative_parser import DeclarativeParser
+    from codebase_rag.parsers.query.declarative_parser import DeclarativeParser
 
 
 class GraphUpdateOrchestrator:

@@ -3,8 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from codebase_rag.core import constants as cs
-
-from ..utils import safe_decode_text
+from codebase_rag.parsers.core.utils import safe_decode_text
 
 if TYPE_CHECKING:
     from pathlib import Path

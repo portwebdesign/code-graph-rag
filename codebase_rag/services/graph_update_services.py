@@ -16,17 +16,20 @@ from codebase_rag.graph_db.cypher_queries import (
     CYPHER_DELETE_MODULE_BY_PATH,
 )
 from codebase_rag.infrastructure.language_spec import get_language_spec_for_path
-
-from ..parsers.cpp import utils as cpp_utils
-from ..parsers.factory import ProcessorFactory
-from ..parsers.incremental_cache import GitDeltaCache, IncrementalParsingCache
-from ..parsers.performance_optimizer import ParserPerformanceOptimizer
-from ..parsers.process_manager import ParserProcessManager
-from ..parsers.utils import (
+from codebase_rag.parsers.core.factory import ProcessorFactory
+from codebase_rag.parsers.core.incremental_cache import (
+    GitDeltaCache,
+    IncrementalParsingCache,
+)
+from codebase_rag.parsers.core.performance_optimizer import ParserPerformanceOptimizer
+from codebase_rag.parsers.core.process_manager import ParserProcessManager
+from codebase_rag.parsers.core.utils import (
     get_function_captures,
     is_method_node,
     safe_decode_with_fallback,
 )
+
+from ..parsers.languages.cpp import utils as cpp_utils
 from ..utils.git_delta import filter_existing, get_git_delta, get_git_head
 from ..utils.path_utils import should_skip_path, to_posix
 

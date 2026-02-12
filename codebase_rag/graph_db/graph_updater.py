@@ -15,16 +15,16 @@ from codebase_rag.data_models.types_defs import (
     SimpleNameLookup,
 )
 from codebase_rag.detectors.framework_metadata_detector import FrameworkMetadataDetector
-from codebase_rag.parsers.declarative_parser import DeclarativeParser
-from codebase_rag.parsers.factory import ProcessorFactory
-from codebase_rag.parsers.incremental_cache import (
+from codebase_rag.parsers.core.factory import ProcessorFactory
+from codebase_rag.parsers.core.incremental_cache import (
     GitDeltaCache,
     IncrementalParsingCache,
 )
-from codebase_rag.parsers.performance_optimizer import ParserPerformanceOptimizer
-from codebase_rag.parsers.pre_scanner import PreScanIndex
-from codebase_rag.parsers.process_manager import ParserProcessManager
-from codebase_rag.parsers.query_engine import QueryEngine
+from codebase_rag.parsers.core.performance_optimizer import ParserPerformanceOptimizer
+from codebase_rag.parsers.core.pre_scanner import PreScanIndex
+from codebase_rag.parsers.core.process_manager import ParserProcessManager
+from codebase_rag.parsers.query.declarative_parser import DeclarativeParser
+from codebase_rag.parsers.query.query_engine import QueryEngine
 from codebase_rag.services import (
     AnalysisRunnerService,
     CrossFileResolverAnalyticsService,

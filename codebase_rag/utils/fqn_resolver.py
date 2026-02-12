@@ -53,7 +53,7 @@ def find_function_source_by_fqn(
     project_name: str,
     fqn_config: FQNSpec,
 ) -> str | None:
-    from ..parsers.utils import safe_decode_text
+    from codebase_rag.parsers.core.utils import safe_decode_text
 
     try:
 

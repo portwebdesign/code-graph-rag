@@ -13,7 +13,9 @@ from codebase_rag.data_models.types_defs import (
 from .graph_update_config_service import GraphUpdateConfig
 
 if TYPE_CHECKING:
-    from codebase_rag.parsers.factory import ProcessorFactory as GraphProcessorFactory
+    from codebase_rag.parsers.core.factory import (
+        ProcessorFactory as GraphProcessorFactory,
+    )
     from codebase_rag.services.graph_update_post_services import (
         CrossFileResolverAnalyticsService as CrossFileResolverService,
     )

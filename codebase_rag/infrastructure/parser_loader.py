@@ -16,7 +16,7 @@ from codebase_rag.data_models.types_defs import (
     LanguageLoader,
     LanguageQueries,
 )
-from codebase_rag.parsers.query_engine_adapter import apply_scm_query_overrides
+from codebase_rag.parsers.query.query_engine_adapter import apply_scm_query_overrides
 
 from . import exceptions as ex
 from .language_spec import LANGUAGE_SPECS, LanguageSpec

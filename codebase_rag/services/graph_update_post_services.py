@@ -13,15 +13,15 @@ from codebase_rag.core import logs as ls
 from codebase_rag.core.config import settings
 from codebase_rag.data_models.types_defs import EmbeddingQueryResult, ResultRow
 from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS
+from codebase_rag.parsers.core.incremental_cache import GitDeltaCache
+from codebase_rag.parsers.core.pre_scanner import PreScanIndex, PreScanner
+from codebase_rag.parsers.pipeline.cross_file_resolver import CrossFileResolver
+from codebase_rag.parsers.query.declarative_parser import DeclarativeParser
 from codebase_rag.utils.dependencies import has_semantic_dependencies
 from codebase_rag.utils.fqn_resolver import find_function_source_by_fqn
 from codebase_rag.utils.git_delta import get_git_head
 from codebase_rag.utils.source_extraction import extract_source_with_fallback
 
-from ..parsers.cross_file_resolver import CrossFileResolver
-from ..parsers.declarative_parser import DeclarativeParser
-from ..parsers.incremental_cache import GitDeltaCache
-from ..parsers.pre_scanner import PreScanIndex, PreScanner
 from .protocols import QueryProtocol
 
 
@@ -56,7 +56,7 @@ class ResolverPassService:
 
     def process_framework_links(self, simple_name_lookup) -> None:
         try:
-            from ..parsers.framework_linker import FrameworkLinker
+            from codebase_rag.parsers.frameworks.framework_linker import FrameworkLinker
 
             FrameworkLinker(
                 repo_path=self.repo_path,
@@ -70,7 +70,9 @@ class ResolverPassService:
 
     def process_tailwind_usage(self, ast_cache: AstCacheProtocol) -> None:
         try:
-            from ..parsers.tailwind_processor import TailwindUsageProcessor
+            from codebase_rag.parsers.frameworks.tailwind_processor import (
+                TailwindUsageProcessor,
+            )
 
             TailwindUsageProcessor(
                 ingestor=self.ingestor,
@@ -95,7 +97,7 @@ class ResolverPassService:
 
     def process_resolver_pass(self, ast_cache: AstCacheProtocol) -> None:
         try:
-            from ..parsers.resolver_pass import ResolverPass
+            from codebase_rag.parsers.pipeline.resolver_pass import ResolverPass
 
             ResolverPass(
                 ingestor=self.ingestor,
@@ -112,7 +114,9 @@ class ResolverPassService:
 
     def process_type_relations(self, ast_cache: AstCacheProtocol) -> None:
         try:
-            from ..parsers.type_relation_pass import TypeRelationPass
+            from codebase_rag.parsers.pipeline.type_relation_pass import (
+                TypeRelationPass,
+            )
 
             TypeRelationPass(
                 ingestor=self.ingestor,
@@ -126,7 +130,9 @@ class ResolverPassService:
 
     def process_extended_relations(self, ast_cache: AstCacheProtocol) -> None:
         try:
-            from ..parsers.extended_relation_pass import ExtendedRelationPass
+            from codebase_rag.parsers.pipeline.extended_relation_pass import (
+                ExtendedRelationPass,
+            )
 
             ExtendedRelationPass(
                 ingestor=self.ingestor,
@@ -139,7 +145,9 @@ class ResolverPassService:
 
     def process_reparse_registry(self, ast_cache: AstCacheProtocol) -> None:
         try:
-            from ..parsers.reparse_registry_resolver import ReparseRegistryResolver
+            from codebase_rag.parsers.pipeline.reparse_registry_resolver import (
+                ReparseRegistryResolver,
+            )
 
             ReparseRegistryResolver(
                 ingestor=self.ingestor,
@@ -154,7 +162,9 @@ class ResolverPassService:
 
     def process_context7_bridging(self) -> None:
         try:
-            from ..parsers.context7_bridge import Context7Bridge
+            from codebase_rag.parsers.type_inference.context7_bridge import (
+                Context7Bridge,
+            )
 
             Context7Bridge(self.ingestor).run()
         except Exception as exc:
