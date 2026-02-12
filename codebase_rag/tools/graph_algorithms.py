@@ -61,11 +61,17 @@ class GraphAlgorithms:
             write_query = """
             CALL pagerank.get()
             YIELD node, rank
-            SET node.pagerank = rank;
+            SET node.pagerank = rank
+            RETURN count(node) AS nodes_updated;
             """
 
-            self.query_engine.execute_write(write_query)
-            logger.info("MAGE PageRank completed. Properties updated.")
+            result = self.query_engine.fetch_all(write_query)
+            if result:
+                logger.info(
+                    f"MAGE PageRank completed: {result[0].get('nodes_updated', 0)} nodes updated."
+                )
+            else:
+                logger.info("MAGE PageRank completed.")
 
         except Exception as e:
             logger.error(f"Failed to run MAGE PageRank: {e}")
@@ -80,11 +86,17 @@ class GraphAlgorithms:
             write_query = """
             CALL community_detection.get()
             YIELD node, community_id
-            SET node.community_id = community_id;
+            SET node.community_id = community_id
+            RETURN count(node) AS nodes_updated;
             """
 
-            self.query_engine.execute_write(write_query)
-            logger.info("MAGE Community Detection completed. Properties updated.")
+            result = self.query_engine.fetch_all(write_query)
+            if result:
+                logger.info(
+                    f"MAGE Community Detection completed: {result[0].get('nodes_updated', 0)} nodes updated."
+                )
+            else:
+                logger.info("MAGE Community Detection completed.")
 
         except Exception as e:
             logger.error(f"Failed to run MAGE Community Detection: {e}")
@@ -97,24 +109,37 @@ class GraphAlgorithms:
         logger.info("Running MAGE Cycle Detection...")
 
         try:
+            cycle_limit = int(os.getenv("CODEGRAPH_CYCLE_LIMIT", "1000"))
+
             reset_query = """
             MATCH (n) WHERE n.has_cycle = true
             REMOVE n.has_cycle;
             """
             self.query_engine.execute_write(reset_query)
 
-            write_query = """
+            write_query = f"""
             CALL cycles.get()
             YIELD cycle
+            WHERE cycle IS NOT NULL
+            WITH cycle LIMIT {cycle_limit}
             UNWIND cycle AS n
-            SET n.has_cycle = true;
+            SET n.has_cycle = true
+            RETURN count(DISTINCT n) AS nodes_marked;
             """
 
-            self.query_engine.execute_write(write_query)
-            logger.info("MAGE Cycle Detection completed. Properties updated.")
+            result = self.query_engine.fetch_all(write_query)
+            if result and result[0].get("nodes_marked", 0) > 0:
+                logger.info(
+                    f"MAGE Cycle Detection completed: {result[0]['nodes_marked']} nodes marked (max {cycle_limit} cycles)."
+                )
+            else:
+                logger.info("MAGE Cycle Detection completed: No cycles found.")
 
         except Exception as e:
             logger.error(f"Failed to run MAGE Cycle Detection: {e}")
+            logger.warning(
+                "Consider disabling cycle detection with CODEGRAPH_MAGE_CYCLES=0 for large graphs."
+            )
 
     def run_all(self, has_changes: bool = True) -> None:
         """Runs all registered graph analysis algorithms."""

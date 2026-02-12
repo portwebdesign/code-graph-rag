@@ -18,7 +18,7 @@ from .js_ts_engine import (
 from .python_engine import PythonTypeInferenceEngine
 
 _legacy_engine = None
-_legacy_path = Path(__file__).resolve().parent.parent / "type_inference.py"
+_legacy_path = Path(__file__).resolve().parent / "type_inference.py"
 if _legacy_path.exists():
     spec = spec_from_file_location(
         "codebase_rag.parsers._legacy_type_inference", _legacy_path
