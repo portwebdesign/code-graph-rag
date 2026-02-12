@@ -1,3 +1,13 @@
+"""
+This module defines the ResolverPass, the second major phase of the parsing pipeline.
+
+After the initial AST processing and definition extraction, this pass is responsible for
+resolving connections and relationships between different code elements across files.
+It handles resolving import statements to their corresponding modules, linking imported
+symbols to their definitions, and identifying language-specific patterns like JSX
+component usage in JavaScript/TypeScript.
+"""
+
 from __future__ import annotations
 
 import json
@@ -24,12 +34,24 @@ from .import_processor import ImportProcessor
 
 class ResolverPass:
     """
-    Executes the second pass of parsing to resolve relationships.
+    Executes the second pass of parsing to resolve relationships between code entities.
 
-    This class handles:
-    - Resolving imports to modules.
-    - specialized relationships for JS/TS (JSX, error handlers, state mutations).
-    - Linking imported symbols to their definitions.
+    This pass builds upon the initial AST scan by connecting different parts of the
+    codebase. It is responsible for:
+    - Resolving module-level imports to their source files.
+    - Linking specific imported symbols (functions, classes) to their definitions.
+    - Identifying and creating relationships for language-specific constructs, such as
+      JSX components, error handlers (try/catch), and state mutations in JS/TS.
+
+    Attributes:
+        ingestor (IngestorProtocol): The service for writing data to the graph.
+        repo_path (Path): The root path of the repository being parsed.
+        project_name (str): The name of the project.
+        queries (dict[cs.SupportedLanguage, LanguageQueries]): Compiled tree-sitter queries.
+        function_registry (FunctionRegistryTrieProtocol): A trie containing all found functions/classes.
+        import_processor (ImportProcessor): The processor that handled import statements.
+        module_qn_to_file_path (dict[str, Path]): Mapping from module QN to file path.
+        pre_scan_index (PreScanIndex | None): Optional index from a pre-scan pass for faster lookups.
     """
 
     def __init__(
@@ -43,6 +65,19 @@ class ResolverPass:
         module_qn_to_file_path: dict[str, Path],
         pre_scan_index: PreScanIndex | None = None,
     ) -> None:
+        """
+        Initializes the ResolverPass.
+
+        Args:
+            ingestor (IngestorProtocol): The service for writing data to the graph.
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
+            function_registry (FunctionRegistryTrieProtocol): Registry of all functions and classes.
+            import_processor (ImportProcessor): Processor containing import data from the first pass.
+            module_qn_to_file_path (dict[str, Path]): Mapping from module qualified names to file paths.
+            pre_scan_index (PreScanIndex | None): Optional pre-scan index for faster symbol resolution.
+        """
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -57,10 +92,15 @@ class ResolverPass:
         self, ast_items: Iterable[tuple[Path, tuple[object, cs.SupportedLanguage]]]
     ) -> None:
         """
-        Process cached AST items to resolve imports and relationships.
+        Process cached AST items to resolve imports and other cross-file relationships.
+
+        This is the main entry point for the pass. It orchestrates the resolution of
+        imports and then iterates through each file's AST to find and process
+        language-specific relationships.
 
         Args:
-            ast_items (Iterable): Iterable of (file_path, (root_node, language)) tuples.
+            ast_items (Iterable): An iterable of (file_path, (root_node, language)) tuples
+                                  from the AST cache.
         """
         self._resolve_imports()
         self._resolve_import_symbols()
@@ -69,7 +109,11 @@ class ResolverPass:
 
     def _resolve_imports(self) -> None:
         """
-        Resolve imports to their source modules and create relationships.
+        Resolve module-level imports to their source modules and create relationships in the graph.
+
+        This method iterates through the import mappings collected by the `ImportProcessor`
+        and creates `RESOLVES_IMPORT` relationships between modules and also between
+        individual import nodes and the modules they resolve to.
         """
         for module_qn, mappings in self.import_processor.import_mapping.items():
             if not mappings:
@@ -123,10 +167,12 @@ class ResolverPass:
         """
         Process specific relationships for JavaScript and TypeScript files.
 
+        This includes linking JSX components, error handlers, and state mutations.
+
         Args:
             file_path (Path): Path to the source file.
-            root_node (object): Root AST node.
-            language (cs.SupportedLanguage): Programming language.
+            root_node (object): Root AST node of the file.
+            language (cs.SupportedLanguage): The programming language of the file.
         """
         if language not in {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}:
             return
@@ -139,7 +185,11 @@ class ResolverPass:
 
     def _resolve_import_symbols(self) -> None:
         """
-        Link imported symbols to their definitions in other modules.
+        Link imported symbols (e.g., functions, classes) to their definitions in other modules.
+
+        This method uses the `import_symbol_links` from the `ImportProcessor` to create
+        `RESOLVES_IMPORT` relationships from an `Import` node to the specific `Function`
+        or `Class` node it points to.
         """
         if not getattr(self.import_processor, "import_symbol_links", None):
             return
@@ -176,12 +226,15 @@ class ResolverPass:
         self, root_node: object, module_qn: str, language: cs.SupportedLanguage
     ) -> None:
         """
-        Identify and link JSX components used in the module.
+        Identify and link JSX components used within a module.
+
+        It queries the AST for JSX tags (e.g., `<MyComponent />`) and creates
+        `USES_COMPONENT` relationships from the module to the corresponding component nodes.
 
         Args:
-            root_node (object): Root AST node.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Programming language.
+            root_node (object): The root AST node for the file.
+            module_qn (str): The qualified name of the module being processed.
+            language (cs.SupportedLanguage): The programming language.
         """
         query = self._get_query(
             language,
@@ -215,12 +268,15 @@ class ResolverPass:
         self, root_node: object, module_qn: str, language: cs.SupportedLanguage
     ) -> None:
         """
-        Identify and link error handling blocks (try/catch).
+        Identify and link error handling blocks (e.g., try-catch) in the module.
+
+        This creates a `HANDLES_ERROR` relationship from the module to a generic
+        placeholder function representing error handling logic.
 
         Args:
-            root_node (object): Root AST node.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Programming language.
+            root_node (object): The root AST node for the file.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
         """
         query = self._get_query(language, "(try_statement) @try", "handles_error")
         if not query:
@@ -247,12 +303,15 @@ class ResolverPass:
         self, root_node: object, module_qn: str, language: cs.SupportedLanguage
     ) -> None:
         """
-        Identify and link state mutations (assignments, updates).
+        Identify and link state mutations (e.g., assignments, updates) in the module.
+
+        This creates a `MUTATES_STATE` relationship from the module to a generic
+        placeholder function representing state mutation logic.
 
         Args:
-            root_node (object): Root AST node.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Programming language.
+            root_node (object): The root AST node for the file.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
         """
         query = self._get_query(
             language,
@@ -279,13 +338,17 @@ class ResolverPass:
 
     def _find_component_target(self, name: str) -> tuple[str | None, str | None]:
         """
-        Find the target qualified name and type for a component name.
+        Find the target qualified name and node type for a component name.
+
+        It searches the function registry for a class, function, or method that
+        matches the component name.
 
         Args:
-            name (str): The component name.
+            name (str): The component name (e.g., 'MyComponent').
 
         Returns:
-            tuple[str | None, str | None]: (qualified_name, type) or (None, None).
+            A tuple containing the qualified name and node type (e.g., 'function', 'class')
+            of the component, or (None, None) if not found.
         """
         candidates = self.function_registry.find_ending_with(name)
         if not candidates:
@@ -300,14 +363,17 @@ class ResolverPass:
 
     def _ensure_component_node(self, module_qn: str, tag_name: str) -> str:
         """
-        Ensure a component node exists for a given HTML/JSX tag.
+        Ensure a `Component` node exists for a given HTML/JSX tag and returns its QN.
+
+        If the node doesn't exist, it will be created. This is used to represent
+        the usage of a component within a module.
 
         Args:
-            module_qn (str): Module qualified name.
-            tag_name (str): The tag name.
+            module_qn (str): The qualified name of the module where the component is used.
+            tag_name (str): The tag name of the component (e.g., 'MyComponent').
 
         Returns:
-            str: The qualified name of the component node.
+            The qualified name of the component node.
         """
         component_qn = f"{module_qn}{cs.SEPARATOR_DOT}component.{tag_name}"
         namespace = (
@@ -333,14 +399,19 @@ class ResolverPass:
         self, name: str, framework_tag: str
     ) -> tuple[str, str]:
         """
-        Ensure a placeholder function node exists for framework features.
+        Ensure a placeholder `Function` node exists for abstract framework features.
+
+        This is used for concepts like 'error_handler' or 'state_mutation' that don't
+        correspond to a single, concrete function in the user's code but represent
+        a capability.
 
         Args:
-            name (str): Name of the placeholder.
-            framework_tag (str): Framework metadata tag.
+            name (str): A descriptive name for the placeholder (e.g., 'error_handler').
+            framework_tag (str): A tag to categorize the framework feature.
 
         Returns:
-            tuple[str, str]: (Label, Qualified Name).
+            A tuple containing the node label (`Function`) and the qualified name of the
+            placeholder node.
         """
         normalized = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_")
         if not normalized:
@@ -376,15 +447,17 @@ class ResolverPass:
         self, language: cs.SupportedLanguage, query_text: str, key: str
     ) -> Query | None:
         """
-        Compile or retrieve a cached Tree-sitter query.
+        Compile and cache, or retrieve a cached, Tree-sitter query.
+
+        This avoids recompiling the same query multiple times.
 
         Args:
-            language (cs.SupportedLanguage): Programming language.
+            language (cs.SupportedLanguage): The programming language for the query.
             query_text (str): The S-expression query string.
-            key (str): Unique key for caching.
+            key (str): A unique key to identify this query for caching purposes.
 
         Returns:
-            Query | None: Compiled query or None if compilation fails.
+            A compiled `Query` object, or `None` if compilation fails.
         """
         cache_key = (language.value, key)
         if cache_key in self._compiled_queries:
@@ -404,13 +477,16 @@ class ResolverPass:
 
     def _resolve_symbol_target(self, full_name: str) -> tuple[str, str] | None:
         """
-        Resolve a fully qualified symbol name to its target node label and QN.
+        Resolve a fully qualified symbol name to its target node label and qualified name.
+
+        It first checks the function registry for a direct match. If not found, it may
+        consult the pre-scan index as a fallback to find the module containing the symbol.
 
         Args:
-            full_name (str): The fully qualified name.
+            full_name (str): The fully qualified name of the symbol to resolve.
 
         Returns:
-            tuple[str, str] | None: (Label, Qualified Name) or None if not found.
+            A tuple of (node_label, qualified_name) if found, otherwise `None`.
         """
         if full_name.endswith(cs.IMPORT_DEFAULT_SUFFIX):
             module_path = full_name[: -len(cs.IMPORT_DEFAULT_SUFFIX)]
@@ -437,13 +513,16 @@ class ResolverPass:
 
     def _module_qn_for_path(self, file_path: Path) -> str:
         """
-        Generate module qualified name for a file path.
+        Generate the module qualified name for a given file path.
+
+        This converts a file system path into a language-agnostic qualified name
+        (e.g., `project_name.folder.file`).
 
         Args:
-            file_path (Path): Path to the file.
+            file_path (Path): The absolute path to the file.
 
         Returns:
-            str: Fully qualified module name.
+            The fully qualified module name as a string.
         """
         relative_path = file_path.relative_to(self.repo_path)
         parts = list(relative_path.with_suffix("").parts)

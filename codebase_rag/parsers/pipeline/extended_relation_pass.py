@@ -1,3 +1,19 @@
+"""
+This module defines the `ExtendedRelationPass`, a parsing phase that focuses on
+extracting and ingesting more detailed, language-specific relationships from the
+source code.
+
+While other passes handle core structures like definitions and calls, this pass
+digs deeper to find relationships such as:
+- Type hints for parameters and return values (`RETURNS_TYPE`, `PARAMETER_TYPE`).
+- Decorator or annotation usage (`DECORATES`, `ANNOTATES`).
+- Exception handling (`THROWS`, `CAUGHT_BY`).
+
+It uses the `EnhancedFunctionExtractor` to gather this detailed information from
+the AST and then creates the corresponding nodes and relationships in the graph,
+adding a richer layer of semantic detail to the code representation.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -15,13 +31,11 @@ from codebase_rag.parsers.type_inference.enhanced_function_extractor import (
 
 class ExtendedRelationPass:
     """
-    Pass for ingesting extended relationships like types, decorators, and exceptions using EnhancedFunctionExtractor.
+    A parsing pass for ingesting extended relationships like types, decorators, and exceptions.
 
-    Args:
-        ingestor: The ingestor instance.
-        repo_path (Path): Path to the repository root.
-        project_name (str): Name of the project.
-        queries (dict): Language queries.
+    This pass utilizes the `EnhancedFunctionExtractor` to analyze the AST and extract
+    detailed metadata about functions and methods, which is then used to create
+    rich semantic relationships in the graph.
     """
 
     def __init__(
@@ -31,6 +45,15 @@ class ExtendedRelationPass:
         project_name: str,
         queries: dict,
     ) -> None:
+        """
+        Initializes the ExtendedRelationPass.
+
+        Args:
+            ingestor: The ingestor instance for writing to the graph.
+            repo_path (Path): The path to the repository root.
+            project_name (str): The name of the project.
+            queries (dict): A dictionary of language-specific tree-sitter queries.
+        """
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -40,10 +63,14 @@ class ExtendedRelationPass:
         self, ast_items: Iterable[tuple[Path, tuple[Node, cs.SupportedLanguage]]]
     ) -> None:
         """
-        Processes AST items to extract and ingest extended relationships.
+        Processes cached AST items to extract and ingest extended relationships.
+
+        This is the main entry point for the pass. It iterates through all parsed
+        files, uses the `EnhancedFunctionExtractor` to get detailed metadata, and
+        then calls ingestion methods for each type of relationship.
 
         Args:
-            ast_items (Iterable[tuple[Path, tuple[Node, cs.SupportedLanguage]]]): Cached AST items.
+            ast_items (Iterable): An iterable of (file_path, (root_node, language)) tuples.
         """
         extractor = EnhancedFunctionExtractor(
             repo_path=self.repo_path,
@@ -69,10 +96,10 @@ class ExtendedRelationPass:
 
     def _ingest_type_relations(self, metadata) -> None:
         """
-        Ingests type relationships (return types, parameter types).
+        Ingests type-related relationships, such as return types and parameter types.
 
         Args:
-            metadata: FunctionMetadata object.
+            metadata: A `FunctionMetadata` object containing the extracted type info.
         """
         if metadata.return_type:
             self._ensure_type_node(metadata.return_type)
@@ -95,11 +122,11 @@ class ExtendedRelationPass:
         self, metadata, language: cs.SupportedLanguage
     ) -> None:
         """
-        Ingests decorator relationships.
+        Ingests relationships for decorators (Python) or annotations (Java).
 
         Args:
-            metadata: FunctionMetadata object.
-            language (cs.SupportedLanguage): Language of the file.
+            metadata: A `FunctionMetadata` object containing decorator info.
+            language (cs.SupportedLanguage): The programming language of the file.
         """
         for decorator in metadata.decorators:
             decorator_name = decorator.lstrip("@").strip()
@@ -132,10 +159,10 @@ class ExtendedRelationPass:
 
     def _ingest_exception_relations(self, metadata) -> None:
         """
-        Ingests exception relationships (throws, caught_by).
+        Ingests relationships for exceptions that are thrown or caught.
 
         Args:
-            metadata: FunctionMetadata object.
+            metadata: A `FunctionMetadata` object containing exception info.
         """
         for exception_type in metadata.thrown_exceptions:
             self._ensure_type_node(exception_type)
@@ -155,10 +182,12 @@ class ExtendedRelationPass:
 
     def _ensure_type_node(self, type_name: str) -> None:
         """
-        Ensures a TYPE node exists.
+        Ensures that a `Type` node exists in the graph for the given type name.
+
+        If the node doesn't exist, it is created.
 
         Args:
-            type_name (str): Qualified name of the type.
+            type_name (str): The qualified name of the type.
         """
         props: dict[str, PropertyValue] = {
             cs.KEY_QUALIFIED_NAME: type_name,
@@ -168,11 +197,14 @@ class ExtendedRelationPass:
 
     def _ensure_function_node(self, qualified_name: str, name: str) -> None:
         """
-        Ensures a FUNCTION node exists (often a placeholder for decorators).
+        Ensures that a `Function` node exists, often as a placeholder for a decorator.
+
+        If the decorator function itself is not found in the codebase, this creates
+        a placeholder node to represent it, allowing the relationship to be formed.
 
         Args:
-            qualified_name (str): Qualified name of the function.
-            name (str): Simple name of the function.
+            qualified_name (str): The fully qualified name of the function.
+            name (str): The simple name of the function.
         """
         props: dict[str, PropertyValue] = {
             cs.KEY_QUALIFIED_NAME: qualified_name,

@@ -1,16 +1,21 @@
+"""
+This module provides integration points for "Phase 2" processing, which includes
+advanced analysis like framework detection and sophisticated text extraction for
+embeddings.
+
+It defines mixin classes and an adapter (`Phase2EnrichedDefinitionProcessor`) that
+can be composed with the primary definition processors. This approach allows for
+the separation of concerns, keeping the core AST parsing logic clean while enabling
+the addition of more complex, context-aware features. The goal is to enrich the
+initial node data with framework-specific metadata and generate high-quality text
+for semantic understanding and embedding.
+"""
+
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from codebase_rag.parsers.frameworks.detectors import (
-    JavaFrameworkDetector,
-    JsFrameworkDetector,
-    PythonFrameworkDetector,
-    RubyFrameworkDetector,
-)
-from codebase_rag.parsers.frameworks.detectors.python_framework_detector import (
-    PythonFrameworkType,
-)
+from codebase_rag.parsers.frameworks.framework_registry import FrameworkDetectorRegistry
 from codebase_rag.parsers.pipeline.embedding_strategies import (
     EmbeddingStrategy,
     EmbeddingTextExtractor,
@@ -20,16 +25,20 @@ from codebase_rag.parsers.pipeline.embedding_strategies import (
 
 @dataclass
 class EnrichedNodeMetadata:
-    """Extended metadata for AST nodes with Phase 2 information.
+    """
+    A data class holding extended metadata for an AST node after Phase 2 processing.
+
+    This structure contains the original information from the initial parse, augmented
+    with framework context and the text prepared for vector embedding.
 
     Attributes:
-        node_id: Unique identifier
-        framework_type: Detected framework (if any)
-        framework_context: Framework-specific information
-        embedding_text: Text prepared for embedding
-        embedding_strategy: Which strategy was used
-        embedding_metadata: Rich metadata about embedding
-        original_metadata: Original node metadata
+        node_id (str): A unique identifier for the node.
+        framework_type (str | None): The name of the detected framework (e.g., "django", "spring").
+        framework_context (dict[str, Any] | None): Framework-specific details, like API endpoints.
+        embedding_text (str | None): The final text generated for the node, ready for embedding.
+        embedding_strategy (str): The name of the strategy used to generate the embedding text.
+        embedding_metadata (dict[str, Any]): Rich metadata related to the embedding content.
+        original_metadata (dict[str, Any]): The original properties of the node from the first pass.
     """
 
     node_id: str
@@ -42,128 +51,86 @@ class EnrichedNodeMetadata:
 
 
 class Phase2FrameworkDetectionMixin:
-    """Mixin for adding framework detection to DefinitionProcessor.
+    """
+    A mixin that provides framework detection capabilities.
 
-    This mixin adds framework detection capabilities without modifying
-    the existing DefinitionProcessor class.
-
-    Usage:
-        processor = DefinitionProcessor(...)
-        Phase2FrameworkDetectionMixin.enhance(processor)
+    This class encapsulates the logic for detecting web frameworks (like Django,
+    Spring, Rails, Express) from source code or project structure. It can be
+    mixed into other processors to add framework awareness.
     """
 
     def __init__(self):
-        """Initialize framework detectors for all languages."""
-        self.py_detector = PythonFrameworkDetector()
-        self.java_detector = JavaFrameworkDetector()
-        self.rb_detector = RubyFrameworkDetector()
-        self.js_detector = JsFrameworkDetector()
+        """Initializes framework detectors for each supported language."""
+        self.registry = FrameworkDetectorRegistry()
 
     def detect_framework(
         self, language: str, source_code: str, repo_root: Path | None = None
     ) -> str | None:
-        """Detect framework for given language.
+        """
+        Detects the framework for a given language and source code.
 
         Args:
-            language: Programming language (python, java, ruby, javascript)
-            source_code: Source code content
-            repo_root: Repository root for project-level detection
+            language (str): The programming language (e.g., "python", "java").
+            source_code (str): The source code content of a file.
+            repo_root (Path | None): The repository root, for project-level detection.
 
         Returns:
-            Framework name or None if not detected
-
-        Example:
-            framework = processor.detect_framework("python", source_code)
-            if framework:
-                print(f"Detected {framework}")
+            The name of the detected framework as a string, or None if no framework is detected.
         """
         language = language.lower()
-
-        if language == "python":
-            framework_type = self.py_detector.detect_framework(None, source_code)
-            return framework_type.value if framework_type else None
-
-        elif language == "java":
-            framework_type = self.java_detector.detect_framework(source_code)
-            return framework_type.value if framework_type else None
-
-        elif language == "ruby":
-            if repo_root:
-                framework_type = self.rb_detector.detect_from_project(Path(repo_root))
-            else:
-                framework_type = self.rb_detector.detect_from_source(source_code)
-            return framework_type.value if framework_type else None
-
-        elif language in ["javascript", "typescript", "js", "ts"]:
-            framework_type = self.js_detector.detect_from_source(source_code)
-            return framework_type.value if framework_type else None
-
-        return None
+        registry = (
+            self.registry if not repo_root else FrameworkDetectorRegistry(repo_root)
+        )
+        result = registry.detect_for_language(language, source_code)
+        return result.framework_type
 
     def get_framework_metadata(
         self, language: str, source_code: str, framework: str | None = None
     ) -> dict[str, Any]:
-        """Get framework-specific metadata.
+        """
+        Extracts framework-specific metadata from the source code.
+
+        For example, for a web framework, this might extract API endpoints, routes,
+        or database models.
 
         Args:
-            language: Programming language
-            source_code: Source code content
-            framework: Optional pre-detected framework name
+            language (str): The programming language.
+            source_code (str): The source code content.
+            framework (str | None): An optional, pre-detected framework name to guide extraction.
 
         Returns:
-            Dictionary with framework metadata
-
-        Example:
-            metadata = processor.get_framework_metadata("python", source_code)
-            print(f"Endpoints: {metadata.get('endpoints', [])}")
+            A dictionary containing the extracted framework-specific metadata.
         """
         language = language.lower()
-        framework = framework or self.detect_framework(language, source_code)
-
-        if not framework:
-            return {"framework": None, "detected": False}
-
-        if language == "python":
-            return self.py_detector.get_framework_metadata(
-                cast(PythonFrameworkType, framework), None, source_code
-            )
-
-        elif language == "java":
-            return self.java_detector.get_framework_metadata(source_code)
-
-        elif language == "ruby":
-            return self.rb_detector.get_framework_metadata(source_code=source_code)
-
-        elif language in ["javascript", "typescript", "js", "ts"]:
-            return self.js_detector.get_framework_metadata(source_code)
-
-        return {"framework": framework, "detected": True}
+        result = self.registry.detect_for_language(language, source_code)
+        if result.metadata:
+            if framework and not result.framework_type:
+                result.metadata["framework_type"] = framework
+            return result.metadata
+        if framework:
+            return {"framework_type": framework, "detected": False}
+        return {"framework_type": None, "detected": False}
 
 
 class Phase2EmbeddingStrategyMixin:
-    """Mixin for adding embedding strategy support to DefinitionProcessor.
+    """
+    A mixin that adds support for different embedding text extraction strategies.
 
-    This mixin adds capability to extract embedding text using different
-    strategies (RAW, SEMANTIC, RICH).
-
-    Usage:
-        processor = DefinitionProcessor(...)
-        Phase2EmbeddingStrategyMixin.enhance(processor)
+    This class allows for the generation of text for a code node using various
+    levels of detail, from a raw code snippet to a rich, semantic description.
     """
 
     def __init__(self):
-        """Initialize embedding text extractor."""
+        """Initializes the embedding text extractor and sets a default strategy."""
         self.embedding_extractor = EmbeddingTextExtractor()
         self.embedding_strategy = EmbeddingStrategy.SEMANTIC
 
     def set_embedding_strategy(self, strategy: EmbeddingStrategy) -> None:
-        """Set the embedding strategy to use.
+        """
+        Sets the embedding strategy to be used for text extraction.
 
         Args:
-            strategy: EmbeddingStrategy.RAW, SEMANTIC, or RICH
-
-        Example:
-            processor.set_embedding_strategy(EmbeddingStrategy.RICH)
+            strategy (EmbeddingStrategy): The desired strategy (e.g., RAW, SEMANTIC, RICH).
         """
         self.embedding_strategy = strategy
 
@@ -173,23 +140,16 @@ class Phase2EmbeddingStrategyMixin:
         framework: str | None = None,
         language: str = "python",
     ) -> dict[str, Any]:
-        """Extract embedding text from node.
+        """
+        Extracts the text for embedding from a `NodeInfo` object.
 
         Args:
-            node_info: Node information
-            framework: Detected framework name
-            language: Programming language
+            node_info (NodeInfo): A structured representation of the code node.
+            framework (str | None): The name of the detected framework, for context.
+            language (str): The programming language of the node.
 
         Returns:
-            Dictionary with embedding_text and metadata
-
-        Example:
-            embedding = processor.extract_embedding_text(
-                node_info,
-                framework="django",
-                language="python"
-            )
-            print(f"Text length: {len(embedding['text'])}")
+            A dictionary containing the generated text, metadata, entity type, and strategy used.
         """
         payload = self.embedding_extractor.extract(
             node_info,
@@ -208,29 +168,17 @@ class Phase2EmbeddingStrategyMixin:
     def extract_embedding_from_dict(
         self, node_dict: dict[str, Any], **kwargs
     ) -> dict[str, Any]:
-        """Extract embedding text from dictionary representation.
+        """
+        Extracts embedding text from a dictionary representation of a node.
+
+        This is a convenience method that wraps `extract_embedding_text`.
 
         Args:
-            node_dict: Dictionary with node information
-            **kwargs: framework, language, etc.
+            node_dict (dict[str, Any]): A dictionary containing node information.
+            **kwargs: Additional arguments like `framework` and `language`.
 
         Returns:
-            Dictionary with embedding_text and metadata
-
-        Example:
-            node = {
-                "node_id": "func_1",
-                "kind": "function",
-                "name": "process_order",
-                "docstring": "Process customer order",
-                "body_text": "return OrderProcessor().handle(order)",
-            }
-
-            embedding = processor.extract_embedding_from_dict(
-                node,
-                framework="django",
-                language="python"
-            )
+            A dictionary containing the generated text and associated metadata.
         """
         payload = self.embedding_extractor.extract_from_dict(
             node_dict, strategy=self.embedding_strategy, **kwargs
@@ -245,41 +193,22 @@ class Phase2EmbeddingStrategyMixin:
 
 
 class Phase2EnrichedDefinitionProcessor:
-    """Complete Phase 2 enhanced definition processor.
+    """
+    An adapter that combines a base processor with Phase 2 enrichment capabilities.
 
-    Combines framework detection and embedding strategy capabilities.
-    This is a composition-based adapter that wraps existing DefinitionProcessor
-    without modifying it.
-
-    Features:
-        - Framework detection
-        - Embedding text extraction with multiple strategies
-        - Metadata enrichment
-        - Backward compatible
-
-    Example:
-        # Create standard processor
-        base_processor = DefinitionProcessor(...)
-
-        # Wrap with Phase 2 capabilities
-        enhanced = Phase2EnrichedDefinitionProcessor(base_processor)
-
-        # Use enhanced features
-        enhanced.set_embedding_strategy(EmbeddingStrategy.RICH)
-        nodes = enhanced.process_with_enrichment(
-            file_path,
-            language,
-            repo_root
-        )
-
-        # Each node now has framework and embedding metadata
+    This class acts as a wrapper around a standard `DefinitionProcessor`. It uses
+    composition to add framework detection and embedding text extraction without
+    modifying the base processor's logic. It processes a file, gets the initial
+    set of nodes, and then enriches each node with Phase 2 metadata.
     """
 
     def __init__(self, base_processor=None):
-        """Initialize enhanced processor.
+        """
+        Initializes the enhanced processor.
 
         Args:
-            base_processor: Optional existing DefinitionProcessor to wrap
+            base_processor: An optional instance of a `DefinitionProcessor` (or similar)
+                            to be wrapped.
         """
         self.base_processor = base_processor
         self.framework_detector = Phase2FrameworkDetectionMixin()
@@ -292,28 +221,24 @@ class Phase2EnrichedDefinitionProcessor:
         repo_root: str | None = None,
         embedding_strategy: EmbeddingStrategy = EmbeddingStrategy.SEMANTIC,
     ) -> list[EnrichedNodeMetadata]:
-        """Process file with Phase 2 enrichment.
+        """
+        Processes a source file and returns a list of fully enriched node metadata.
+
+        This method orchestrates the entire Phase 2 pipeline:
+        1. Reads the source file.
+        2. Detects the framework.
+        3. Runs the base processor to get initial nodes.
+        4. For each node, extracts the embedding text using the specified strategy.
+        5. Bundles all information into `EnrichedNodeMetadata` objects.
 
         Args:
-            file_path: Path to source file
-            language: Programming language
-            repo_root: Repository root for project-level detection
-            embedding_strategy: Which embedding strategy to use
+            file_path (str): The path to the source file.
+            language (str): The programming language of the file.
+            repo_root (str | None): The path to the repository root.
+            embedding_strategy (EmbeddingStrategy): The strategy to use for embedding text.
 
         Returns:
-            List of EnrichedNodeMetadata objects
-
-        Example:
-            enriched_nodes = processor.process_with_enrichment(
-                "app/views.py",
-                "python",
-                ".",
-                EmbeddingStrategy.RICH
-            )
-
-            for node in enriched_nodes:
-                print(f"{node.node_id}: {node.framework_type}")
-                print(f"Embedding text length: {len(node.embedding_text)}")
+            A list of `EnrichedNodeMetadata` objects, one for each processed node.
         """
         self.embedding_extractor.set_embedding_strategy(embedding_strategy)
 
@@ -360,17 +285,18 @@ class Phase2EnrichedDefinitionProcessor:
         return enriched_nodes
 
     def _convert_to_node_info(self, base_node: Any, source_code: str) -> NodeInfo:
-        """Convert base processor node to NodeInfo.
+        """
+        Converts a node object from the base processor into a standardized `NodeInfo` object.
 
-        This is a placeholder - actual implementation depends on
-        the base processor's node structure.
+        This acts as an adapter between the base processor's output format and the
+        format expected by the embedding extractor.
 
         Args:
-            base_node: Node from base processor
-            source_code: Source code for context
+            base_node (Any): The node object from the base processor.
+            source_code (str): The source code of the file for context.
 
         Returns:
-            NodeInfo object
+            A `NodeInfo` object populated with data from the base node.
         """
         node_id = getattr(base_node, "id", "unknown")
         kind = getattr(base_node, "kind", "unknown")
@@ -391,27 +317,19 @@ class Phase2EnrichedDefinitionProcessor:
     def process_and_embed(
         self, file_path: str, language: str, **kwargs
     ) -> list[dict[str, Any]]:
-        """Process file and return enriched nodes as dictionaries.
+        """
+        A convenience method that processes a file and returns the enriched data as dictionaries.
+
+        This is useful for pipelines that will directly use the dictionary output, for example,
+        to send to a vector database.
 
         Args:
-            file_path: Path to source file
-            language: Programming language
-            **kwargs: Additional arguments (repo_root, embedding_strategy, etc.)
+            file_path (str): The path to the source file.
+            language (str): The programming language.
+            **kwargs: Additional arguments like `repo_root` and `embedding_strategy`.
 
         Returns:
-            List of enriched node dictionaries
-
-        Example:
-            nodes = processor.process_and_embed(
-                "app/models.py",
-                "python",
-                repo_root=".",
-                embedding_strategy=EmbeddingStrategy.RICH
-            )
-
-            for node in nodes:
-                # node has keys: node_id, framework_type, embedding_text, etc.
-                ingest_to_vector_db(node['embedding_text'], node['metadata'])
+            A list of dictionaries, where each dictionary represents an enriched node.
         """
         embedding_strategy = kwargs.pop(
             "embedding_strategy", EmbeddingStrategy.SEMANTIC

@@ -1,3 +1,12 @@
+"""
+This module defines the configuration settings for the graph update process.
+
+It includes a `GraphUpdateConfig` data class to hold all the configuration
+parameters and a `GraphUpdateConfigService` to load these settings from
+environment variables. This provides a centralized way to manage the behavior
+of the graph update pipeline, allowing for easy tuning and feature flagging.
+"""
+
 from __future__ import annotations
 
 import os
@@ -6,6 +15,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class GraphUpdateConfig:
+    """
+    A data class to hold all configuration settings for the graph update process.
+
+    This class is immutable (`frozen=True`) to ensure that the configuration
+    is not changed during a run. Each attribute corresponds to a specific
+    feature or setting that can be controlled via environment variables.
+    """
+
     ast_cache_ttl: float | None
     selective_update_enabled: bool
     edge_only_update_enabled: bool
@@ -27,13 +44,28 @@ class GraphUpdateConfig:
     analysis_enabled: bool
     framework_metadata_enabled: bool
     tailwind_metadata_enabled: bool
+    phase2_integration_enabled: bool
+    phase2_embedding_strategy: str
     pass2_resolver_enabled: bool
     reparse_registry_enabled: bool
     parse_strict_enabled: bool
 
 
 class GraphUpdateConfigService:
+    """
+    A service responsible for loading the graph update configuration from environment variables.
+    """
+
     def load(self) -> GraphUpdateConfig:
+        """
+        Loads all configuration settings from environment variables and returns a `GraphUpdateConfig` object.
+
+        This method reads various `CODEGRAPH_*` environment variables, provides
+        sensible defaults, and populates the configuration data class.
+
+        Returns:
+            A `GraphUpdateConfig` instance with all the loaded settings.
+        """
         ast_cache_ttl_env = os.getenv("CODEGRAPH_AST_CACHE_TTL")
         ast_cache_ttl = float(ast_cache_ttl_env) if ast_cache_ttl_env else None
 
@@ -112,6 +144,12 @@ class GraphUpdateConfigService:
         tailwind_metadata_enabled = os.getenv(
             "CODEGRAPH_TAILWIND_METADATA", ""
         ).lower() in {"1", "true", "yes"}
+        phase2_integration_enabled = os.getenv(
+            "CODEGRAPH_PHASE2_INTEGRATION", ""
+        ).lower() not in {"0", "false", "no"}
+        phase2_embedding_strategy = os.getenv(
+            "CODEGRAPH_PHASE2_EMBEDDING_STRATEGY", "semantic"
+        ).lower()
         pass2_resolver_enabled = os.getenv("CODEGRAPH_PASS2_RESOLVER", "").lower() in {
             "1",
             "true",
@@ -148,6 +186,8 @@ class GraphUpdateConfigService:
             analysis_enabled=analysis_enabled,
             framework_metadata_enabled=framework_metadata_enabled,
             tailwind_metadata_enabled=tailwind_metadata_enabled,
+            phase2_integration_enabled=phase2_integration_enabled,
+            phase2_embedding_strategy=phase2_embedding_strategy,
             pass2_resolver_enabled=pass2_resolver_enabled,
             reparse_registry_enabled=reparse_registry_enabled,
             parse_strict_enabled=parse_strict_enabled,

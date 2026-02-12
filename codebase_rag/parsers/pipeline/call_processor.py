@@ -1,3 +1,14 @@
+"""
+This module defines the CallProcessor, a critical component in the parsing pipeline
+responsible for identifying, resolving, and ingesting function and method calls.
+
+The CallProcessor traverses the Abstract Syntax Tree (AST) of each source file,
+finds call expressions, and uses the CallResolver to determine the fully qualified
+name (QN) of the callee. It handles calls within functions, methods, and at the
+module level, creating `CALLS` relationships in the graph database to build the
+code's call graph.
+"""
+
 from __future__ import annotations
 
 import json
@@ -33,16 +44,19 @@ from .import_processor import ImportProcessor
 
 class CallProcessor:
     """
-    Process function and method calls within source code.
+    Processes function and method calls within source code to build the call graph.
 
-    This class handles the extraction of function calls from the syntax tree,
-    resolves them to their definitions using CallResolver, and ingests the
-    relationships into the graph database.
+    This class orchestrates the discovery and resolution of call expressions. It uses
+    tree-sitter queries to find call sites in the AST, extracts the call name, and
+    then employs a `CallResolver` to determine the target function or method's fully
+    qualified name. It handles various contexts, including regular functions, class
+    methods, and module-level calls. Resolved calls are then ingested into the graph
+    database as `CALLS` relationships.
 
     Attributes:
-        ingestor (IngestorProtocol): The data ingestor.
-        repo_path (Path): Path to the repository root.
-        project_name (str): Name of the project.
+        ingestor (IngestorProtocol): The service for writing data to the graph.
+        repo_path (Path): The root path of the repository being parsed.
+        project_name (str): The name of the project.
     """
 
     def __init__(
@@ -56,16 +70,16 @@ class CallProcessor:
         type_inference: TypeInferenceEngine | None = None,
     ) -> None:
         """
-        Initialize the CallProcessor.
+        Initializes the CallProcessor.
 
         Args:
-            ingestor (IngestorProtocol): The data ingestor.
-            repo_path (Path): Path to the repository root.
-            project_name (str): Name of the project.
-            function_registry (FunctionRegistryTrieProtocol): Function registry trie.
-            import_processor (ImportProcessor): Import processor instance.
-            class_inheritance (dict[str, list[str]]): Class inheritance map.
-            type_inference (TypeInferenceEngine | None): Type inference engine.
+            ingestor (IngestorProtocol): The service for writing data to the graph.
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            function_registry (FunctionRegistryTrieProtocol): A trie containing all found functions/classes.
+            import_processor (ImportProcessor): The processor that handled import statements.
+            class_inheritance (dict[str, list[str]]): A map of class inheritance relationships.
+            type_inference (TypeInferenceEngine | None): The engine for inferring variable types.
         """
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -98,14 +112,14 @@ class CallProcessor:
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
         """
-        Extract the name from a node field.
+        Extracts the text of a named child field from a tree-sitter node.
 
         Args:
-            node (Node): The tree-sitter node.
-            field (str): The field name to look for. Defaults to cs.FIELD_NAME.
+            node (Node): The parent tree-sitter node.
+            field (str): The name of the field to extract (e.g., "name").
 
         Returns:
-            str | None: The extracted name or None if not found.
+            The decoded text content of the child node, or None if not found.
         """
         name_node = node.child_by_field_name(field)
         if not name_node:
@@ -120,13 +134,17 @@ class CallProcessor:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         """
-        Process all calls within a file.
+        Processes all function and method calls within a single source file.
+
+        This is the main entry point for processing a file. It orchestrates the
+        traversal of the AST to find calls within functions, classes, and at the
+        module level.
 
         Args:
-            file_path (Path): Path to the source file.
-            root_node (Node): The root node of the syntax tree.
-            language (cs.SupportedLanguage): The language of the file.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Dictionary of queries.
+            file_path (Path): The absolute path to the source file.
+            root_node (Node): The root node of the file's AST.
+            language (cs.SupportedLanguage): The programming language of the file.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
         """
         if language in {cs.SupportedLanguage.JSON, cs.SupportedLanguage.YAML}:
             return
@@ -191,15 +209,15 @@ class CallProcessor:
         source_text: str | None,
     ) -> None:
         """
-        Process calls occurring inside function definitions.
+        Finds all top-level function definitions and processes the calls within them.
 
         Args:
-            root_node (Node): Root node of the file.
-            module_qn (str): Qualified name of the module.
-            language (cs.SupportedLanguage): Programming language.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language queries.
-            source_bytes (bytes | None): Source code content in bytes.
-            source_text (str | None): Source code content as string.
+            root_node (Node): The root AST node of the file.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
+            source_bytes (bytes | None): The raw byte content of the source file.
+            source_text (str | None): The decoded string content of the source file.
         """
         result = get_function_captures(root_node, language, queries)
         if not result:
@@ -235,13 +253,13 @@ class CallProcessor:
 
     def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
         """
-        Extract class name from a Rust implementation block.
+        Extracts the class name from a Rust `impl` block.
 
         Args:
-            class_node (Node): The implementation node.
+            class_node (Node): The `impl` item node.
 
         Returns:
-            str | None: The class name or None.
+            The name of the class being implemented, or None.
         """
         class_name = self._get_node_name(class_node, cs.FIELD_TYPE)
         if class_name:
@@ -259,14 +277,16 @@ class CallProcessor:
         self, class_node: Node, language: cs.SupportedLanguage
     ) -> str | None:
         """
-        Get the class name for a given class node.
+        Gets the name of a class from its corresponding AST node.
+
+        Handles special cases like Rust `impl` blocks.
 
         Args:
-            class_node (Node): The class node.
-            language (cs.SupportedLanguage): The language.
+            class_node (Node): The class or impl node.
+            language (cs.SupportedLanguage): The programming language.
 
         Returns:
-            str | None: The class name or None.
+            The name of the class, or None if it cannot be determined.
         """
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             return self._get_rust_impl_class_name(class_node)
@@ -283,16 +303,16 @@ class CallProcessor:
         source_text: str | None,
     ) -> None:
         """
-        Process calls occurring inside method definitions within a class.
+        Processes calls occurring inside method definitions within a class body.
 
         Args:
-            body_node (Node): The body node of the class.
-            class_qn (str): Qualified name of the class.
-            module_qn (str): Qualified name of the module.
-            language (cs.SupportedLanguage): Programming language.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language queries.
-            source_bytes (bytes | None): Source content bytes.
-            source_text (str | None): Source content string.
+            body_node (Node): The AST node representing the class body.
+            class_qn (str): The qualified name of the containing class.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
+            source_bytes (bytes | None): The raw byte content of the source file.
+            source_text (str | None): The decoded string content of the source file.
         """
         method_query = queries[language][cs.QUERY_FUNCTIONS]
         if not method_query:
@@ -329,15 +349,15 @@ class CallProcessor:
         source_text: str | None,
     ) -> None:
         """
-        Iterate over classes and process calls within their methods.
+        Finds all class definitions in the file and processes calls within their methods.
 
         Args:
-            root_node (Node): Root node of the file.
-            module_qn (str): Qualified name of the module.
-            language (cs.SupportedLanguage): Programming language.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language queries.
-            source_bytes (bytes | None): Source content bytes.
-            source_text (str | None): Source content string.
+            root_node (Node): The root AST node of the file.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
+            source_bytes (bytes | None): The raw byte content of the source file.
+            source_text (str | None): The decoded string content of the source file.
         """
         query = queries[language][cs.QUERY_CLASSES]
         if not query:
@@ -374,15 +394,17 @@ class CallProcessor:
         source_text: str | None,
     ) -> None:
         """
-        Process calls occurring at the module level (top-level scripts).
+        Processes calls that occur at the top level of a module (outside any function or class).
+
+        These calls are attributed to the module itself.
 
         Args:
-            root_node (Node): Root node of the file.
-            module_qn (str): Qualified name of the module.
-            language (cs.SupportedLanguage): Programming language.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language queries.
-            source_bytes (bytes | None): Source content bytes.
-            source_text (str | None): Source content string.
+            root_node (Node): The root AST node of the file.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
+            source_bytes (bytes | None): The raw byte content of the source file.
+            source_text (str | None): The decoded string content of the source file.
         """
         self._ingest_function_calls(
             root_node,
@@ -406,16 +428,20 @@ class CallProcessor:
         source_text: str | None,
     ) -> None:
         """
-        Process and record file-level calls if enabled.
+        Processes and records file-level calls, attributing them to the `File` node.
+
+        This is an optional feature, enabled by configuration, that creates `CALLS`
+        relationships directly from `File` nodes to the functions they call at the
+        top level.
 
         Args:
-            file_path (Path): Path to the file.
-            root_node (Node): Root node.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Language.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Queries.
-            source_bytes (bytes | None): Source bytes.
-            source_text (str | None): Source text.
+            file_path (Path): The path to the file being processed.
+            root_node (Node): The root AST node of the file.
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
+            source_bytes (bytes | None): The raw byte content of the source file.
+            source_text (str | None): The decoded string content of the source file.
         """
         if not self._file_level_calls_enabled:
             return
@@ -488,14 +514,14 @@ class CallProcessor:
     @staticmethod
     def _is_module_level_call(call_node: Node, lang_config: LanguageSpec) -> bool:
         """
-        Check if a call node is at the module level (not inside a function or class).
+        Checks if a call node is at the module level (i.e., not inside a function or class).
 
         Args:
-            call_node (Node): The call node.
-            lang_config (LanguageSpec): Language configuration.
+            call_node (Node): The call node to check.
+            lang_config (LanguageSpec): The language configuration specifying function/class node types.
 
         Returns:
-            bool: True if it is a module-level call, False otherwise.
+            True if the call is at the module level, False otherwise.
         """
         current = call_node.parent
         while isinstance(current, Node):
@@ -508,13 +534,18 @@ class CallProcessor:
 
     def _ensure_placeholder_function(self, call_name: str) -> tuple[str, str]:
         """
-        Ensure a placeholder function node exists for an unresolved call.
+        Ensures a placeholder function node exists for an unresolved call.
+
+        This is used when a call cannot be resolved to a concrete function, creating a
+        generic node to represent the call target. This is useful for framework-specific
+        or dynamic calls.
 
         Args:
-            call_name (str): The name of the call.
+            call_name (str): The name of the unresolved call.
 
         Returns:
-            tuple[str, str]: The node label and qualified name of the placeholder.
+            A tuple containing the node label (`Function`) and the qualified name of the
+            created or existing placeholder node.
         """
         normalized = re.sub(r"[^A-Za-z0-9_]+", "_", call_name).strip("_")
         if not normalized:
@@ -538,6 +569,13 @@ class CallProcessor:
         return cs.NodeLabel.FUNCTION, placeholder_qn
 
     def _ensure_external_callee(self, callee_type: str, callee_qn: str) -> None:
+        """
+        Ensures that a node for an external or built-in callee exists in the graph.
+
+        Args:
+            callee_type (str): The node label of the callee (e.g., 'Function').
+            callee_qn (str): The fully qualified name of the callee.
+        """
         callee_name = callee_qn.rsplit(cs.SEPARATOR_DOT, 1)[-1]
         self.ingestor.ensure_node_batch(
             callee_type,
@@ -550,13 +588,17 @@ class CallProcessor:
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """
-        Extract the target name of a function call from the node.
+        Extracts the target name of a function call from its AST node.
+
+        This method handles various AST node types across different languages to
+        reliably extract the name or expression being called.
 
         Args:
-            call_node (Node): The call node.
+            call_node (Node): The AST node representing the call expression.
 
         Returns:
-            str | None: The name of the called function or None.
+            The string representation of the call name (e.g., "my_func", "obj.method"),
+            or None if it cannot be determined.
         """
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             match func_child.type:
@@ -610,13 +652,16 @@ class CallProcessor:
 
     def _get_iife_target_name(self, parenthesized_expr: Node) -> str | None:
         """
-        Generate a name for an IIFE (Immediately Invoked Function Expression).
+        Generates a unique name for an IIFE (Immediately Invoked Function Expression).
+
+        Since IIFEs are anonymous, a synthetic name is created based on their
+        location in the source file to serve as a unique identifier.
 
         Args:
-            parenthesized_expr (Node): The parenthesized expression node.
+            parenthesized_expr (Node): The parenthesized expression node containing the function.
 
         Returns:
-            str | None: The generated IIFE name or None.
+            A generated name for the IIFE (e.g., "__iife_func_10_5"), or None.
         """
         for child in parenthesized_expr.children:
             match child.type:
@@ -639,18 +684,21 @@ class CallProcessor:
         source_text: str | None = None,
     ) -> None:
         """
-        Ingest all function calls found within a caller node (function/method/module).
+        Finds, resolves, and ingests all calls within a given scope (function, method, or module).
+
+        This is the core logic loop that iterates through call nodes found by a query,
+        resolves them, and creates the `CALLS` relationship in the graph.
 
         Args:
-            caller_node (Node): The node containing calls.
-            caller_qn (str): Qualified name of the caller.
-            caller_type (str): Type of the caller (e.g., FUNCTION, METHOD).
-            module_qn (str): Qualified name of the module.
-            language (cs.SupportedLanguage): Programming language.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language queries.
-            class_context (str | None): Context if inside a class.
-            source_bytes (bytes | None): Source bytes for dynamic analysis.
-            source_text (str | None): Source text for dynamic analysis.
+            caller_node (Node): The AST node for the scope containing the calls (e.g., function body).
+            caller_qn (str): The qualified name of the calling entity.
+            caller_type (str): The node label of the caller ('Function', 'Method', 'Module').
+            module_qn (str): The qualified name of the module.
+            language (cs.SupportedLanguage): The programming language.
+            queries (dict[cs.SupportedLanguage, LanguageQueries]): Language-specific queries.
+            class_context (str | None): The qualified name of the containing class, if any.
+            source_bytes (bytes | None): The raw byte content for dynamic analysis.
+            source_text (str | None): The decoded string content for dynamic analysis.
         """
         calls_query = queries[language].get(cs.QUERY_CALLS)
         if not calls_query:
@@ -734,16 +782,19 @@ class CallProcessor:
         lang_config: LanguageSpec,
     ) -> str | None:
         """
-        Build the qualified name for nested functions.
+        Builds the fully qualified name for a nested function.
+
+        It traverses up the AST from the function node to construct the full path,
+        including the names of any enclosing functions.
 
         Args:
-            func_node (Node): The function node.
-            module_qn (str): Module qualified name.
-            func_name (str): Function name.
-            lang_config (LanguageSpec): Language configuration.
+            func_node (Node): The AST node of the nested function.
+            module_qn (str): The qualified name of the containing module.
+            func_name (str): The simple name of the nested function.
+            lang_config (LanguageSpec): The language configuration.
 
         Returns:
-            str | None: The qualified name or None.
+            The fully qualified name for the nested function, or None if it's inside a class.
         """
         if lang_config.language in {
             cs.SupportedLanguage.JSON,
@@ -781,14 +832,14 @@ class CallProcessor:
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         """
-        Check if a function node is a method.
+        Determines if a function node represents a class method.
 
         Args:
-            func_node (Node): Function node.
-            lang_config (LanguageSpec): Language config.
+            func_node (Node): The function node to check.
+            lang_config (LanguageSpec): The language configuration.
 
         Returns:
-            bool: True if it is a method.
+            True if the function is a method, False otherwise.
         """
         return is_method_node(func_node, lang_config)
 
@@ -800,16 +851,19 @@ class CallProcessor:
         source_text: str | None,
     ) -> tuple[str, str] | None:
         """
-        Attempt to resolve a dynamic call using heuristics.
+        Attempts to resolve a dynamic call using heuristic-based analysis.
+
+        This is a fallback for when static resolution fails. It extracts a snippet
+        of code around the call and uses a `DynamicCallResolver` to guess the target.
 
         Args:
-            call_node (Node): The call node.
-            module_qn (str): Module qualified name.
-            source_bytes (bytes | None): Source bytes.
-            source_text (str | None): Source text.
+            call_node (Node): The AST node of the call.
+            module_qn (str): The qualified name of the module.
+            source_bytes (bytes | None): The raw byte content of the file.
+            source_text (str | None): The decoded string content of the file.
 
         Returns:
-            tuple[str, str] | None: Tuple of type and qualified name, or None.
+            A tuple of (node_label, qualified_name) if resolved, otherwise None.
         """
         if not self._heuristic_calls_enabled:
             return None
@@ -823,15 +877,15 @@ class CallProcessor:
         call_node: Node, source_bytes: bytes | None, source_text: str | None
     ) -> str | None:
         """
-        Extract the code snippet corresponding to the call.
+        Extracts the source code snippet corresponding to a call node.
 
         Args:
-            call_node (Node): Call node.
-            source_bytes (bytes | None): Source bytes.
-            source_text (str | None): Source text.
+            call_node (Node): The call's AST node.
+            source_bytes (bytes | None): The raw byte content of the file.
+            source_text (str | None): The decoded string content of the file.
 
         Returns:
-            str | None: Extracted snippet or None.
+            The source text of the call expression, or None.
         """
         if isinstance(source_bytes, bytes | bytearray) and hasattr(
             call_node, "start_byte"

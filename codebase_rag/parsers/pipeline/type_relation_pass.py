@@ -1,3 +1,15 @@
+"""
+This module defines the `TypeRelationPass`, a parsing phase dedicated to identifying
+and creating relationships between types, such as class inheritance, interface
+implementation, and struct embedding.
+
+After the initial definition pass has identified all the classes, interfaces, and
+other types, this pass runs to connect them. It uses regular expressions to parse
+inheritance and implementation clauses from the source code of supported languages
+(currently C#, Go, and PHP). It then creates `INHERITS`, `IMPLEMENTS`, or `EMBEDS`
+relationships in the graph database, building out the type hierarchy of the codebase.
+"""
+
 from __future__ import annotations
 
 import json
@@ -16,11 +28,13 @@ from codebase_rag.services import IngestorProtocol
 
 class TypeRelationPass:
     """
-    Resolves type relationships such as inheritance and interface implementation.
+    Resolves and creates type relationships like inheritance and implementation.
 
-    This class processes files in supported languages (C#, Go, PHP) to extract
-    type definitions and their relationships. It creates relationship edges
-    in the graph to represent these hierarchies.
+    This pass processes the AST cache, focusing on languages with explicit type
+    hierarchies like C#, Go, and PHP. It uses regular expressions to find
+    class/interface definitions and their parent types, then creates the
+    corresponding `INHERITS`, `IMPLEMENTS`, or `EMBEDS` relationships in the graph.
+    This pass is controlled by the `CODEGRAPH_TYPE_RELATIONS` environment variable.
     """
 
     def __init__(
@@ -31,6 +45,16 @@ class TypeRelationPass:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         function_registry: FunctionRegistryTrieProtocol,
     ) -> None:
+        """
+        Initializes the TypeRelationPass.
+
+        Args:
+            ingestor (IngestorProtocol): The service for writing data to the graph.
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            queries (dict): A dictionary of language-specific tree-sitter queries.
+            function_registry (FunctionRegistryTrieProtocol): A trie of all known functions/types.
+        """
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -47,10 +71,13 @@ class TypeRelationPass:
         self, ast_items: Iterable[tuple[Path, tuple[object, cs.SupportedLanguage]]]
     ) -> None:
         """
-        Process cached AST items to identify type relationships.
+        Processes the cached ASTs to find and create type relationships.
+
+        This is the main entry point for the pass. It iterates through all parsed
+        files and dispatches to language-specific handlers.
 
         Args:
-            ast_items (Iterable): Iterable of (file_path, (root_node, language)) tuples.
+            ast_items (Iterable): An iterable of (file_path, (root_node, language)) tuples.
         """
         if not self.enabled:
             return
@@ -78,11 +105,11 @@ class TypeRelationPass:
 
     def _process_csharp_types(self, source: str, module_qn: str) -> None:
         """
-        Extract and link C# types (classes, interfaces) and their relationships.
+        Extracts and links C# types (classes, interfaces) and their relationships.
 
         Args:
-            source (str): Source code content.
-            module_qn (str): Module qualified name.
+            source (str): The source code content of the C# file.
+            module_qn (str): The qualified name of the module.
         """
         class_pattern = re.compile(
             r"\b(class|struct)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<generics><[^>{}]+>)?\s*(?:\:\s*(?P<parents>[^\{]+))?",
@@ -133,11 +160,11 @@ class TypeRelationPass:
 
     def _process_go_types(self, source: str, module_qn: str) -> None:
         """
-        Extract and link Go types (structs, interfaces) and embeddings.
+        Extracts and links Go types (structs, interfaces) and their embeddings.
 
         Args:
-            source (str): Source code content.
-            module_qn (str): Module qualified name.
+            source (str): The source code content of the Go file.
+            module_qn (str): The qualified name of the module.
         """
         type_pattern = re.compile(
             r"\btype\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<generics>\[[^\]]+\])?\s*(?P<kind>struct|interface)\s*\{(?P<body>[\s\S]*?)\}",
@@ -185,11 +212,11 @@ class TypeRelationPass:
 
     def _process_php_types(self, source: str, module_qn: str) -> None:
         """
-        Extract and link PHP types (classes, interfaces) and inheritance.
+        Extracts and links PHP types (classes, interfaces) and their inheritance.
 
         Args:
-            source (str): Source code content.
-            module_qn (str): Module qualified name.
+            source (str): The source code content of the PHP file.
+            module_qn (str): The qualified name of the module.
         """
         class_pattern = re.compile(
             r"\bclass\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:extends\s+(?P<extends>[A-Za-z_][A-Za-z0-9_\\]+))?\s*(?:implements\s+(?P<impls>[^\{]+))?",
@@ -261,13 +288,16 @@ class TypeRelationPass:
         module_qn: str,
     ) -> None:
         """
-        Link C# classes to their parent classes and interfaces.
+        Links a C# class to its parent class and implemented interfaces.
+
+        In C#, the first parent is the base class (if it's not an interface),
+        and the rest are interfaces.
 
         Args:
-            class_qn (str): Qualified name of the child class.
-            class_label (str): Label of the child node.
-            parents (list[str]): List of parent type names.
-            module_qn (str): Module qualified name.
+            class_qn (str): The qualified name of the child class.
+            class_label (str): The node label of the child (e.g., 'Class').
+            parents (list[str]): A list of parent type names.
+            module_qn (str): The qualified name of the current module.
         """
         if not parents:
             return
@@ -313,13 +343,16 @@ class TypeRelationPass:
 
     def _split_parents(self, raw: str | None) -> list[str]:
         """
-        Parse a string of parent types (e.g., "BaseClass, IInterface") into a list.
+        Parses a string of parent types (e.g., "Base, IInterface<T>") into a list.
+
+        This helper cleans the input string and splits it by commas, removing
+        generic type arguments for simplicity.
 
         Args:
-            raw (str | None): Raw string containing parent types.
+            raw (str | None): The raw string from the class/interface definition.
 
         Returns:
-            list[str]: List of parent type names.
+            A list of clean parent type names.
         """
         if not raw:
             return []
@@ -331,12 +364,15 @@ class TypeRelationPass:
         self, type_qn: str, type_label: str, generics_raw: str | None
     ) -> None:
         """
-        Ingest generic type parameters for a type.
+        Ingests generic type parameters for a given type.
+
+        This creates `Type` nodes for each parameter (e.g., 'T', 'U') and links
+        them to the parent type with a `HAS_TYPE_PARAMETER` relationship.
 
         Args:
-            type_qn (str): Qualified name of the type.
-            type_label (str): Label of the type node.
-            generics_raw (str | None): Raw string containing generic parameters (e.g., "<T, U>").
+            type_qn (str): The qualified name of the generic type.
+            type_label (str): The node label of the generic type.
+            generics_raw (str | None): The raw string of generic parameters (e.g., "<T, U>").
         """
         if not generics_raw:
             return
@@ -371,13 +407,13 @@ class TypeRelationPass:
     @staticmethod
     def _parse_type_parameters(generics_raw: str) -> list[str]:
         """
-        Parse a generics string into a list of type parameter names.
+        Parses a generics string (e.g., "<T, U where T: Clone>") into a list of names.
 
         Args:
-            generics_raw (str): Raw generics string.
+            generics_raw (str): The raw string from the type definition.
 
         Returns:
-            list[str]: List of type parameter names.
+            A list of the type parameter names (e.g., ['T', 'U']).
         """
         raw = generics_raw.strip().strip("<>").strip("[]")
         if not raw:
@@ -391,13 +427,16 @@ class TypeRelationPass:
 
     def _extract_go_embedded_types(self, body: str) -> list[str]:
         """
-        Extract embedded types from a Go struct body.
+        Extracts embedded types from the body of a Go struct or interface.
+
+        In Go, embedding is done by listing a type name on its own line within
+        the struct or interface body.
 
         Args:
-            body (str): The body of the struct definition.
+            body (str): The source code of the struct or interface body.
 
         Returns:
-            list[str]: List of names of embedded types.
+            A list of the names of the embedded types.
         """
         embedded: list[str] = []
         for line in body.splitlines():
@@ -423,15 +462,19 @@ class TypeRelationPass:
         default_label: str,
     ) -> tuple[str | None, str]:
         """
-        Resolve a type name to its qualified name and label.
+        Resolves a type name to its qualified name and node label.
+
+        It first searches the `function_registry` for a known type. If not found,
+        it creates a placeholder node for the type, assuming it's external or
+        defined elsewhere.
 
         Args:
-            name (str): The name of the type.
-            module_qn (str | None): Module qualified name for fallback.
-            default_label (str): Default label if not found in registry.
+            name (str): The simple or partially qualified name of the type.
+            module_qn (str | None): The qualified name of the current module for context.
+            default_label (str): The node label to use if a placeholder is created.
 
         Returns:
-            tuple[str | None, str]: (Qualified Name, Node Label).
+            A tuple of (qualified_name, node_label).
         """
         candidates = self.function_registry.find_ending_with(name)
         for qn in candidates:
@@ -457,13 +500,13 @@ class TypeRelationPass:
 
     def _module_qn_for_path(self, file_path: Path) -> str:
         """
-        Generate module qualified name for a file path.
+        Generates the module qualified name for a given file path.
 
         Args:
-            file_path (Path): Path to the file.
+            file_path (Path): The absolute path to the file.
 
         Returns:
-            str: Fully qualified module name.
+            The fully qualified module name as a string.
         """
         relative_path = file_path.relative_to(self.repo_path)
         parts = list(relative_path.with_suffix("").parts)

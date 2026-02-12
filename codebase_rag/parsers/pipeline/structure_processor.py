@@ -1,3 +1,15 @@
+"""
+This module defines the `StructureProcessor`, which is responsible for parsing the
+directory structure of a code repository.
+
+Its primary role is to walk the file system, identify structural elements like
+packages, folders, and files, and represent them as nodes in the graph database.
+It uses language-specific indicators (e.g., `__init__.py` for Python, `package.json`
+for Node.js) to distinguish between a generic folder and a language-specific package.
+This initial structural pass lays the foundation for linking code entities (like
+modules and classes) to their containing packages and files.
+"""
+
 from pathlib import Path
 
 from loguru import logger
@@ -17,11 +29,12 @@ from codebase_rag.utils.path_utils import (
 
 class StructureProcessor:
     """
-    Processes the directory structure of the repository.
+    Processes the directory structure of the repository to create graph nodes.
 
     This class walks the directory tree, identifying packages based on language
     indicators (e.g., `__init__.py`, `package.json`), and creates nodes for
-    packages, folders, and files.
+    packages, folders, and files. It establishes `CONTAINS` relationships between
+    these structural elements to build the file system hierarchy in the graph.
     """
 
     def __init__(
@@ -33,6 +46,17 @@ class StructureProcessor:
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
     ):
+        """
+        Initializes the StructureProcessor.
+
+        Args:
+            ingestor (IngestorProtocol): The service for writing data to the graph.
+            repo_path (Path): The absolute path to the root of the repository.
+            project_name (str): The name of the project.
+            queries (dict): A dictionary of language-specific queries and configurations.
+            unignore_paths (frozenset[str] | None): Paths to explicitly include even if ignored.
+            exclude_paths (frozenset[str] | None): Paths to explicitly exclude.
+        """
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -45,14 +69,16 @@ class StructureProcessor:
         self, parent_rel_path: Path, parent_container_qn: str | None
     ) -> NodeIdentifier:
         """
-        Determine the node identifier for the parent container.
+        Determines the unique identifier for the parent container of a file or folder.
+
+        The parent can be the Project, a Package, or a Folder.
 
         Args:
-            parent_rel_path (Path): Relative path to the parent directory.
-            parent_container_qn (str | None): Qualified name of the parent container.
+            parent_rel_path (Path): The relative path to the parent directory.
+            parent_container_qn (str | None): The qualified name of the parent if it's a package.
 
         Returns:
-            NodeIdentifier: The identifier (Label, Key, Value) for the parent.
+            A `NodeIdentifier` tuple (Label, Key, Value) for the parent node.
         """
         if parent_rel_path == Path(cs.PATH_CURRENT_DIR):
             return (cs.NodeLabel.PROJECT, cs.KEY_NAME, self.project_name)
@@ -62,7 +88,11 @@ class StructureProcessor:
 
     def identify_structure(self) -> None:
         """
-        Scan and process the repository structure, identifying packages and folders.
+        Scans the repository to identify and ingest its directory structure.
+
+        This method performs a recursive walk of the repository, determines whether
+        each directory is a package or a simple folder, and creates the corresponding
+        nodes and relationships in the graph.
         """
         directories = {self.repo_path}
         for path in self.repo_path.rglob(cs.GLOB_ALL):
@@ -155,11 +185,14 @@ class StructureProcessor:
 
     def process_generic_file(self, file_path: Path, file_name: str) -> None:
         """
-        Process a generic file and link it to its parent container.
+        Processes a generic file, creating a `File` node and linking it to its parent container.
+
+        This method is called for files that are not necessarily source code but are
+        still part of the project structure (e.g., configuration files, documentation).
 
         Args:
-            file_path (Path): Path to the file.
-            file_name (str): Name of the file.
+            file_path (Path): The absolute path to the file.
+            file_name (str): The name of the file.
         """
         relative_filepath = to_posix(file_path.relative_to(self.repo_path))
         relative_root = file_path.parent.relative_to(self.repo_path)

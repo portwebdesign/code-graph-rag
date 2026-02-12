@@ -1,3 +1,15 @@
+"""
+This module defines the `GraphUpdateOrchestrator`, which is responsible for
+running the various post-processing and linking passes after the initial
+definition extraction is complete.
+
+After all files have been parsed and their basic definitions (functions, classes)
+have been ingested, this orchestrator runs a series of services in a specific
+order to build the relationships between these definitions. This includes resolving
+function calls, linking type hierarchies, processing framework-specific metadata,
+and analyzing cross-file dependencies.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
@@ -13,10 +25,31 @@ if TYPE_CHECKING:
 
 
 class GraphUpdateOrchestrator:
+    """
+    Orchestrates the running of various linking and post-processing passes.
+
+    This class takes the shared `GraphUpdaterContext` and calls the different
+    services in the correct sequence to build the complete, interconnected code graph.
+    """
+
     def __init__(self, context: GraphUpdaterContext) -> None:
+        """
+        Initializes the GraphUpdateOrchestrator.
+
+        Args:
+            context (GraphUpdaterContext): The shared context containing all necessary
+                                           services and data for the update process.
+        """
         self.context = context
 
     def run_linking_and_passes(self) -> None:
+        """
+        Executes all the linking and post-processing passes in sequence.
+
+        This method is the main entry point for the orchestration logic. It logs
+        the progress as it moves through each pass, from declarative parsing and
+        framework linking to call resolution and type analysis.
+        """
         ctx = self.context
 
         ctx.declarative_parser_service.run(

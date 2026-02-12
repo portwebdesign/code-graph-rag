@@ -1,3 +1,15 @@
+"""
+This module defines the `DynamicCallResolver`, a utility for resolving function
+calls that are not standard, direct call expressions in the source code.
+
+This is particularly useful for modern frameworks where functionality is often
+invoked through string names, such as in routing decorators, event listeners, or
+configuration objects. The resolver uses a series of regular expressions to
+extract potential function names from string literals and other patterns within
+a code snippet. It then attempts to match these candidate names against the
+known function registry to find the most likely target.
+"""
+
 from __future__ import annotations
 
 import re
@@ -11,28 +23,37 @@ class DynamicCallResolver:
     """
     Resolves dynamic function calls from string snippets or other non-standard call sites.
 
-    This class parses potential function or action names from strings (e.g., in routes, specific attributes)
-    and attempts to match them against the known function registry.
-
-    Args:
-        function_registry (FunctionRegistryTrieProtocol): Registry of known functions/classes.
+    This class is designed to handle cases where a function is called indirectly,
+    for example, by its string name. It parses code snippets to find potential
+    function names and matches them against a registry of known functions.
     """
 
     def __init__(self, function_registry: FunctionRegistryTrieProtocol) -> None:
+        """
+        Initializes the DynamicCallResolver.
+
+        Args:
+            function_registry (FunctionRegistryTrieProtocol): A registry (typically a Trie)
+                containing all known functions and classes in the codebase.
+        """
         self.function_registry = function_registry
 
     def resolve_from_snippet(
         self, snippet: str, module_qn: str
     ) -> tuple[NodeType, str] | None:
         """
-        Attempts to resolve a function call from a code snippet.
+        Attempts to resolve a function call from a given code snippet.
+
+        It extracts candidate names from the snippet and searches for the best match
+        in the function registry.
 
         Args:
-            snippet (str): The code snippet to analyze.
-            module_qn (str): The module qualified name where the snippet is located.
+            snippet (str): The code snippet to analyze (e.g., a decorator, a dictionary).
+            module_qn (str): The qualified name of the module where the snippet is located,
+                             used for context in ranking candidates.
 
         Returns:
-            tuple[NodeType, str] | None: A tuple of (node_type, qualified_name) if resolved, else None.
+            A tuple of (node_type, qualified_name) if a likely match is found, otherwise None.
         """
         for candidate in self._extract_candidate_names(snippet):
             matches = self.function_registry.find_ending_with(candidate)
@@ -44,13 +65,16 @@ class DynamicCallResolver:
 
     def _extract_candidate_names(self, snippet: str) -> list[str]:
         """
-        Extracts potential function/action names from a snippet using various patterns.
+        Extracts potential function or action names from a snippet using various regex patterns.
+
+        This method applies several heuristics to find strings that might represent
+        a function name.
 
         Args:
-            snippet (str): The code snippet.
+            snippet (str): The code snippet to scan.
 
         Returns:
-            list[str]: A deduplicated list of candidate names.
+            A deduplicated list of candidate names found in the snippet.
         """
         candidates: list[str] = []
         for name in self._extract_string_identifiers(snippet):
@@ -64,13 +88,13 @@ class DynamicCallResolver:
     @staticmethod
     def _extract_string_identifiers(snippet: str) -> Iterable[str]:
         """
-        Extracts identifiers found inside quotes (single or double).
+        Extracts valid identifiers found inside single or double quotes.
 
         Args:
             snippet (str): The code snippet.
 
         Returns:
-            Iterable[str]: Matched identifiers.
+            An iterable of matched identifiers.
         """
         pattern = r"['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]"
         return re.findall(pattern, snippet)
@@ -78,13 +102,13 @@ class DynamicCallResolver:
     @staticmethod
     def _extract_route_action_names(snippet: str) -> Iterable[str]:
         """
-        Extracts identifiers prefixed with @ (common in some routing frameworks).
+        Extracts identifiers that look like route actions (e.g., "Controller@action").
 
         Args:
             snippet (str): The code snippet.
 
         Returns:
-            Iterable[str]: Matched action names.
+            An iterable of matched action names.
         """
         pattern = r"@([A-Za-z_][A-Za-z0-9_]*)"
         return re.findall(pattern, snippet)
@@ -92,13 +116,13 @@ class DynamicCallResolver:
     @staticmethod
     def _extract_bracket_members(snippet: str) -> Iterable[str]:
         """
-        Extracts identifiers inside brackets and quotes (e.g., keys in dictionaries/arrays).
+        Extracts identifiers used as keys in bracket notation (e.g., `obj['key']`).
 
         Args:
             snippet (str): The code snippet.
 
         Returns:
-            Iterable[str]: Matched member names.
+            An iterable of matched member names.
         """
         pattern = r"\[\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]\s*\]"
         return re.findall(pattern, snippet)
@@ -106,13 +130,13 @@ class DynamicCallResolver:
     @staticmethod
     def _dedupe_preserve_order(items: list[str]) -> list[str]:
         """
-        Deduplicates a list while preserving the original order of elements.
+        Deduplicates a list of strings while preserving their original order.
 
         Args:
-            items (list[str]): The input list.
+            items (list[str]): The input list of strings.
 
         Returns:
-            list[str]: The deduplicated list.
+            A new list containing the unique items in their original order.
         """
         seen: set[str] = set()
         deduped: list[str] = []
@@ -126,14 +150,16 @@ class DynamicCallResolver:
     def _select_best_candidate(self, candidates: list[str], module_qn: str) -> str:
         """
         Selects the best matching qualified name from a list of candidates.
-        Prefers candidates in the same module/namespace.
+
+        The selection prefers candidates that are in the same module or a parent
+        module of the current context, using a path distance metric as a tie-breaker.
 
         Args:
-            candidates (list[str]): List of candidate qualified names.
-            module_qn (str): The current module context.
+            candidates (list[str]): A list of candidate fully qualified names.
+            module_qn (str): The qualified name of the current module for context.
 
         Returns:
-            str: The best matching qualified name.
+            The best matching qualified name from the list.
         """
         preferred = [
             qn for qn in candidates if qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
@@ -145,14 +171,17 @@ class DynamicCallResolver:
     @staticmethod
     def _distance(candidate_qn: str, module_qn: str) -> int:
         """
-        Calculates a distance metric for tie-breaking based on module path similarity.
+        Calculates a simple distance metric between two qualified names.
+
+        The distance is based on the number of non-common parts in their paths,
+        which helps in prioritizing closer matches in the module hierarchy.
 
         Args:
-            candidate_qn (str): Candidate qualified name.
-            module_qn (str): Current module qualified name.
+            candidate_qn (str): The qualified name of the candidate function.
+            module_qn (str): The qualified name of the module where the call occurs.
 
         Returns:
-            int: Distance score (lower is better).
+            An integer distance score, where a lower score indicates a closer match.
         """
         caller_parts = module_qn.split(cs.SEPARATOR_DOT)
         candidate_parts = candidate_qn.split(cs.SEPARATOR_DOT)

@@ -1,3 +1,16 @@
+"""
+This module provides the `FunctionIngestMixin`, a component responsible for the
+discovery, processing, and ingestion of function and method definitions from a file's
+Abstract Syntax Tree (AST).
+
+It works as a mixin to be used by language-specific handlers. It contains the generic
+logic to traverse an AST, identify function nodes using tree-sitter queries, resolve
+their fully qualified names (FQNs), extract relevant properties (like docstrings,
+decorators, and signatures), and ingest them into the graph database as `Function`
+or `Method` nodes. It also handles establishing `DEFINES` relationships from the
+parent scope (e.g., Module, Class, or another Function) to the newly created node.
+"""
+
 from __future__ import annotations
 
 import re
@@ -42,12 +55,17 @@ if TYPE_CHECKING:
 
 class FunctionResolution(NamedTuple):
     """
-    Result of resolving a function's identity.
+    Represents the resolved identity of a function or method.
+
+    This structure holds the essential identifiers for a function after it has been
+    processed, including its unique name within the codebase and its simple name.
 
     Attributes:
-        qualified_name (str): Fully qualified name of the function.
-        name (str): Simple name of the function.
-        is_exported (bool): Whether the function is exported from its module.
+        qualified_name (str): The fully qualified name (FQN) of the function,
+                              providing a unique identifier across the project.
+        name (str): The simple, short name of the function as it appears in the code.
+        is_exported (bool): A flag indicating whether the function is exported from
+                            its module, making it accessible to other modules.
     """
 
     qualified_name: str
@@ -57,19 +75,20 @@ class FunctionResolution(NamedTuple):
 
 class FunctionIngestMixin:
     """
-    Mixin for processing and ingesting function definitions from AST.
+    A mixin for processing and ingesting function definitions from an AST.
 
-    Provides methods to identifying, resolving, and registering functions across
-    different languages (Python, JavaScript, TypeScript, C++, Rust, etc.).
+    This class provides the core logic for identifying, resolving, and registering
+    functions and methods from source code. It is designed to be mixed into a
+    language-specific handler that provides concrete implementations for
+    language-dependent details like docstring extraction.
 
-    Attributes:
-        ingestor (IngestorProtocol): Ingestor for creating nodes.
-        repo_path (Path): Repository root path.
-        project_name (str): Project name.
-        function_registry (FunctionRegistryTrieProtocol): Registry for function storage.
-        simple_name_lookup (SimpleNameLookup): Lookup table for simple names.
-        module_qn_to_file_path (dict[str, Path]): Mapping from module QN to file path.
-        _handler (LanguageHandler): Language-specific handler.
+    The mixin handles:
+    - Querying the AST for function/method nodes.
+    - Resolving the fully qualified name (FQN) for each function.
+    - Handling language-specific cases (e.g., C++ out-of-class definitions, Rust modules).
+    - Extracting properties like decorators, signatures, and visibility.
+    - Ingesting the final `Function` node into the database.
+    - Registering the function in a central registry for cross-file resolution.
     """
 
     ingestor: IngestorProtocol
@@ -84,26 +103,32 @@ class FunctionIngestMixin:
     @abstractmethod
     def _get_docstring(self, node: ASTNode) -> str | None:
         """
-        Extract docstring from a function node.
+        Abstract method to extract a docstring from a function/method node.
+
+        Each language handler must implement this to provide language-specific
+        docstring parsing logic.
 
         Args:
-            node (ASTNode): The function AST node.
+            node (ASTNode): The function or method's AST node.
 
         Returns:
-            str | None: The docstring if found.
+            The extracted docstring as a string, or None if not found.
         """
         ...
 
     @abstractmethod
     def _extract_decorators(self, node: ASTNode) -> list[str]:
         """
-        Extract decorators from a function node.
+        Abstract method to extract decorators from a function/method node.
+
+        Each language handler must implement this to handle its specific syntax
+        for decorators, annotations, or attributes.
 
         Args:
-            node (ASTNode): The function AST node.
+            node (ASTNode): The function or method's AST node.
 
         Returns:
-            list[str]: list of decorator strings.
+            A list of decorator names as strings.
         """
         ...
 
@@ -115,13 +140,17 @@ class FunctionIngestMixin:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         """
-        Main entry point to discover and ingest all functions in a module.
+        Finds and ingests all functions within a given module's AST.
+
+        This is the main entry point for the mixin. It uses a tree-sitter query
+        to find all function captures, filters out methods (which are handled
+        separately), and processes each function.
 
         Args:
             root_node (Node): The root AST node of the file.
-            module_qn (str): The qualified name of the module.
-            language (cs.SupportedLanguage): The programming language.
-            queries (dict): Dictionary containing Tree-sitter queries.
+            module_qn (str): The qualified name of the module being processed.
+            language (cs.SupportedLanguage): The programming language of the file.
+            queries (dict): A dictionary containing the tree-sitter queries for the language.
         """
         result = get_function_captures(root_node, language, queries)
         if not result:
@@ -164,17 +193,20 @@ class FunctionIngestMixin:
         file_path: Path | None,
     ) -> FunctionResolution | None:
         """
-        Resolves the identity (name, qualified name) of a function.
+        Resolves the identity (name, FQN, export status) of a function node.
+
+        It first attempts to use a unified, language-agnostic FQN resolution
+        strategy. If that fails, it falls back to a language-specific strategy.
 
         Args:
-            func_node (Node): Function AST node.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Language.
-            lang_config (LanguageSpec): Language specifications.
-            file_path (Path | None): Path to the source file.
+            func_node (Node): The AST node of the function.
+            module_qn (str): The qualified name of the containing module.
+            language (cs.SupportedLanguage): The programming language.
+            lang_config (LanguageSpec): The language-specific configuration.
+            file_path (Path | None): The path to the source file.
 
         Returns:
-            FunctionResolution | None: Resolved identity or None if failed.
+            A `FunctionResolution` object if successful, otherwise None.
         """
         resolution = self._try_unified_fqn_resolution(func_node, language, file_path)
         if resolution:
@@ -191,15 +223,17 @@ class FunctionIngestMixin:
         file_path: Path | None,
     ) -> FunctionResolution | None:
         """
-        Attempts to resolve FQN using the unified FQN resolver strategy.
+        Attempts to resolve the FQN using the unified `resolve_fqn_from_ast` utility.
+
+        This is the preferred method as it centralizes FQN logic.
 
         Args:
-            func_node (Node): Function node.
-            language (cs.SupportedLanguage): Language.
-            file_path (Path | None): File path.
+            func_node (Node): The function's AST node.
+            language (cs.SupportedLanguage): The programming language.
+            file_path (Path | None): The path to the source file.
 
         Returns:
-            FunctionResolution | None: Resolution if successful.
+            A `FunctionResolution` object if the FQN was resolved, otherwise None.
         """
         fqn_config = LANGUAGE_FQN_SPECS.get(language)
         if not fqn_config or not file_path:
@@ -227,16 +261,17 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
     ) -> FunctionResolution | None:
         """
-        Fallback resolution strategy when unified FQN resolution fails.
+        Provides a fallback FQN resolution strategy for languages or cases not
+        covered by the unified resolver.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Language.
-            lang_config (LanguageSpec): Language spec.
+            func_node (Node): The function's AST node.
+            module_qn (str): The qualified name of the containing module.
+            language (cs.SupportedLanguage): The programming language.
+            lang_config (LanguageSpec): The language-specific configuration.
 
         Returns:
-            FunctionResolution | None: Resolution result.
+            A `FunctionResolution` object or None.
         """
         if language == cs.SupportedLanguage.CPP:
             return self._resolve_cpp_function(func_node, module_qn)
@@ -246,14 +281,17 @@ class FunctionIngestMixin:
 
     def _handle_cpp_out_of_class_method(self, func_node: Node, module_qn: str) -> bool:
         """
-        Handles C++ methods defined outside their class declaration.
+        Handles the special case of C++ methods defined outside their class declaration.
+
+        It identifies such methods, determines their class, and ingests them as
+        `Method` nodes attached to the correct `Class`.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
+            func_node (Node): The function definition AST node.
+            module_qn (str): The qualified name of the containing module.
 
         Returns:
-            bool: True if handled as an out-of-class method.
+            True if the node was handled as an out-of-class method, False otherwise.
         """
         if not cpp_utils.is_out_of_class_method_definition(func_node):
             return False
@@ -291,14 +329,14 @@ class FunctionIngestMixin:
         self, func_node: Node, module_qn: str
     ) -> FunctionResolution | None:
         """
-        Resolves a C++ function.
+        Resolves the identity of a C++ function, handling namespaces and export status.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
+            func_node (Node): The function's AST node.
+            module_qn (str): The qualified name of the containing module.
 
         Returns:
-            FunctionResolution | None: Resolution result.
+            A `FunctionResolution` object, or None if the name cannot be determined.
         """
         func_name = cpp_utils.extract_function_name(func_node)
         if not func_name:
@@ -319,16 +357,19 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
     ) -> FunctionResolution:
         """
-        Resolves a generic function (default strategy).
+        A generic function resolution strategy for most languages.
+
+        It extracts the function name, generates one for anonymous functions, and
+        builds the FQN based on the module and any nested structure.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Language.
-            lang_config (LanguageSpec): Language spec.
+            func_node (Node): The function's AST node.
+            module_qn (str): The qualified name of the containing module.
+            language (cs.SupportedLanguage): The programming language.
+            lang_config (LanguageSpec): The language-specific configuration.
 
         Returns:
-            FunctionResolution: Resolution result.
+            A `FunctionResolution` object.
         """
         func_name = self._extract_function_name(func_node)
 
@@ -356,17 +397,20 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
     ) -> str:
         """
-        Builds the fully qualified name for a function.
+        Builds the fully qualified name (FQN) for a function.
+
+        This method accounts for nested functions, Rust module paths, and Kotlin
+        extension functions to construct an accurate FQN.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
-            func_name (str): Simple function name.
-            language (cs.SupportedLanguage): Language.
-            lang_config (LanguageSpec): Language spec.
+            func_node (Node): The function's AST node.
+            module_qn (str): The qualified name of the containing module.
+            func_name (str): The simple name of the function.
+            language (cs.SupportedLanguage): The programming language.
+            lang_config (LanguageSpec): The language-specific configuration.
 
         Returns:
-            str: Fully qualified name.
+            The constructed fully qualified name as a string.
         """
         if language == cs.SupportedLanguage.RUST:
             return self._build_rust_function_qualified_name(
@@ -384,13 +428,15 @@ class FunctionIngestMixin:
 
     def _extract_kotlin_receiver_type(self, func_node: Node) -> str | None:
         """
-        Extracts the receiver type for Kotlin extension functions.
+        Extracts the receiver type for a Kotlin extension function.
+
+        For example, in `fun String.myExtension()`, this would extract "String".
 
         Args:
-            func_node (Node): Function node.
+            func_node (Node): The function's AST node.
 
         Returns:
-            str | None: Receiver type name.
+            The receiver type as a string, or None if it's not an extension function.
         """
         receiver_node = func_node.child_by_field_name("receiver_type")
         if not receiver_node or not receiver_node.text:
@@ -411,14 +457,20 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
     ) -> None:
         """
-        Registers the function in the ingestor and registry.
+        Registers the function with the ingestor and internal registries.
+
+        This method finalizes the function processing by:
+        1. Building the property dictionary for the function node.
+        2. Ingesting the node into the graph database.
+        3. Adding the function to the `function_registry` for call resolution.
+        4. Creating necessary relationships like `DEFINES` and `EXPORTS`.
 
         Args:
-            func_node (Node): Function node.
-            resolution (FunctionResolution): Resolution result.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Language.
-            lang_config (LanguageSpec): Language spec.
+            func_node (Node): The function's AST node.
+            resolution (FunctionResolution): The resolved identity of the function.
+            module_qn (str): The qualified name of the containing module.
+            language (cs.SupportedLanguage): The programming language.
+            lang_config (LanguageSpec): The language-specific configuration.
         """
         func_props = self._build_function_props(
             func_node, resolution, module_qn, language
@@ -445,17 +497,20 @@ class FunctionIngestMixin:
         decorators: list[str],
     ) -> bool:
         """
-        Detects if a function is an entry point (e.g., main function, API handler).
+        Detects if a function is a likely entry point for execution.
+
+        This uses heuristics based on function name (e.g., `main`), file name
+        (e.g., `main.py`), and decorators (e.g., `@app.route`).
 
         Args:
-            func_node (Node): Function node.
-            resolution (FunctionResolution): Resolution result.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Language.
-            decorators (list[str]): List of decorators.
+            func_node (Node): The function's AST node.
+            resolution (FunctionResolution): The resolved identity of the function.
+            module_qn (str): The qualified name of the containing module.
+            language (cs.SupportedLanguage): The programming language.
+            decorators (list[str]): A list of decorators on the function.
 
         Returns:
-            bool: True if it is an entry point.
+            True if the function is determined to be an entry point, False otherwise.
         """
         name = (resolution.name or "").lower()
         module_lower = module_qn.lower()
@@ -516,16 +571,16 @@ class FunctionIngestMixin:
         language: cs.SupportedLanguage | None = None,
     ) -> PropertyDict:
         """
-        Builds the property dictionary for a function node.
+        Builds the dictionary of properties for a function node to be stored in the graph.
 
         Args:
-            func_node (Node): Function node.
-            resolution (FunctionResolution): Resolution result.
-            module_qn (str | None): Module qualified name.
-            language (cs.SupportedLanguage | None): Language.
+            func_node (Node): The function's AST node.
+            resolution (FunctionResolution): The resolved identity of the function.
+            module_qn (str | None): The qualified name of the containing module.
+            language (cs.SupportedLanguage | None): The programming language.
 
         Returns:
-            PropertyDict: Function properties.
+            A dictionary of properties for the function node.
         """
         if module_qn is None:
             module_qn = cs.SEPARATOR_DOT.join(
@@ -590,14 +645,14 @@ class FunctionIngestMixin:
         lang_config: LanguageSpec,
     ) -> None:
         """
-        Creates relationships for the function (DEFINES, EXPORTS).
+        Creates relationships for the function, such as `DEFINES` and `EXPORTS`.
 
         Args:
-            func_node (Node): Function node.
-            resolution (FunctionResolution): Resolution result.
-            module_qn (str): Module qualified name.
-            language (cs.SupportedLanguage): Language.
-            lang_config (LanguageSpec): Language spec.
+            func_node (Node): The function's AST node.
+            resolution (FunctionResolution): The resolved identity of the function.
+            module_qn (str): The qualified name of the containing module.
+            language (cs.SupportedLanguage): The programming language.
+            lang_config (LanguageSpec): The language-specific configuration.
         """
         parent_type, parent_qn = self._determine_function_parent(
             func_node, module_qn, lang_config
@@ -621,13 +676,15 @@ class FunctionIngestMixin:
 
     def _extract_function_name(self, func_node: Node) -> str | None:
         """
-        Extracts function name from node using known patterns.
+        Extracts the simple name of a function from its AST node.
+
+        Handles common patterns like named functions and arrow functions assigned to variables.
 
         Args:
-            func_node (Node): Function node.
+            func_node (Node): The function's AST node.
 
         Returns:
-            str | None: Function name.
+            The extracted function name, or None if it's anonymous or can't be found.
         """
         name_node = func_node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text:
@@ -646,14 +703,17 @@ class FunctionIngestMixin:
 
     def _generate_anonymous_function_name(self, func_node: Node, module_qn: str) -> str:
         """
-        Generates a name for an anonymous function.
+        Generates a unique, deterministic name for an anonymous function.
+
+        The name is based on the function's start position in the file to ensure
+        it's unique and consistent across runs. It also identifies IIFEs.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
+            func_node (Node): The anonymous function's AST node.
+            module_qn (str): The qualified name of the containing module.
 
         Returns:
-            str: Generated unique name.
+            A generated unique name for the function.
         """
         parent = func_node.parent
         if parent and parent.type == cs.TS_PARENTHESIZED_EXPRESSION:
@@ -681,13 +741,15 @@ class FunctionIngestMixin:
 
     def _extract_lua_assignment_function_name(self, func_node: Node) -> str | None:
         """
-        Extracts Lua function name from assignment.
+        Extracts a Lua function's name when it's defined as part of a table assignment.
+
+        For example, `my_table.my_func = function() ... end`.
 
         Args:
-            func_node (Node): Function node.
+            func_node (Node): The function definition node.
 
         Returns:
-            str | None: Function name.
+            The assigned name of the function (e.g., "my_table.my_func"), or None.
         """
         return lua_utils.extract_assigned_name(
             func_node,
@@ -703,17 +765,19 @@ class FunctionIngestMixin:
         skip_classes: bool = False,
     ) -> str | None:
         """
-        Builds FQN for nested functions.
+        Builds the FQN for a function that is nested inside another function.
+
+        It traverses up the AST to find the names of all enclosing functions.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module FQN.
-            func_name (str): Function name.
-            lang_config (LanguageSpec): Language config.
-            skip_classes (bool): Whether to skip class ancestors.
+            func_node (Node): The nested function's AST node.
+            module_qn (str): The qualified name of the containing module.
+            func_name (str): The simple name of the nested function.
+            lang_config (LanguageSpec): The language configuration.
+            skip_classes (bool): Whether to skip class ancestors in the path.
 
         Returns:
-            str | None: Nested FQN.
+            The constructed nested FQN, or None if it's not a valid nested function.
         """
         if lang_config.language in {
             cs.SupportedLanguage.JSON,
@@ -745,16 +809,16 @@ class FunctionIngestMixin:
         skip_classes: bool,
     ) -> list[str] | None:
         """
-        Collects path parts from ancestors.
+        Recursively collects the names of ancestor functions to build a nested path.
 
         Args:
-            func_node (Node): Original function node.
-            current (Node | None): Current ancestor.
-            lang_config (LanguageSpec): Language config.
-            skip_classes (bool): Skip classes.
+            func_node (Node): The original function node.
+            current (Node | None): The current ancestor node being inspected.
+            lang_config (LanguageSpec): The language configuration.
+            skip_classes (bool): If True, ancestors that are classes are ignored.
 
         Returns:
-            list[str] | None: Path parts or None.
+            A list of name parts from the ancestors, or None to abort.
         """
         path_parts: list[str] = []
 
@@ -779,16 +843,18 @@ class FunctionIngestMixin:
         skip_classes: bool,
     ) -> str | None | Literal[False]:
         """
-        Process a single ancestor for patch extraction.
+        Processes a single ancestor node to extract its name for a nested FQN.
 
         Args:
-            func_node (Node): Original node.
-            current (Node): Ancestor node.
-            lang_config (LanguageSpec): Language config.
-            skip_classes (bool): Skip classes.
+            func_node (Node): The original function node.
+            current (Node): The ancestor node to process.
+            lang_config (LanguageSpec): The language configuration.
+            skip_classes (bool): If True, class ancestors are ignored.
 
         Returns:
-            str | None | Literal[False]: Name part, None (ignored), or False (abort).
+            - A string name part if the ancestor is a valid part of the path.
+            - None if the ancestor should be ignored.
+            - False if the nesting is invalid (e.g., nested in a class) and should be aborted.
         """
         if current.type in lang_config.function_node_types:
             return self._get_name_from_function_ancestor(current)
@@ -803,13 +869,13 @@ class FunctionIngestMixin:
 
     def _get_name_from_function_ancestor(self, node: Node) -> str | None:
         """
-        Get name from a function ancestor.
+        Gets the name from an ancestor that is a function.
 
         Args:
-            node (Node): Function node.
+            node (Node): The ancestor function node.
 
         Returns:
-            str | None: Function name.
+            The name of the function, or None.
         """
         if name := self._extract_node_name(node):
             return name
@@ -819,15 +885,17 @@ class FunctionIngestMixin:
         self, func_node: Node, class_node: Node, skip_classes: bool
     ) -> str | None | Literal[False]:
         """
-        Handle class ancestor logic.
+        Handles the logic when an ancestor is a class.
 
         Args:
-            func_node (Node): Function node.
-            class_node (Node): Class node.
-            skip_classes (bool): Skip flag.
+            func_node (Node): The original function node.
+            class_node (Node): The class ancestor node.
+            skip_classes (bool): If True, class ancestors are ignored.
 
         Returns:
-            str | None | Literal[False]: Class name, None, or False.
+            - The class name if it's part of a valid structure.
+            - None if the class should be skipped.
+            - False to abort FQN construction.
         """
         if skip_classes:
             return None
@@ -837,13 +905,13 @@ class FunctionIngestMixin:
 
     def _extract_node_name(self, node: Node) -> str | None:
         """
-        Extract name field from any node.
+        A simple utility to extract the text from a node's "name" field.
 
         Args:
-            node (Node): Node to extract name from.
+            node (Node): The AST node.
 
         Returns:
-            str | None: Extracted name.
+            The decoded name, or None.
         """
         name_node = node.child_by_field_name(cs.FIELD_NAME)
         if name_node and name_node.text is not None:
@@ -854,15 +922,15 @@ class FunctionIngestMixin:
         self, module_qn: str, path_parts: list[str], func_name: str
     ) -> str:
         """
-        Formats nested fully qualified name.
+        Formats the final nested FQN from its constituent parts.
 
         Args:
-            module_qn (str): Module qualified name.
-            path_parts (list[str]): Path parts.
-            func_name (str): Function name.
+            module_qn (str): The base module FQN.
+            path_parts (list[str]): The list of ancestor names.
+            func_name (str): The simple name of the function.
 
         Returns:
-            str: Formatted FQN.
+            The complete, dot-separated FQN.
         """
         if path_parts:
             return f"{module_qn}.{cs.SEPARATOR_DOT.join(path_parts)}.{func_name}"
@@ -872,15 +940,15 @@ class FunctionIngestMixin:
         self, func_node: Node, module_qn: str, func_name: str
     ) -> str:
         """
-        Builds Rust-specific qualified name.
+        Builds a Rust-specific FQN, accounting for `mod` blocks.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
-            func_name (str): Function name.
+            func_node (Node): The function's AST node.
+            module_qn (str): The qualified name of the file-level module.
+            func_name (str): The simple name of the function.
 
         Returns:
-            str: Rust FQN.
+            The complete Rust FQN.
         """
         path_parts = rs_utils.build_module_path(func_node)
         if path_parts:
@@ -889,14 +957,14 @@ class FunctionIngestMixin:
 
     def _is_method(self, func_node: Node, lang_config: LanguageSpec) -> bool:
         """
-        Checks if node is a method.
+        Checks if a function node is a method (i.e., defined within a class context).
 
         Args:
-            func_node (Node): Function node.
-            lang_config (LanguageSpec): Language config.
+            func_node (Node): The function node to check.
+            lang_config (LanguageSpec): The language configuration.
 
         Returns:
-            bool: True if method.
+            True if the node is a method, False otherwise.
         """
         return is_method_node(func_node, lang_config)
 
@@ -904,15 +972,17 @@ class FunctionIngestMixin:
         self, func_node: Node, module_qn: str, lang_config: LanguageSpec
     ) -> tuple[str, str]:
         """
-        Determines the parent type and qualified name for a function.
+        Determines the direct parent of a function for creating the `DEFINES` relationship.
+
+        The parent can be a Module, or another Function if it's a nested function.
 
         Args:
-            func_node (Node): Function node.
-            module_qn (str): Module qualified name.
-            lang_config (LanguageSpec): Language config.
+            func_node (Node): The function's AST node.
+            module_qn (str): The qualified name of the module.
+            lang_config (LanguageSpec): The language configuration.
 
         Returns:
-            tuple[str, str]: Parent label type, Parent qualified name.
+            A tuple containing the parent's label (e.g., 'Module') and its qualified name.
         """
         current = func_node.parent
         if not isinstance(current, Node):

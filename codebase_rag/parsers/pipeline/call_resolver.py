@@ -1,3 +1,13 @@
+"""
+This module defines the CallResolver class, a key component in the parsing pipeline.
+
+The CallResolver is responsible for resolving function and method calls within the source
+code to their fully qualified names (QNs). It uses information from the function registry,
+import statements, class inheritance hierarchies, and type inference to determine the
+precise definition of a called function. This resolution is crucial for building an
+accurate call graph.
+"""
+
 from __future__ import annotations
 
 import re

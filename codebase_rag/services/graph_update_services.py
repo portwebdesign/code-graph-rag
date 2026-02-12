@@ -1,3 +1,17 @@
+"""
+This module provides high-level services that orchestrate the graph update process.
+
+It includes services for:
+- `GitDeltaService`: Detecting file changes since the last run by comparing Git
+  revisions, which enables incremental parsing.
+- `ParsePreparationService`: Preparing files for parsing by clearing their old
+  state from the graph and caches. It also handles computing "structure signatures"
+  to detect if only the relationships (edges) need updating, which is an optimization.
+- `FileProcessingService`: The main service that iterates through all relevant
+  project files, determines if they need parsing (based on Git delta or cache
+  state), and dispatches them to the `DefinitionProcessor`.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -35,6 +49,14 @@ from ..utils.path_utils import should_skip_path, to_posix
 
 
 class GitDeltaService:
+    """
+    A service to handle incremental updates based on Git changes.
+
+    This service compares the current Git HEAD with the last processed HEAD to
+    determine which files have been added, modified, or deleted. This allows the
+    update process to only parse the files that have actually changed.
+    """
+
     def __init__(
         self,
         repo_path: Path,
@@ -43,6 +65,16 @@ class GitDeltaService:
         incremental_cache: IncrementalParsingCache | None,
         remove_file_from_state: Callable[[Path], None],
     ) -> None:
+        """
+        Initializes the GitDeltaService.
+
+        Args:
+            repo_path (Path): The path to the Git repository.
+            git_delta_cache (GitDeltaCache): The cache for storing the last processed Git HEAD.
+            incremental_cache_enabled (bool): Flag to enable/disable incremental parsing.
+            incremental_cache (IncrementalParsingCache | None): The cache for parsing results.
+            remove_file_from_state (Callable): A function to call to remove a deleted file's state.
+        """
         self.repo_path = repo_path
         self.git_delta_cache = git_delta_cache
         self.incremental_cache_enabled = incremental_cache_enabled
@@ -50,6 +82,13 @@ class GitDeltaService:
         self.remove_file_from_state = remove_file_from_state
 
     def handle_git_delta(self) -> tuple[set[Path] | None, set[Path] | None]:
+        """
+        Determines the set of changed and deleted files since the last run.
+
+        Returns:
+            A tuple containing (set of changed files, set of deleted files).
+            Returns (None, None) if no changes are detected or if it's the first run.
+        """
         head = get_git_head(self.repo_path)
         last_head = self.git_delta_cache.get_last_head(self.repo_path)
         if head and last_head and head != last_head:
@@ -73,6 +112,10 @@ class GitDeltaService:
 
 
 class FileProcessingContext(Protocol):
+    """
+    A protocol defining the shared context required for file processing services.
+    """
+
     repo_path: Path
     git_delta_enabled: bool
     git_delta_changed: set[Path] | None
@@ -96,6 +139,13 @@ class FileProcessingContext(Protocol):
 
 
 class ParsePreparationService:
+    """
+    A service for preparing files for re-parsing.
+
+    This includes clearing old data from the graph and computing structural
+    signatures to optimize updates.
+    """
+
     def __init__(
         self,
         repo_path: Path,
@@ -107,6 +157,19 @@ class ParsePreparationService:
         incremental_cache: IncrementalParsingCache | None,
         remove_file_from_state: Callable[[Path], None],
     ) -> None:
+        """
+        Initializes the ParsePreparationService.
+
+        Args:
+            repo_path (Path): The path to the repository.
+            project_name (str): The name of the project.
+            ingestor: The graph database ingestor.
+            factory (ProcessorFactory): The factory for creating processors.
+            queries (dict): A dictionary of tree-sitter queries.
+            incremental_cache_enabled (bool): Flag to enable/disable incremental parsing.
+            incremental_cache (IncrementalParsingCache | None): The cache for parsing results.
+            remove_file_from_state (Callable): A function to remove a file's state.
+        """
         self.repo_path = repo_path
         self.project_name = project_name
         self.ingestor = ingestor
@@ -117,6 +180,12 @@ class ParsePreparationService:
         self.remove_file_from_state = remove_file_from_state
 
     def prepare_file_update(self, file_path: Path) -> None:
+        """
+        Prepares for a full update of a file by deleting its old module data from the graph.
+
+        Args:
+            file_path (Path): The path of the file to be updated.
+        """
         self.remove_file_from_state(file_path)
 
         module_qn = self._module_qn_for_path(file_path)
@@ -133,6 +202,15 @@ class ParsePreparationService:
                 logger.warning("Selective graph delete failed: {}", exc)
 
     def prepare_edge_update(self, file_path: Path) -> None:
+        """
+        Prepares for an edge-only update by deleting only the dynamic relationships of a file.
+
+        This is used when the file's structure (functions, classes) has not changed,
+        so only the calls and other relationships need to be re-processed.
+
+        Args:
+            file_path (Path): The path of the file to be updated.
+        """
         module_qn = self._module_qn_for_path(file_path)
         self.factory.import_processor.remove_module(module_qn)
 
@@ -147,6 +225,15 @@ class ParsePreparationService:
                 logger.warning("Edge-only graph delete failed: {}", exc)
 
     def get_cached_structure_signature(self, file_path: Path) -> str | None:
+        """
+        Retrieves the cached structural signature for a file.
+
+        Args:
+            file_path (Path): The path of the file.
+
+        Returns:
+            The cached signature string, or None if not found.
+        """
         if not self.incremental_cache_enabled or not self.incremental_cache:
             return None
         return self.incremental_cache.get_cached_structure_signature(file_path)
@@ -154,6 +241,16 @@ class ParsePreparationService:
     def parse_with_signature(
         self, file_path: Path, language: cs.SupportedLanguage
     ) -> tuple[Node, bytes, str, str] | None:
+        """
+        Parses a file and computes its structural signature.
+
+        Args:
+            file_path (Path): The path of the file.
+            language (cs.SupportedLanguage): The language of the file.
+
+        Returns:
+            A tuple containing the AST root, source bytes, source text, and signature, or None on failure.
+        """
         lang_queries = self.queries.get(language)
         if not lang_queries:
             return None
@@ -170,6 +267,19 @@ class ParsePreparationService:
     def compute_structure_signature(
         self, root_node: Node, language: cs.SupportedLanguage
     ) -> str:
+        """
+        Computes a signature based on the structural elements (classes, functions, methods) of a file.
+
+        This signature can be used to quickly determine if the fundamental structure
+        of a file has changed, which is useful for incremental parsing optimizations.
+
+        Args:
+            root_node (Node): The root AST node of the file.
+            language (cs.SupportedLanguage): The language of the file.
+
+        Returns:
+            A SHA256 hash representing the file's structure.
+        """
         items: list[str] = []
         class_query = self.queries[language].get(cs.QUERY_CLASSES)
         if class_query:
@@ -212,18 +322,21 @@ class ParsePreparationService:
 
     @staticmethod
     def _decode_source(source_bytes: bytes) -> str:
+        """Safely decodes source bytes to a string."""
         try:
             return source_bytes.decode(cs.ENCODING_UTF8)
         except Exception:
             return source_bytes.decode(cs.ENCODING_UTF8, errors="ignore")
 
     def _get_node_name(self, node: Node, field: str = cs.FIELD_NAME) -> str | None:
+        """Extracts the name from a node's named field."""
         name_node = node.child_by_field_name(field)
         if not name_node:
             return None
         return safe_decode_with_fallback(name_node)
 
     def _get_rust_impl_class_name(self, class_node: Node) -> str | None:
+        """Extracts the class name from a Rust `impl` block."""
         class_name = self._get_node_name(class_node, cs.FIELD_TYPE)
         if class_name:
             return class_name
@@ -235,6 +348,7 @@ class ParsePreparationService:
     def _get_class_name_for_node(
         self, class_node: Node, language: cs.SupportedLanguage
     ) -> str | None:
+        """Gets the class name, handling language-specific cases like Rust `impl`."""
         if language == cs.SupportedLanguage.RUST and class_node.type == cs.TS_IMPL_ITEM:
             return self._get_rust_impl_class_name(class_node)
         return self._get_node_name(class_node)
@@ -242,6 +356,7 @@ class ParsePreparationService:
     def _find_enclosing_class_name(
         self, node: Node, language: cs.SupportedLanguage, lang_config
     ) -> str | None:
+        """Finds the name of the class enclosing a given node."""
         current = node.parent
         while current and current.type not in lang_config.module_node_types:
             if current.type in lang_config.class_node_types:
@@ -250,6 +365,7 @@ class ParsePreparationService:
         return None
 
     def _module_qn_for_path(self, file_path: Path) -> str:
+        """Generates a module qualified name from a file path."""
         relative_path = file_path.relative_to(self.repo_path)
         parts = list(relative_path.with_suffix("").parts)
         if file_path.name in (cs.INIT_PY, cs.MOD_RS):
@@ -258,15 +374,32 @@ class ParsePreparationService:
 
 
 class FileProcessingService:
+    """
+    The main service for orchestrating the processing of all files in the repository.
+    """
+
     def __init__(
         self,
         context: FileProcessingContext,
         parse_service: ParsePreparationService,
     ) -> None:
+        """
+        Initializes the FileProcessingService.
+
+        Args:
+            context (FileProcessingContext): The shared context for file processing.
+            parse_service (ParsePreparationService): The service for preparing files for parsing.
+        """
         self.context = context
         self.parse_service = parse_service
 
     def process_files(self) -> None:
+        """
+        Iterates through all relevant files in the repository and processes them.
+
+        This method handles filtering files, checking caches, and dispatching
+        files to the `DefinitionProcessor` either individually or in a batch.
+        """
         ctx = self.context
         batch_jobs: list[tuple[str, str, Callable[[str, str], bool]]] = []
         target_paths: set[Path] | None = None
@@ -413,6 +546,12 @@ class FileProcessingService:
             )
 
     def _make_parse_job(self) -> Callable[[str, str], bool]:
+        """
+        Creates a closure for a parsing job to be run in a separate process or thread.
+
+        Returns:
+            A callable function that takes a file path and language and performs the parsing.
+        """
         ctx = self.context
 
         def _parse(file_path: str, language: str) -> bool:

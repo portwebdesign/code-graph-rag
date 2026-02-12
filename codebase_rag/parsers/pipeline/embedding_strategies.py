@@ -1,10 +1,28 @@
+"""
+This module defines the strategies and data structures for extracting text from
+code nodes to be used for generating vector embeddings.
+
+The core idea is to provide different levels of detail when converting a code
+entity (like a function or class) into a textual representation. The choice of
+strategy affects the context available to the embedding model, which in turn
+influences the quality of semantic search and retrieval. This module provides
+the `EmbeddingTextExtractor` class, which implements `RAW`, `SEMANTIC`, and `RICH`
+strategies.
+"""
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 
 class EmbeddingStrategy(Enum):
-    """Text extraction strategy for embeddings."""
+    """
+    An enumeration of the different text extraction strategies for embeddings.
+
+    - `RAW`: Minimal text, typically just the code body. Fast and small, but low context.
+    - `SEMANTIC`: A balanced approach including signature, docstring, and body. Recommended default.
+    - `RICH`: The most detailed representation, including framework context, type hints, and more.
+    """
 
     RAW = "raw"
     SEMANTIC = "semantic"
@@ -13,15 +31,19 @@ class EmbeddingStrategy(Enum):
 
 @dataclass
 class EmbeddingPayload:
-    """Result of embedding text extraction.
+    """
+    A data class representing the result of an embedding text extraction.
+
+    This structure holds the generated text and all relevant metadata, which can be
+    stored alongside the vector embedding for filtering and context retrieval.
 
     Attributes:
-        text (str): The main text to be embedded
-        metadata (Dict[str, Any]): Rich metadata about the extracted content
-        entity_type (str): Type of entity (function, class, endpoint, etc.)
-        language (str): Programming language
-        framework (Optional[str]): Detected framework (if any)
-        source_file (Optional[str]): Optional source file path
+        text (str): The final text content to be embedded.
+        metadata (dict[str, Any]): A dictionary of rich metadata about the extracted content.
+        entity_type (str): The type of the code entity (e.g., "function", "class").
+        language (str): The programming language of the code.
+        framework (str | None): The detected framework, if any.
+        source_file (str | None): The path to the source file.
     """
 
     text: str
@@ -32,28 +54,37 @@ class EmbeddingPayload:
     source_file: str | None = None
 
     def get_summary(self) -> str:
-        """Get a one-line summary of the payload."""
+        """
+        Returns a concise one-line summary of the payload.
+
+        Returns:
+            A string summarizing the payload's key attributes.
+        """
         return f"{self.entity_type} - {len(self.text)} chars - {self.language}"
 
 
 @dataclass
 class NodeInfo:
-    """Information extracted from an AST node.
+    """
+    A standardized data structure for holding information extracted from an AST node.
+
+    This class acts as a common interface for the `EmbeddingTextExtractor`, ensuring
+    it can work with node information from different language parsers in a consistent way.
 
     Attributes:
-        node_id (str): Unique identifier for the node
-        kind (str): Type of node (function, class, etc.)
-        name (str): Name of entity
-        signature (Optional[str]): Function/method signature
-        signature_lite (Optional[str]): Minimal signature
-        docstring (Optional[str]): Documentation string
-        body_text (Optional[str]): Main implementation text
-        parameters (List[str]): Parameter names and types
-        return_type (Optional[str]): Return type annotation
-        decorators (List[str]): Applied decorators
-        parent_class (Optional[str]): Parent class name if applicable
-        start_line (Optional[int]): Starting line number
-        end_line (Optional[int]): Ending line number
+        node_id (str): A unique identifier for the node.
+        kind (str): The type of the node (e.g., "function", "class").
+        name (str): The name of the code entity.
+        signature (str | None): The full function or method signature.
+        signature_lite (str | None): A minimal, simplified signature.
+        docstring (str | None): The documentation string for the entity.
+        body_text (str | None): The text of the function/method body.
+        parameters (list[str]): A list of parameter names and types.
+        return_type (str | None): The return type annotation.
+        decorators (list[str]): A list of applied decorators or annotations.
+        parent_class (str | None): The name of the parent class, if applicable.
+        start_line (int | None): The starting line number of the node in the source file.
+        end_line (int | None): The ending line number of the node.
     """
 
     node_id: str
@@ -72,57 +103,21 @@ class NodeInfo:
 
 
 class EmbeddingTextExtractor:
-    """Extract text for embeddings using different strategies.
+    """
+    Extracts text for embeddings from code nodes using different strategies.
 
-    The extractor provides three strategies for preparing text for embedding:
-
-    1. RAW: Minimal text - just the function/method body
-       - Fast embedding
-       - Lower context
-       - Good for simple search
-
-    2. SEMANTIC: Context-aware - signature + docstring + body
-       - Balanced approach
-       - Medium context
-       - Good for semantic search
-       - Recommended default
-
-    3. RICH: Complete context - everything
-       - Maximum context
-       - Includes framework info, type hints, decorators
-       - Best semantic understanding
-       - Slower embedding
-       - Larger embeddings
-
-    Example:
-        extractor = EmbeddingTextExtractor()
-
-        node_info = NodeInfo(
-            node_id="func_123",
-            kind="function",
-            name="calculate_total",
-            signature="def calculate_total(items: List[Item]) -> float:",
-            docstring="Calculate total price of items.",
-            body_text="return sum(item.price for item in items)",
-            parameters=["items"],
-            return_type="float",
-        )
-
-        payload = extractor.extract(
-            node_info,
-            strategy=EmbeddingStrategy.RICH,
-            framework="django"
-        )
-
-        print(f"Embedding text length: {len(payload.text)}")
-        print(f"Metadata: {payload.metadata}")
+    This class is the core implementation of the text extraction logic. It provides
+    methods to generate textual representations of code entities with varying
+    levels of detail, suitable for different embedding and retrieval use cases.
     """
 
     def __init__(self, max_body_chars: int = 5000):
-        """Initialize extractor.
+        """
+        Initializes the extractor.
 
         Args:
-            max_body_chars (int): Maximum number of characters to include from body
+            max_body_chars (int): The maximum number of characters to include from a
+                                  function or method body to prevent overly long text.
         """
         self.max_body_chars = max_body_chars
 
@@ -133,24 +128,17 @@ class EmbeddingTextExtractor:
         framework: str | None = None,
         language: str = "python",
     ) -> EmbeddingPayload:
-        """Extract embedding text from node information.
+        """
+        Extracts embedding text from a `NodeInfo` object using a specified strategy.
 
         Args:
-            node_info (NodeInfo): Extracted node information
-            strategy (EmbeddingStrategy): Which extraction strategy to use
-            framework (Optional[str]): Detected framework name if any
-            language (str): Programming language
+            node_info (NodeInfo): The structured information about the code node.
+            strategy (EmbeddingStrategy): The extraction strategy to use (RAW, SEMANTIC, or RICH).
+            framework (str | None): The name of the detected framework, for context.
+            language (str): The programming language of the node.
 
         Returns:
-            EmbeddingPayload: Payload with text and metadata
-
-        Example:
-            payload = extractor.extract(
-                node_info,
-                strategy=EmbeddingStrategy.RICH,
-                framework="flask",
-                language="python"
-            )
+            An `EmbeddingPayload` containing the generated text and metadata.
         """
         if strategy == EmbeddingStrategy.RAW:
             return self._extract_raw(node_info, language, framework)
@@ -164,18 +152,18 @@ class EmbeddingTextExtractor:
     def _extract_raw(
         self, node_info: NodeInfo, language: str, framework: str | None
     ) -> EmbeddingPayload:
-        """Extract RAW strategy: just the body.
+        """
+        Implements the RAW strategy: extracts only the body of the code.
 
-        This is the minimal approach - only the implementation code.
-        Suitable for quick embeddings with reduced context.
+        This provides the most minimal context, focusing solely on the implementation.
 
         Args:
-            node_info (NodeInfo): Node information
-            language (str): Programming language
-            framework (Optional[str]): Detected framework
+            node_info (NodeInfo): The structured information about the code node.
+            language (str): The programming language.
+            framework (str | None): The detected framework.
 
         Returns:
-            EmbeddingPayload: Content for embedding
+            An `EmbeddingPayload` with the raw body text.
         """
         body = node_info.body_text or ""
 
@@ -202,19 +190,19 @@ class EmbeddingTextExtractor:
     def _extract_semantic(
         self, node_info: NodeInfo, language: str, framework: str | None
     ) -> EmbeddingPayload:
-        """Extract SEMANTIC strategy: signature + docstring + body.
+        """
+        Implements the SEMANTIC strategy: combines signature, docstring, and body.
 
-        This is the balanced approach - provides context without excessive length.
-        Includes documentation and type information.
-        Recommended for most use cases.
+        This is a balanced approach that provides good context for semantic search
+        without being overly verbose. It's the recommended default.
 
         Args:
-            node_info (NodeInfo): Node information
-            language (str): Programming language
-            framework (Optional[str]): Detected framework
+            node_info (NodeInfo): The structured information about the code node.
+            language (str): The programming language.
+            framework (str | None): The detected framework.
 
         Returns:
-            EmbeddingPayload: Content for embedding
+            An `EmbeddingPayload` with a combination of signature, docs, and body.
         """
         components = []
 
@@ -273,20 +261,19 @@ class EmbeddingTextExtractor:
     def _extract_rich(
         self, node_info: NodeInfo, language: str, framework: str | None
     ) -> EmbeddingPayload:
-        """Extract RICH strategy: everything including framework context.
+        """
+        Implements the RICH strategy: includes semantic info plus framework context, types, etc.
 
-        This is the complete approach - provides maximum context for
-        embedding-based search. Includes framework-specific patterns,
-        type information, relationships, and more.
-        Best for deep semantic understanding.
+        This provides the maximum amount of context, including framework-specific patterns,
+        type information, and code metrics. It is best for deep semantic understanding.
 
         Args:
-            node_info (NodeInfo): Node information
-            language (str): Programming language
-            framework (Optional[str]): Detected framework
+            node_info (NodeInfo): The structured information about the code node.
+            language (str): The programming language.
+            framework (str | None): The detected framework.
 
         Returns:
-            EmbeddingPayload: Content for embedding
+            An `EmbeddingPayload` with a comprehensive textual representation.
         """
         semantic_payload = self._extract_semantic(node_info, language, framework)
         components = [semantic_payload.text]
@@ -344,15 +331,19 @@ class EmbeddingTextExtractor:
     def _get_framework_context(
         self, node_info: NodeInfo, framework: str, language: str
     ) -> str:
-        """Generate framework-specific context.
+        """
+        Generates a framework-specific context string based on the node's properties.
+
+        For example, it can identify a function as a "Django View Handler" or a
+        class as a "React Component".
 
         Args:
-            node_info (NodeInfo): Node information
-            framework (str): Framework name (django, flask, spring, etc.)
-            language (str): Programming language
+            node_info (NodeInfo): The structured information about the code node.
+            framework (str): The name of the detected framework (e.g., "django", "spring").
+            language (str): The programming language.
 
         Returns:
-            str: Formatted framework context string
+            A formatted string describing the node's role within the framework.
         """
         context_parts = []
 
@@ -435,13 +426,16 @@ class EmbeddingTextExtractor:
         return "\n".join(f"  - {part}" for part in context_parts)
 
     def _compute_code_metrics(self, node_info: NodeInfo) -> dict[str, Any]:
-        """Compute code metrics from node information.
+        """
+        Computes simple code metrics from the node information.
+
+        Metrics include lines of code, parameter count, and a basic complexity score.
 
         Args:
-            node_info (NodeInfo): Node information
+            node_info (NodeInfo): The structured information about the code node.
 
         Returns:
-            Dict[str, Any]: Dictionary of code metrics
+            A dictionary of computed code metrics.
         """
         metrics = {}
 
@@ -474,31 +468,19 @@ class EmbeddingTextExtractor:
         strategy: EmbeddingStrategy = EmbeddingStrategy.SEMANTIC,
         **kwargs,
     ) -> EmbeddingPayload:
-        """Extract embedding text from dictionary representation.
+        """
+        A convenience method to extract embedding text from a dictionary representation of a node.
+
+        This allows the extractor to be used in pipelines where nodes are passed as
+        dictionaries rather than `NodeInfo` objects.
 
         Args:
-            node_dict (Dict[str, Any]): Dictionary with node information
-            strategy (EmbeddingStrategy): Extraction strategy to use
-            **kwargs: Additional arguments (framework, language, etc.)
+            node_dict (dict[str, Any]): A dictionary containing the node's information.
+            strategy (EmbeddingStrategy): The extraction strategy to use.
+            **kwargs: Additional arguments like `framework` and `language`.
 
         Returns:
-            EmbeddingPayload: Payload with text and metadata
-
-        Example:
-            node_dict = {
-                "node_id": "func_123",
-                "kind": "function",
-                "name": "calculate",
-                "signature": "def calculate(x, y):",
-                "docstring": "Calculates sum.",
-                "body_text": "return x + y",
-            }
-
-            payload = extractor.extract_from_dict(
-                node_dict,
-                strategy=EmbeddingStrategy.RICH,
-                framework="django"
-            )
+            An `EmbeddingPayload` containing the generated text and metadata.
         """
         node_info = NodeInfo(
             node_id=node_dict.get("node_id", "unknown"),

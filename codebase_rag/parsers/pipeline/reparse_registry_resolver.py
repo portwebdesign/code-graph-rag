@@ -1,3 +1,16 @@
+"""
+This module defines the `ReparseRegistryResolver`, a specialized pass for resolving
+function calls using a pre-built function registry.
+
+This resolver is intended to be run after the initial parsing and definition
+ingestion phases. It operates on a simplified registry that maps simple function
+names to their potential fully qualified definitions. It then re-parses the ASTs
+to find call sites and uses this registry to link calls to their definitions,
+providing an alternative or supplementary method to the main `CallResolver`. This
+can be particularly useful for languages or codebases where the primary resolution
+strategy might struggle with complex or dynamic call patterns.
+"""
+
 from __future__ import annotations
 
 import os
@@ -19,10 +32,14 @@ from codebase_rag.services import IngestorProtocol
 
 class ReparseRegistryResolver:
     """
-    Resolves function calls using a function registry.
+    Resolves function calls by re-parsing ASTs and using a function registry.
 
-    This class iterates through the AST of files, identifies function calls,
-    and attempts to link them to their definitions using a provided function registry.
+    This class provides a secondary mechanism for call resolution. It builds a
+    simple name-to-definition mapping from the main function registry and then
+    iterates through the AST of each file to identify function calls. It uses
+    this mapping to link calls to their definitions, which can help resolve
+    calls missed by the primary `CallResolver`. This pass is controlled by the
+    `CODEGRAPH_REPARSE_REGISTRY` environment variable.
     """
 
     def __init__(
@@ -34,6 +51,17 @@ class ReparseRegistryResolver:
         function_registry: FunctionRegistryTrieProtocol,
         module_qn_to_file_path: dict[str, Path],
     ) -> None:
+        """
+        Initializes the ReparseRegistryResolver.
+
+        Args:
+            ingestor (IngestorProtocol): The service for writing data to the graph.
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            queries (dict): A dictionary of language-specific tree-sitter queries.
+            function_registry (FunctionRegistryTrieProtocol): The main registry of all known functions.
+            module_qn_to_file_path (dict[str, Path]): A mapping from module FQNs to file paths.
+        """
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
@@ -52,7 +80,10 @@ class ReparseRegistryResolver:
         self, ast_items: Iterable[tuple[Path, tuple[Node, cs.SupportedLanguage]]]
     ) -> None:
         """
-        Process cached AST items to resolve function calls.
+        Processes cached AST items to resolve function calls using the registry.
+
+        This is the main entry point for the pass. It builds a simplified registry
+        and then iterates through each file's AST to resolve calls.
 
         Args:
             ast_items (Iterable): An iterable of (file_path, (root_node, language)) tuples.
@@ -73,11 +104,14 @@ class ReparseRegistryResolver:
 
     def _build_registry(self) -> dict[str, list[dict[str, str]]]:
         """
-        Build a simplified registry mapping simple names to full definitions.
+        Builds a simplified registry mapping simple names to full definition details.
+
+        This creates a dictionary where keys are simple function names (e.g., "my_func")
+        and values are a list of potential definitions, each including the full qualified
+        name, node type, and file path.
 
         Returns:
-            dict[str, list[dict[str, str]]]: A dictionary mapping simple function names
-            to a list of potential matches (dictionaries with qn, type, file_path).
+            A dictionary mapping simple names to a list of potential definition matches.
         """
         registry: dict[str, list[dict[str, str]]] = {}
         for qn, node_type in self.function_registry.items():
@@ -99,13 +133,13 @@ class ReparseRegistryResolver:
         registry: dict[str, list[dict[str, str]]],
     ) -> None:
         """
-        Resolve function calls within a specific file.
+        Resolves all function calls within a single file using the provided registry.
 
         Args:
-            file_path (Path): Path to the source file.
-            root_node (Node): Root AST node of the file.
+            file_path (Path): The path to the source file.
+            root_node (Node): The root AST node of the file.
             language (cs.SupportedLanguage): The programming language of the file.
-            registry (dict): The function registry for resolution.
+            registry (dict): The simplified function registry for resolution.
         """
         lang_queries = self.queries.get(language)
         if not lang_queries:
@@ -155,15 +189,17 @@ class ReparseRegistryResolver:
         self, call_node: Node, module_qn: str, lang_config: LanguageSpec
     ) -> str | None:
         """
-        Find the qualified name of the function or method calling the target.
+        Finds the qualified name of the function or method that contains the given call node.
+
+        It traverses up the AST from the call node to find the enclosing function/method.
 
         Args:
             call_node (Node): The AST node representing the function call.
             module_qn (str): The qualified name of the module containing the call.
-            lang_config (LanguageSpec): Language-specific configuration.
+            lang_config (LanguageSpec): The language-specific configuration.
 
         Returns:
-            str | None: The qualified name of the caller, or None if not found.
+            The qualified name of the caller, or None if it cannot be determined.
         """
         current = call_node.parent
         function_name: str | None = None
@@ -199,16 +235,17 @@ class ReparseRegistryResolver:
         self, call_name: str, registry: dict[str, list[dict[str, str]]], file_path: str
     ) -> tuple[str | None, str | None]:
         """
-        Resolve a call name to a qualified name using the registry.
+        Resolves a call name to a qualified name using the simplified registry.
+
+        It prioritizes candidates defined in the same file to resolve ambiguity.
 
         Args:
-            call_name (str): The name of the function being called.
-            registry (dict): The function registry.
-            file_path (str): The path of the file where the call occurs (for disambiguation).
+            call_name (str): The simple name of the function being called.
+            registry (dict): The function registry mapping simple names to definitions.
+            file_path (str): The path of the file where the call occurs.
 
         Returns:
-            tuple[str | None, str | None]: A tuple containing the resolved Qualified Name
-            and the Node Type (e.g., 'function', 'method'), or (None, None) if not resolved.
+            A tuple of (qualified_name, node_type), or (None, None) if not resolved.
         """
         simple = re.split(r"[.:]|::", call_name)[-1]
         candidates = registry.get(simple, [])
@@ -226,13 +263,13 @@ class ReparseRegistryResolver:
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """
-        Extract the name of the function being called from the AST node.
+        Extracts the name of the function being called from the call's AST node.
 
         Args:
-            call_node (Node): The AST node representing the call.
+            call_node (Node): The AST node representing the call expression.
 
         Returns:
-            str | None: The name of the called function, or None if extraction fails.
+            The name of the called function as a string, or None if it cannot be extracted.
         """
         if func_child := call_node.child_by_field_name(cs.TS_FIELD_FUNCTION):
             if func_child.text is not None:
@@ -244,13 +281,16 @@ class ReparseRegistryResolver:
 
     def _find_file_path_for_qn(self, qn: str) -> str | None:
         """
-        Find the file path associated with a given qualified name.
+        Finds the file path associated with a given qualified name using a cache.
+
+        It works by progressively shortening the qualified name from the end until
+        it finds a match in the `module_qn_to_file_path` mapping.
 
         Args:
             qn (str): The qualified name to look up.
 
         Returns:
-            str | None: The string representation of the file path, or None if not found.
+            The file path as a string, or None if no associated module is found.
         """
         if qn in self._qn_to_path_cache:
             return self._qn_to_path_cache[qn]
@@ -267,13 +307,13 @@ class ReparseRegistryResolver:
 
     def _module_qn_for_path(self, file_path: Path) -> str:
         """
-        Generate the module qualified name for a given file path.
+        Generates the module qualified name for a given file path.
 
         Args:
             file_path (Path): The path to the file.
 
         Returns:
-            str: The fully qualified module name.
+            The fully qualified module name as a string.
         """
         relative_path = file_path.relative_to(self.repo_path)
         parts = list(relative_path.with_suffix("").parts)

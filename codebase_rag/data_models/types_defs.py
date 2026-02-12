@@ -258,7 +258,7 @@ class GraphSummary(TypedDict):
     metadata: GraphMetadata
 
 
-class EmbeddingQueryResult(TypedDict):
+class EmbeddingQueryResult(TypedDict, total=False):
     """The result of a query for data to be embedded."""
 
     node_id: int
@@ -266,6 +266,14 @@ class EmbeddingQueryResult(TypedDict):
     start_line: int | None
     end_line: int | None
     path: str | None
+    name: str
+    signature: str
+    signature_lite: str
+    docstring: str
+    decorators: list[str]
+    parent_qn: str
+    labels: list[str]
+    language: str
 
 
 class SemanticSearchResult(TypedDict):

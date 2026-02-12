@@ -1,3 +1,14 @@
+"""
+This module provides the `MemgraphIngestor`, a service class for managing
+connections to and data ingestion into a Memgraph database.
+
+It handles the complexities of database interaction, including connection
+management, transaction batching for efficient data insertion, and ensuring
+database constraints and indexes are in place. The class is designed to be used
+as a context manager to ensure that connections are properly handled and that
+all buffered data is flushed upon completion.
+"""
+
 from __future__ import annotations
 
 import types
@@ -55,10 +66,11 @@ from ..infrastructure import exceptions as ex
 
 class MemgraphIngestor:
     """
-    Manages connection and data ingestion for a Memgraph database.
+    Manages the connection and data ingestion for a Memgraph database.
 
-    This class provides methods to execute queries, manage constraints, and
-    batch-insert nodes and relationships for performance.
+    This class provides methods to execute queries, manage schema constraints, and
+    efficiently batch-insert nodes and relationships. It acts as a high-level
+    abstraction over the raw database driver.
     """
 
     def __init__(self, host: str, port: int, batch_size: int = 1000):
@@ -67,9 +79,9 @@ class MemgraphIngestor:
 
         Args:
             host (str): The hostname or IP address of the Memgraph instance.
-            port (int): The port number of the Memgraph instance.
-            batch_size (int): The number of nodes or relationships to buffer before
-                              flushing to the database.
+            port (int): The port number for the Memgraph instance.
+            batch_size (int): The number of nodes or relationships to buffer in memory
+                              before flushing them to the database in a single transaction.
         """
         self._host = host
         self._port = port
@@ -89,10 +101,10 @@ class MemgraphIngestor:
 
     def __enter__(self) -> MemgraphIngestor:
         """
-        Connects to the Memgraph database when entering the context.
+        Connects to the Memgraph database when entering a `with` block.
 
         Returns:
-            MemgraphIngestor: The connected ingestor instance.
+            The connected `MemgraphIngestor` instance.
         """
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
         self.conn = mgclient.connect(host=self._host, port=self._port)
@@ -107,12 +119,12 @@ class MemgraphIngestor:
         exc_tb: types.TracebackType | None,
     ) -> None:
         """
-        Flushes all data and closes the connection when exiting the context.
+        Flushes all buffered data and closes the database connection upon exiting a `with` block.
 
         Args:
-            exc_type (type | None): The type of the exception, if any.
-            exc_val (Exception | None): The exception instance, if any.
-            exc_tb (types.TracebackType | None): The traceback, if any.
+            exc_type: The type of the exception if one occurred.
+            exc_val: The exception instance if one occurred.
+            exc_tb: The traceback if an exception occurred.
         """
         if exc_type:
             logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
@@ -124,10 +136,10 @@ class MemgraphIngestor:
     @contextmanager
     def _get_cursor(self) -> Generator[CursorProtocol, None, None]:
         """
-        Provides a database cursor within a context manager.
+        Provides a database cursor within a context manager to ensure it's closed properly.
 
         Yields:
-            CursorProtocol: The database cursor.
+            A database cursor object conforming to `CursorProtocol`.
         """
         if not self.conn:
             raise ConnectionError(ex.CONN)
@@ -144,10 +156,10 @@ class MemgraphIngestor:
         Converts a database cursor's fetched data into a list of dictionaries.
 
         Args:
-            cursor (CursorProtocol): The cursor after a query has been executed.
+            cursor (CursorProtocol): The cursor after a query has been executed and data fetched.
 
         Returns:
-            list[ResultRow]: A list of rows, where each row is a dictionary.
+            A list of rows, where each row is a dictionary mapping column names to values.
         """
         if not cursor.description:
             return []
@@ -162,14 +174,14 @@ class MemgraphIngestor:
         params: dict[str, PropertyValue] | None = None,
     ) -> list[ResultRow]:
         """
-        Executes a single Cypher query.
+        Executes a single Cypher query against the database.
 
         Args:
-            query (str): The Cypher query to execute.
-            params (dict[str, PropertyValue] | None): Parameters for the query.
+            query (str): The Cypher query string to execute.
+            params (dict | None): A dictionary of parameters to pass to the query.
 
         Returns:
-            list[ResultRow]: The query results as a list of dictionaries.
+            The query results as a list of dictionaries.
         """
         params = params or {}
         with self._get_cursor() as cursor:
@@ -188,11 +200,11 @@ class MemgraphIngestor:
 
     def _execute_batch(self, query: str, params_list: Sequence[BatchParams]) -> None:
         """
-        Executes a batch query using `UNWIND`.
+        Executes a batch query using `UNWIND` for efficient bulk operations.
 
         Args:
             query (str): The core Cypher query to run for each item in the batch.
-            params_list (Sequence[BatchParams]): A list of parameter dictionaries.
+            params_list (Sequence[BatchParams]): A list of parameter dictionaries, one for each operation.
         """
         if not self.conn or not params_list:
             return
@@ -221,14 +233,14 @@ class MemgraphIngestor:
         self, query: str, params_list: Sequence[BatchParams]
     ) -> list[ResultRow]:
         """
-        Executes a batch query and returns the results.
+        Executes a batch query and returns the results from each operation.
 
         Args:
             query (str): The core Cypher query.
             params_list (Sequence[BatchParams]): A list of parameter dictionaries.
 
         Returns:
-            list[ResultRow]: The query results.
+            A list of result rows from the batch execution.
         """
         if not self.conn or not params_list:
             return []
@@ -253,17 +265,17 @@ class MemgraphIngestor:
 
     def list_projects(self) -> list[str]:
         """
-        Lists all project names in the database.
+        Lists all project names currently stored in the database.
 
         Returns:
-            list[str]: A list of project names.
+            A list of project name strings.
         """
         result = self.fetch_all(CYPHER_LIST_PROJECTS)
         return [str(r[KEY_NAME]) for r in result]
 
     def delete_project(self, project_name: str) -> None:
         """
-        Deletes a project and all its associated data.
+        Deletes a specific project and all its associated data from the database.
 
         Args:
             project_name (str): The name of the project to delete.
@@ -273,7 +285,7 @@ class MemgraphIngestor:
         logger.info(ls.MG_PROJECT_DELETED.format(project_name=project_name))
 
     def ensure_constraints(self) -> None:
-        """Ensures all unique constraints are created in the database."""
+        """Ensures all defined unique constraints are created in the database."""
         logger.info(ls.MG_ENSURING_CONSTRAINTS)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
@@ -284,7 +296,7 @@ class MemgraphIngestor:
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
-        """Ensures all necessary indexes are created for performance."""
+        """Ensures all necessary indexes are created for query performance."""
         logger.info(ls.MG_ENSURING_INDEXES)
         for label, prop in NODE_UNIQUE_CONSTRAINTS.items():
             try:
@@ -297,11 +309,13 @@ class MemgraphIngestor:
         self, label: str, properties: dict[str, PropertyValue]
     ) -> None:
         """
-        Adds a node to the buffer for batch ingestion.
+        Adds a node to the internal buffer for batch ingestion.
+
+        If the buffer reaches the `batch_size`, it will be automatically flushed.
 
         Args:
-            label (str): The label of the node.
-            properties (dict[str, PropertyValue]): The properties of the node.
+            label (str): The label of the node (e.g., "Function").
+            properties (dict): The properties of the node.
         """
         self._apply_project_context(label, properties)
         self.node_buffer.append((label, properties))
@@ -317,13 +331,15 @@ class MemgraphIngestor:
         properties: dict[str, PropertyValue] | None = None,
     ) -> None:
         """
-        Adds a relationship to the buffer for batch ingestion.
+        Adds a relationship to the internal buffer for batch ingestion.
+
+        If the buffer reaches the `batch_size`, both nodes and relationships will be flushed.
 
         Args:
-            from_spec (tuple): A tuple for the source node (label, key, value).
-            rel_type (str): The type of the relationship.
-            to_spec (tuple): A tuple for the target node (label, key, value).
-            properties (dict | None): Optional properties for the relationship.
+            from_spec (tuple): A tuple identifying the source node (label, key, value).
+            rel_type (str): The type of the relationship (e.g., "CALLS").
+            to_spec (tuple): A tuple identifying the target node (label, key, value).
+            properties (dict | None): Optional properties for the relationship itself.
         """
         from_label, from_key, from_val = from_spec
         to_label, to_key, to_val = to_spec
@@ -349,7 +365,7 @@ class MemgraphIngestor:
             self.flush_relationships()
 
     def flush_nodes(self) -> None:
-        """Flushes the buffered nodes to the database."""
+        """Flushes the buffered nodes to the database in batches by label."""
         if not self.node_buffer:
             return
 
@@ -400,6 +416,13 @@ class MemgraphIngestor:
     def _apply_project_context(
         self, label: str, properties: dict[str, PropertyValue]
     ) -> None:
+        """
+        Applies project-level context (like project_name) to node properties before ingestion.
+
+        Args:
+            label (str): The label of the node.
+            properties (dict): The properties of the node.
+        """
         project_name = getattr(self, "project_name", None)
         if project_name and cs.KEY_PROJECT_NAME not in properties:
             properties[cs.KEY_PROJECT_NAME] = project_name
@@ -432,6 +455,17 @@ class MemgraphIngestor:
     def _derive_folder_props(
         label: str, path_value: str, project_name: str | None
     ) -> tuple[str, str]:
+        """
+        Derives folder path and name from a node's path property.
+
+        Args:
+            label (str): The node's label.
+            path_value (str): The node's path property.
+            project_name (str | None): The name of the project.
+
+        Returns:
+            A tuple of (folder_path, folder_name).
+        """
         try:
             node_label = cs.NodeLabel(label)
         except Exception:
@@ -449,7 +483,7 @@ class MemgraphIngestor:
         return folder_path, Path(folder_path).name
 
     def flush_relationships(self) -> None:
-        """Flushes the buffered relationships to the database."""
+        """Flushes the buffered relationships to the database in batches by pattern."""
         if not self.relationship_buffer:
             return
 
@@ -524,6 +558,17 @@ class MemgraphIngestor:
         params_list: Sequence[RelBatchRow],
         results: Sequence[ResultRow],
     ) -> None:
+        """
+        Logs warnings for relationships that failed to be created due to missing endpoints.
+
+        Args:
+            from_label (str): Label of the source node.
+            from_key (str): Unique key of the source node.
+            to_label (str): Label of the target node.
+            to_key (str): Unique key of the target node.
+            params_list (Sequence[RelBatchRow]): The list of parameters for the failed batch.
+            results (Sequence[ResultRow]): The results from the batch execution.
+        """
         samples = 0
         for row, result in zip(params_list, results):
             created = result.get(KEY_CREATED, 0)
@@ -572,10 +617,10 @@ class MemgraphIngestor:
 
         Args:
             query (str): The Cypher query to execute.
-            params (dict | None): Parameters for the query.
+            params (dict | None): A dictionary of parameters for the query.
 
         Returns:
-            list[ResultRow]: The query results.
+            A list of `ResultRow` dictionaries.
         """
         logger.debug(ls.MG_FETCH_QUERY.format(query=query, params=params))
         return self._execute_query(query, params)
@@ -584,21 +629,21 @@ class MemgraphIngestor:
         self, query: str, params: dict[str, PropertyValue] | None = None
     ) -> None:
         """
-        Executes a write query.
+        Executes a write query that does not return results.
 
         Args:
             query (str): The Cypher query to execute.
-            params (dict | None): Parameters for the query.
+            params (dict | None): A dictionary of parameters for the query.
         """
         logger.debug(ls.MG_WRITE_QUERY.format(query=query, params=params))
         self._execute_query(query, params)
 
     def export_graph_to_dict(self) -> GraphData:
         """
-        Exports the entire graph to a dictionary.
+        Exports the entire graph from the database into a dictionary format.
 
         Returns:
-            GraphData: A dictionary containing all nodes, relationships, and metadata.
+            A `GraphData` object containing all nodes, relationships, and metadata.
         """
         logger.info(ls.MG_EXPORTING)
 
@@ -622,9 +667,9 @@ class MemgraphIngestor:
 
     def _get_current_timestamp(self) -> str:
         """
-        Gets the current UTC timestamp in ISO format.
+        Gets the current UTC timestamp in ISO 8601 format.
 
         Returns:
-            str: The ISO-formatted timestamp string.
+            The ISO-formatted timestamp string.
         """
         return datetime.now(UTC).isoformat()

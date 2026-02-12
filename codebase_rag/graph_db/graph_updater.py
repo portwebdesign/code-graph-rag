@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
@@ -14,7 +15,6 @@ from codebase_rag.data_models.types_defs import (
     ResultRow,
     SimpleNameLookup,
 )
-from codebase_rag.detectors.framework_metadata_detector import FrameworkMetadataDetector
 from codebase_rag.parsers.core.factory import ProcessorFactory
 from codebase_rag.parsers.core.incremental_cache import (
     GitDeltaCache,
@@ -23,6 +23,7 @@ from codebase_rag.parsers.core.incremental_cache import (
 from codebase_rag.parsers.core.performance_optimizer import ParserPerformanceOptimizer
 from codebase_rag.parsers.core.pre_scanner import PreScanIndex
 from codebase_rag.parsers.core.process_manager import ParserProcessManager
+from codebase_rag.parsers.frameworks.framework_registry import FrameworkDetectorRegistry
 from codebase_rag.parsers.query.declarative_parser import DeclarativeParser
 from codebase_rag.parsers.query.query_engine import QueryEngine
 from codebase_rag.services import (
@@ -156,13 +157,14 @@ class GraphUpdater:
     def run(self) -> None:
         self._progress("ingest_stage", {"stage": "project_init"})
         project_props = {cs.KEY_NAME: self.project_name}
-        if self.config.framework_metadata_enabled:
-            detector = FrameworkMetadataDetector(self.repo_path)
-            framework_type, framework_metadata = detector.detect()
-            if framework_type:
-                project_props[cs.KEY_FRAMEWORK] = framework_type
-            if framework_metadata:
-                project_props[cs.KEY_FRAMEWORK_METADATA] = framework_metadata
+        registry = FrameworkDetectorRegistry(self.repo_path)
+        result = registry.detect_repo()
+        if result.framework_type:
+            project_props[cs.KEY_FRAMEWORK] = result.framework_type
+        if result.metadata:
+            project_props[cs.KEY_FRAMEWORK_METADATA] = json.dumps(
+                result.metadata, ensure_ascii=False
+            )
 
         self.ingestor.ensure_node_batch(cs.NODE_PROJECT, project_props)
         logger.info(ls.ENSURING_PROJECT.format(name=self.project_name))
@@ -258,6 +260,8 @@ class GraphUpdater:
             repo_path=self.repo_path,
             ast_cache=self.ast_cache,
             project_name=self.project_name,
+            phase2_integration_enabled=self.config.phase2_integration_enabled,
+            phase2_embedding_strategy=self.config.phase2_embedding_strategy,
         ).generate_semantic_embeddings()
 
         if isinstance(self.ingestor, QueryProtocol):

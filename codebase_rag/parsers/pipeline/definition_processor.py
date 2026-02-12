@@ -1,3 +1,15 @@
+"""
+This module defines the `DefinitionProcessor`, the central class for parsing source
+files and ingesting code definitions (like functions, classes, and modules) into
+the graph database.
+
+It acts as an orchestrator, combining the functionality of various mixins
+(`FunctionIngestMixin`, `ClassIngestMixin`, etc.) to handle different types of
+code constructs. The processor is responsible for reading files, triggering the
+AST parsing, processing imports, and then delegating to the appropriate mixin to
+extract and ingest detailed information about each function, class, and method.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,6 +34,7 @@ from codebase_rag.parsers.core.utils import (
     get_parent_qualified_name,
     safe_decode_with_fallback,
 )
+from codebase_rag.parsers.frameworks.framework_registry import FrameworkDetectorRegistry
 from codebase_rag.parsers.handlers import get_handler
 from codebase_rag.parsers.languages.js_ts.ingest import JsTsIngestMixin
 from codebase_rag.utils.path_utils import is_test_path, to_posix
@@ -43,19 +56,24 @@ class DefinitionProcessor(
     JsTsIngestMixin,
 ):
     """
-    Main processor for parsing source files and ingesting definitions (functions, classes, etc.) into the graph.
+    The main processor for parsing source files and ingesting definitions.
 
-    This class coordinates the parsing process, utilizing mixins for specific component ingestion.
-    It handles file reading, AST parsing, import processing, and the extraction of various code elements.
+    This class coordinates the entire definition extraction process. It is composed
+    of several mixins, each responsible for a specific type of code element
+    (e.g., functions, classes). It manages the file processing workflow, from
+    reading the source and parsing the AST to handling imports and dispatching
+    to the correct ingestion logic based on the language and code structure.
 
-    Args:
-        ingestor (IngestorProtocol): Valid ingestor instance for database operations.
-        repo_path (Path): Path to the repository root.
-        project_name (str): Name of the project.
-        function_registry (FunctionRegistryTrieProtocol): Registry for storing found functions/classes.
-        simple_name_lookup (SimpleNameLookup): Lookup table for simple names to qualified names.
-        import_processor (ImportProcessor): Processor for handling imports.
-        module_qn_to_file_path (dict[str, Path]): Mapping of module QNs to their file paths.
+    Attributes:
+        ingestor (IngestorProtocol): The service for writing data to the graph.
+        repo_path (Path): The root path of the repository.
+        project_name (str): The name of the project.
+        function_registry (FunctionRegistryTrieProtocol): A trie for storing all found functions/classes.
+        simple_name_lookup (SimpleNameLookup): A mapping from simple names to a set of FQNs.
+        import_processor (ImportProcessor): The processor for handling import statements.
+        module_qn_to_file_path (dict[str, Path]): A mapping from module FQNs to their file paths.
+        module_qn_to_file_hash (dict[str, str]): A mapping from module FQNs to their file content hashes.
+        class_inheritance (dict[str, list[str]]): A map of class inheritance relationships.
     """
 
     _handler: LanguageHandler
@@ -70,6 +88,18 @@ class DefinitionProcessor(
         import_processor: ImportProcessor,
         module_qn_to_file_path: dict[str, Path],
     ):
+        """
+        Initializes the DefinitionProcessor.
+
+        Args:
+            ingestor (IngestorProtocol): An ingestor instance for database operations.
+            repo_path (Path): The absolute path to the repository root.
+            project_name (str): The name of the project.
+            function_registry (FunctionRegistryTrieProtocol): A registry for storing found functions/classes.
+            simple_name_lookup (SimpleNameLookup): A lookup table for simple names to qualified names.
+            import_processor (ImportProcessor): The processor for handling imports.
+            module_qn_to_file_path (dict[str, Path]): A mapping of module FQNs to their file paths.
+        """
         super().__init__()
         self.ingestor = ingestor
         self.repo_path = repo_path
@@ -81,6 +111,7 @@ class DefinitionProcessor(
         self.module_qn_to_file_hash: dict[str, str] = {}
         self.class_inheritance: dict[str, list[str]] = {}
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
+        self._framework_registry = FrameworkDetectorRegistry(repo_path=self.repo_path)
 
     def process_file(
         self,
@@ -93,19 +124,23 @@ class DefinitionProcessor(
         source_text: str | None = None,
     ) -> tuple[ASTNode, cs.SupportedLanguage] | None:
         """
-        Process a single source file to extract and ingest definitions.
+        Processes a single source file to extract and ingest its definitions.
+
+        This is the main entry point for file processing. It handles AST parsing,
+        module creation, import processing, and then calls the various ingestion
+        methods for functions, classes, etc.
 
         Args:
-            file_path (Path): Path to the file to process.
-            language (cs.SupportedLanguage): The language of the file.
-            queries (dict[cs.SupportedLanguage, LanguageQueries]): Queries for all supported languages.
-            structural_elements (dict[Path, str | None]): Map of file/folder paths to their qualified names or IDs.
-            parsed_root (ASTNode | None): Pre-parsed AST root node, if available.
-            source_bytes (bytes | None): Raw source bytes, if available.
-            source_text (str | None): Decoded source text, if available.
+            file_path (Path): The path to the file to process.
+            language (cs.SupportedLanguage): The programming language of the file.
+            queries (dict): A dictionary of tree-sitter queries for all supported languages.
+            structural_elements (dict): A map of file/folder paths to their qualified names.
+            parsed_root (ASTNode | None): A pre-parsed AST root node, if available.
+            source_bytes (bytes | None): The raw source code in bytes, if available.
+            source_text (str | None): The decoded source code as a string, if available.
 
         Returns:
-            tuple[ASTNode, cs.SupportedLanguage] | None: The AST root and language if successful, else None.
+            A tuple containing the parsed AST root and the language if successful, otherwise None.
         """
         if isinstance(file_path, str):
             file_path = Path(file_path)
@@ -177,7 +212,7 @@ class DefinitionProcessor(
 
             if self._framework_metadata_enabled():
                 framework_type, framework_metadata = self._detect_framework_metadata(
-                    language, source_text
+                    language, source_text, root_node
                 )
                 if framework_type:
                     module_props[cs.KEY_FRAMEWORK] = framework_type
@@ -247,13 +282,13 @@ class DefinitionProcessor(
     @staticmethod
     def _safe_decode_source(source_bytes: bytes) -> str:
         """
-        Safely attempts to decode bytes into a string, falling back to ignoring errors.
+        Safely decodes source bytes into text using UTF-8 with a fallback.
 
         Args:
-            source_bytes (bytes): The bytes directly read from a file.
+            source_bytes (bytes): The raw bytes read from a source file.
 
         Returns:
-            str: The decoded string.
+            The decoded string, with invalid characters ignored if needed.
         """
         try:
             return source_bytes.decode(cs.ENCODING_UTF8)
@@ -288,13 +323,13 @@ class DefinitionProcessor(
     @staticmethod
     def _node_has_error(node: ASTNode) -> bool:
         """
-        Checks if a node or any of its children is an ERROR node.
+        Checks if a node or any of its descendants is an ERROR node.
 
         Args:
             node (ASTNode): The node to check.
 
         Returns:
-            bool: True if an error is present.
+            True if an ERROR node is found in the subtree, False otherwise.
         """
         has_error = getattr(node, "has_error", None)
         if isinstance(has_error, bool):
@@ -303,13 +338,13 @@ class DefinitionProcessor(
 
     def _flatten_error_nodes(self, node: ASTNode) -> list[ASTNode]:
         """
-        Recursively extracts non-error nodes from a tree containing error nodes.
+        Recursively traverses down from an ERROR node to find valid, non-error sub-nodes.
 
         Args:
-            node (ASTNode): The starting node.
+            node (ASTNode): The starting node, typically an ERROR node.
 
         Returns:
-            list[ASTNode]: A list of safe nodes.
+            A list of safe, non-error descendant nodes.
         """
         if node.type != "ERROR":
             return [node]
@@ -321,16 +356,41 @@ class DefinitionProcessor(
     @staticmethod
     def _framework_metadata_enabled() -> bool:
         """
-        Checks if framework metadata detection is enabled via environment variables.
+        Checks if file-level framework metadata detection is enabled.
 
         Returns:
-            bool: True if enabled.
+            True if `CODEGRAPH_FILE_LEVEL_FRAMEWORK_METADATA` is truthy or unset.
         """
-        return os.getenv("CODEGRAPH_FRAMEWORK_METADATA", "").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
+        raw_value = os.getenv("CODEGRAPH_FILE_LEVEL_FRAMEWORK_METADATA")
+        if raw_value is None:
+            return True
+        return raw_value.lower() in {"1", "true", "yes"}
+
+    def _detect_framework_metadata(
+        self,
+        language: cs.SupportedLanguage,
+        source_text: str,
+        module_node: ASTNode | None,
+    ) -> tuple[str | None, dict | None]:
+        """
+        Detects framework usage and extracts metadata for supported languages.
+
+        Args:
+            language (cs.SupportedLanguage): The language of the file.
+            source_text (str): The source code.
+            module_node (ASTNode | None): Parsed AST root for language-specific metadata.
+
+        Returns:
+            tuple[str | None, dict | None]: A tuple of (framework_name, metadata_dict) or (None, None).
+        """
+        try:
+            result = self._framework_registry.detect_for_language(
+                language, source_text, module_node
+            )
+        except Exception:
+            return (None, None)
+
+        return (result.framework_type, result.metadata)
 
     def _ingest_cpp_module_class_fallback(
         self,
@@ -340,12 +400,15 @@ class DefinitionProcessor(
         language: cs.SupportedLanguage,
     ) -> None:
         """
-        Fallback ingestion for C++ classes using regex when Tree-sitter fails or for header files.
+        A fallback mechanism to ingest C++ classes and enums using regex.
+
+        This is used for header files or when the tree-sitter parser fails to
+        capture all definitions in C++ module files.
 
         Args:
-            source_text (str): The source code text.
-            module_qn (str): Module qualified name.
-            file_path (Path): Path to the C++ file.
+            source_text (str): The source code of the file.
+            module_qn (str): The qualified name of the module.
+            file_path (Path): The path to the C++ file.
             language (cs.SupportedLanguage): The language enum.
         """
         if file_path.suffix not in cs.CPP_MODULE_EXTENSIONS and not any(
@@ -450,106 +513,12 @@ class DefinitionProcessor(
                 (cs.NodeLabel.ENUM, cs.KEY_QUALIFIED_NAME, enum_qn),
             )
 
-    def _detect_framework_metadata(
-        self, language: cs.SupportedLanguage, source_text: str
-    ) -> tuple[str | None, dict | None]:
-        """
-        Detects framework usage and extracts metadata for supported languages.
-
-        Args:
-            language (cs.SupportedLanguage): The language of the file.
-            source_text (str): The source code.
-
-        Returns:
-            tuple[str | None, dict | None]: A tuple of (framework_name, metadata_dict) or (None, None).
-        """
-        try:
-            from ..frameworks.detectors import (
-                CSharpFrameworkDetector,
-                GoFrameworkDetector,
-                JavaFrameworkDetector,
-                JsFrameworkDetector,
-                PhpFrameworkDetector,
-                PythonFrameworkDetector,
-                RubyFrameworkDetector,
-            )
-
-            if language == cs.SupportedLanguage.PYTHON:
-                detector = PythonFrameworkDetector()
-                framework_type = detector.detect_framework(None, source_text)
-                if framework_type and framework_type.value:
-                    return (
-                        framework_type.value,
-                        detector.get_framework_metadata(
-                            framework_type, None, source_text
-                        ),
-                    )
-
-            if language == cs.SupportedLanguage.JAVA:
-                detector = JavaFrameworkDetector()
-                framework_type = detector.detect_framework(source_text)
-                if framework_type and framework_type.value:
-                    return (
-                        framework_type.value,
-                        detector.get_framework_metadata(source_text),
-                    )
-
-            if language == cs.SupportedLanguage.RUBY:
-                detector = RubyFrameworkDetector()
-                framework_type = detector.detect_from_source(source_text)
-                if framework_type and framework_type.value:
-                    return (
-                        framework_type.value,
-                        detector.get_framework_metadata(source_code=source_text),
-                    )
-
-            if language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
-                detector = JsFrameworkDetector()
-                framework_type = detector.detect_from_source(source_text)
-                if framework_type and framework_type.value:
-                    return (
-                        framework_type.value,
-                        detector.get_framework_metadata(source_text),
-                    )
-
-            if language == cs.SupportedLanguage.PHP:
-                detector = PhpFrameworkDetector()
-                framework_type = detector.detect_from_source(source_text)
-                if framework_type and framework_type.value:
-                    return (
-                        framework_type.value,
-                        detector.get_framework_metadata(source_text),
-                    )
-
-            if language == cs.SupportedLanguage.CSHARP:
-                detector = CSharpFrameworkDetector()
-                framework_type = detector.detect_from_source(source_text)
-                if framework_type and framework_type.value:
-                    return (
-                        framework_type.value,
-                        detector.get_framework_metadata(source_text),
-                    )
-
-            if language == cs.SupportedLanguage.GO:
-                detector = GoFrameworkDetector()
-                framework_type = detector.detect_from_source(source_text)
-                if framework_type and framework_type.value:
-                    return (
-                        framework_type.value,
-                        detector.get_framework_metadata(source_text),
-                    )
-
-        except Exception as e:
-            logger.debug(ls.DEF_PARSE_FAILED.format(path="framework_detector", error=e))
-
-        return (None, None)
-
     def process_dependencies(self, filepath: Path) -> None:
         """
         Parses a dependency file (e.g., package.json, requirements.txt) and ingests the dependencies.
 
         Args:
-            filepath (Path): Path to the dependency file.
+            filepath (Path): The path to the dependency file.
         """
         logger.info(ls.DEF_PARSING_DEPENDENCY.format(path=filepath))
 
@@ -561,11 +530,11 @@ class DefinitionProcessor(
         self, dep_name: str, dep_spec: str, properties: dict[str, str] | None = None
     ) -> None:
         """
-        Ingests a single dependency node and links it to the project.
+        Ingests a single dependency node and links it to the main project node.
 
         Args:
-            dep_name (str): Name of the dependency.
-            dep_spec (str): Version specification.
+            dep_name (str): The name of the dependency package.
+            dep_spec (str): The version specification for the dependency.
             properties (dict[str, str] | None): Additional properties for the dependency relationship.
         """
         if not dep_name or dep_name.lower() in cs.EXCLUDED_DEPENDENCY_NAMES:
@@ -591,11 +560,13 @@ class DefinitionProcessor(
         """
         Extracts the docstring from a function or class definition node.
 
+        This implementation is specific to Python's docstring convention.
+
         Args:
-            node (ASTNode): The definition node.
+            node (ASTNode): The definition node (function or class).
 
         Returns:
-            str | None: The extracted docstring or None.
+            The extracted docstring as a string, or None if not found.
         """
         body_node = node.child_by_field_name(cs.FIELD_BODY)
         if not body_node or not body_node.children:
@@ -615,12 +586,12 @@ class DefinitionProcessor(
 
     def _extract_decorators(self, node: ASTNode) -> list[str]:
         """
-        Extracts decorator names from a definition node using the language handler.
+        Extracts decorator names from a definition node by delegating to the language handler.
 
         Args:
             node (ASTNode): The definition node.
 
         Returns:
-            list[str]: A list of decorator names.
+            A list of decorator names as strings.
         """
         return self._handler.extract_decorators(node)

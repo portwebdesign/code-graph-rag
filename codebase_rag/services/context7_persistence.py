@@ -1,3 +1,20 @@
+"""
+This module provides services for parsing, persisting, and retrieving documentation
+obtained from the Context7 API.
+
+It defines several classes to handle different aspects of the persistence lifecycle:
+- `Context7DocParser`: Normalizes the raw response from the Context7 API into a
+  structured `Context7Chunk` format.
+- `Context7GraphWriter`: Writes the parsed documentation chunks as nodes and
+  relationships in the graph database.
+- `Context7MemoryWriter`: Writes a summary of the retrieved documentation to a
+  local "memory" log for short-term recall.
+- `Context7KnowledgeStore` and `Context7MemoryStore`: Provide interfaces to look up
+  previously persisted documentation from the graph or memory, respectively.
+- `Context7Persistence`: A facade that orchestrates writing to both the graph
+  and memory stores.
+"""
+
 from __future__ import annotations
 
 import json
@@ -18,6 +35,23 @@ from codebase_rag.services.graph_service import MemgraphIngestor
 
 @dataclass
 class Context7Chunk:
+    """
+    A data class representing a single, parsed chunk of documentation from Context7.
+
+    Attributes:
+        chunk_id (str): A unique identifier for the chunk, derived from its content.
+        title (str): The title of the documentation section.
+        content (str): The main text content of the chunk.
+        source (str | None): The original source URL or identifier, if available.
+        topic (str): The original query or topic that this chunk is related to.
+        concepts (list[str]): A list of key concepts or keywords extracted from the content.
+        doc_version (str | None): The version of the documentation, if detected.
+        retrieved_at (float): The timestamp when the data was retrieved.
+        valid_until (float): A timestamp indicating when this data should be considered stale.
+        status (str): The status of the chunk (e.g., "ACTIVE", "DEPRECATED").
+        checksum (str): A SHA256 hash of the content for change detection.
+    """
+
     chunk_id: str
     title: str
     content: str
@@ -32,6 +66,10 @@ class Context7Chunk:
 
 
 class Context7DocParser:
+    """
+    Parses raw documentation responses from the Context7 API into structured chunks.
+    """
+
     separator_pattern = re.compile(r"\n-{10,}\n")
     version_pattern = re.compile(r"\b(v?\d+\.\d+(?:\.\d+)?)\b", re.IGNORECASE)
     keyword_patterns = {
@@ -49,6 +87,17 @@ class Context7DocParser:
     }
 
     def normalize(self, docs: Any, topic: str, library_id: str) -> list[Context7Chunk]:
+        """
+        Normalizes a documentation response from various possible formats into a list of chunks.
+
+        Args:
+            docs (Any): The raw response from the Context7 API (can be a dict, list, or string).
+            topic (str): The query topic associated with this documentation.
+            library_id (str): The unique ID of the library the docs belong to.
+
+        Returns:
+            A list of `Context7Chunk` objects.
+        """
         if isinstance(docs, dict) and isinstance(docs.get("content"), str):
             return self._from_text(str(docs.get("content")), topic, library_id)
         if isinstance(docs, list):
@@ -60,6 +109,7 @@ class Context7DocParser:
     def _from_list(
         self, items: list[Any], topic: str, library_id: str
     ) -> list[Context7Chunk]:
+        """Parses a list of documentation items into chunks."""
         chunks: list[Context7Chunk] = []
         for entry in items:
             if not isinstance(entry, dict):
@@ -76,6 +126,7 @@ class Context7DocParser:
         return chunks
 
     def _from_text(self, text: str, topic: str, library_id: str) -> list[Context7Chunk]:
+        """Parses a single block of text, potentially splitting it into multiple chunks."""
         parts = [
             part.strip() for part in self.separator_pattern.split(text) if part.strip()
         ]
@@ -102,6 +153,7 @@ class Context7DocParser:
         return chunks
 
     def _extract_title(self, text: str) -> str | None:
+        """Extracts a title from a markdown heading in the text."""
         for line in text.splitlines():
             line = line.strip()
             if line.startswith("### "):
@@ -109,6 +161,7 @@ class Context7DocParser:
         return None
 
     def _extract_source(self, text: str) -> str | None:
+        """Extracts a source URL from a "Source:" line in the text."""
         for line in text.splitlines():
             line = line.strip()
             if line.lower().startswith("source:"):
@@ -124,6 +177,7 @@ class Context7DocParser:
         doc_version: str | None,
         library_id: str,
     ) -> Context7Chunk:
+        """Constructs a `Context7Chunk` object with all its metadata."""
         retrieved_at = time.time()
         valid_until = retrieved_at + settings.CONTEXT7_DOC_TTL_DAYS * 86400
         raw = f"{library_id}|{topic}|{title}\n{content}\n{source or ''}"
@@ -147,12 +201,14 @@ class Context7DocParser:
         )
 
     def _extract_version(self, text: str) -> str | None:
+        """Extracts a version string (e.g., "v1.2.3") from the text."""
         match = self.version_pattern.search(text)
         if match:
             return match.group(1)
         return None
 
     def _extract_concepts(self, text: str, topic: str) -> list[str]:
+        """Extracts key concepts from the text based on predefined patterns."""
         concepts = {topic.strip()} if topic else set()
         for key, pattern in self.keyword_patterns.items():
             if pattern.search(text):
@@ -163,6 +219,7 @@ class Context7DocParser:
         return [item for item in concepts if item]
 
     def parse_version_tuple(self, version: str | None) -> tuple[int, ...] | None:
+        """Parses a version string into a tuple of integers for comparison."""
         if not version or version == "unknown":
             return None
         parts = re.findall(r"\d+", version)
@@ -172,7 +229,18 @@ class Context7DocParser:
 
 
 class Context7GraphWriter:
+    """
+    Handles writing parsed documentation chunks to the graph database.
+    """
+
     def __init__(self, ingestor: MemgraphIngestor, project_root: str) -> None:
+        """
+        Initializes the graph writer.
+
+        Args:
+            ingestor (MemgraphIngestor): The graph database ingestor service.
+            project_root (str): The root path of the project.
+        """
         self.ingestor = ingestor
         self.project_root = Path(project_root).resolve()
         self.project_name = self.project_root.name
@@ -185,6 +253,21 @@ class Context7GraphWriter:
         query: str,
         docs: Any,
     ) -> int:
+        """
+        Writes documentation chunks to the graph.
+
+        This method orchestrates the creation of `Library`, `DocChunk`, and `Concept`
+        nodes, and the relationships between them.
+
+        Args:
+            library_id (str): The unique ID of the library.
+            library_name (str): The simple name of the library.
+            query (str): The query that retrieved these docs.
+            docs (Any): The raw documentation response.
+
+        Returns:
+            The number of chunks that were inserted.
+        """
         if not settings.CONTEXT7_PERSIST_GRAPH:
             return 0
         if not library_name:
@@ -207,18 +290,21 @@ class Context7GraphWriter:
 
     @staticmethod
     def _normalize_library_name(library_id: str) -> str:
+        """Normalizes a library ID into a simple, human-readable name."""
         if not library_id:
             return "context7"
         name = library_id.strip("/").split("/")[-1]
         return name.replace("_", "-")
 
     def _ensure_project(self) -> None:
+        """Ensures the main `Project` node exists."""
         self.ingestor.ensure_node_batch(
             NodeLabel.PROJECT.value,
             {"name": self.project_name},
         )
 
     def _ensure_library(self, library_name: str, library_id: str) -> None:
+        """Ensures a `Library` node exists and is linked to the project."""
         self.ingestor.ensure_node_batch(
             NodeLabel.LIBRARY.value,
             {
@@ -236,6 +322,7 @@ class Context7GraphWriter:
     def _ensure_docchunk(
         self, library_name: str, library_id: str, chunk: Context7Chunk
     ) -> None:
+        """Ensures a `DocChunk` node exists in the graph."""
         self.ingestor.ensure_node_batch(
             NodeLabel.DOC_CHUNK.value,
             {
@@ -257,6 +344,7 @@ class Context7GraphWriter:
     def _ensure_relationships(
         self, library_name: str, chunk: Context7Chunk, query: str
     ) -> None:
+        """Ensures all relationships for a `DocChunk` are created."""
         self.ingestor.ensure_relationship_batch(
             (NodeLabel.LIBRARY.value, "name", library_name),
             RelationshipType.HAS_DOC.value,
@@ -295,6 +383,7 @@ class Context7GraphWriter:
             )
 
     def _ensure_code_links(self, library_name: str, chunk: Context7Chunk) -> None:
+        """Links a `DocChunk` to an `ExternalPackage` node if the dependency exists."""
         cypher = """
 MATCH (p:Project {name: $project})-[:DEPENDS_ON_EXTERNAL]->(e:ExternalPackage)
 WHERE toLower(e.name) = toLower($library)
@@ -319,6 +408,7 @@ LIMIT 1
     def _ensure_supersedes(
         self, library_name: str, library_id: str, chunk: Context7Chunk
     ) -> None:
+        """Checks for older versions of the same doc chunk and creates a `SUPERSEDES` relationship."""
         cypher = """
 MATCH (l:Library {name: $library})-[:HAS_DOC]->(d:DocChunk)
 WHERE d.topic = $topic AND d.checksum <> $checksum
@@ -361,6 +451,7 @@ LIMIT 1
         )
 
     def _update_doc_status(self, qualified_name: str, status: str) -> None:
+        """Updates the status of a `DocChunk` node in the graph."""
         cypher = """
 MATCH (d:DocChunk {qualified_name: $qn})
 SET d.status = $status
@@ -372,11 +463,30 @@ SET d.status = $status
 
 
 class Context7MemoryWriter:
+    """
+    Handles writing a summary of retrieved documentation to a local memory log.
+    """
+
     def __init__(self, project_root: str) -> None:
+        """
+        Initializes the memory writer.
+
+        Args:
+            project_root (str): The root path of the project.
+        """
         self.agent = MemoryAgent(project_root)
         self.parser = Context7DocParser()
 
     def write(self, library_id: str, library_name: str, query: str, docs: Any) -> None:
+        """
+        Writes a summary of the documentation to the memory log.
+
+        Args:
+            library_id (str): The unique ID of the library.
+            library_name (str): The simple name of the library.
+            query (str): The query that retrieved these docs.
+            docs (Any): The raw documentation response.
+        """
         if not settings.CONTEXT7_PERSIST_MEMORY:
             return
         if not library_name:
@@ -403,10 +513,31 @@ class Context7MemoryWriter:
 
 
 class Context7MemoryStore:
+    """
+    Provides an interface to look up documentation from the local memory log.
+    """
+
     def __init__(self, project_root: str) -> None:
+        """
+        Initializes the memory store.
+
+        Args:
+            project_root (str): The root path of the project.
+        """
         self.agent = MemoryAgent(project_root)
 
     def lookup(self, library: str, query: str, limit: int = 5) -> dict[str, Any] | None:
+        """
+        Looks up documentation summaries from the memory log.
+
+        Args:
+            library (str): The name of the library to search for.
+            query (str): The query to match against.
+            limit (int): The maximum number of entries to return.
+
+        Returns:
+            A dictionary containing the retrieved documents, or None if not found.
+        """
         if not library:
             return None
         items: list[dict[str, Any]] = []
@@ -432,10 +563,34 @@ class Context7MemoryStore:
 
 
 class Context7KnowledgeStore:
+    """
+    Provides an interface to look up documentation from the graph database.
+    """
+
     def __init__(self, ingestor: MemgraphIngestor) -> None:
+        """
+        Initializes the knowledge store.
+
+        Args:
+            ingestor (MemgraphIngestor): The graph database ingestor service.
+        """
         self.ingestor = ingestor
 
     def lookup(self, library: str, query: str, limit: int = 5) -> dict[str, Any] | None:
+        """
+        Looks up documentation chunks from the graph database.
+
+        It performs a query against the graph to find `DocChunk` nodes related to the
+        specified library and query.
+
+        Args:
+            library (str): The name of the library.
+            query (str): The query text to search for in topics, titles, or content.
+            limit (int): The maximum number of chunks to return.
+
+        Returns:
+            A dictionary containing the retrieved documents, or None if not found.
+        """
         if not settings.CONTEXT7_PERSIST_GRAPH:
             return None
         library_name = library.strip()
@@ -498,13 +653,33 @@ LIMIT $limit
 
 
 class Context7Persistence:
+    """
+    A facade that orchestrates writing Context7 documentation to multiple persistence layers.
+    """
+
     def __init__(self, ingestor: MemgraphIngestor, project_root: str) -> None:
+        """
+        Initializes the persistence facade.
+
+        Args:
+            ingestor (MemgraphIngestor): The graph database ingestor service.
+            project_root (str): The root path of the project.
+        """
         self.graph_writer = Context7GraphWriter(ingestor, project_root)
         self.memory_writer = Context7MemoryWriter(project_root)
 
     def persist(
         self, library_id: str, library_name: str, query: str, docs: Any
     ) -> None:
+        """
+        Persists documentation to all configured stores (graph and/or memory).
+
+        Args:
+            library_id (str): The unique ID of the library.
+            library_name (str): The simple name of the library.
+            query (str): The query that retrieved these docs.
+            docs (Any): The raw documentation response.
+        """
         try:
             self.graph_writer.write(library_id, library_name, query, docs)
         except Exception as exc:

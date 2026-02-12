@@ -652,9 +652,19 @@ MATCH (m:Module)-[:DEFINES]->(n)
 WHERE (n:Function OR n:Method)
     AND (m.qualified_name = $project_name
              OR m.qualified_name STARTS WITH ($project_name + '.'))
-RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
-             n.start_line AS start_line, n.end_line AS end_line,
-             m.path AS path
+RETURN id(n) AS node_id,
+       n.qualified_name AS qualified_name,
+       n.start_line AS start_line,
+       n.end_line AS end_line,
+       m.path AS path,
+       n.name AS name,
+       n.signature AS signature,
+       n.signature_lite AS signature_lite,
+       n.docstring AS docstring,
+       n.decorators AS decorators,
+       n.parent_qn AS parent_qn,
+       labels(n) AS labels,
+       m.language AS language
 """
 
 

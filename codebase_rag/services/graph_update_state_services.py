@@ -1,3 +1,13 @@
+"""
+This module provides the `GraphStateService`, a service responsible for managing
+the in-memory state during the graph update process.
+
+When files are changed or deleted, their corresponding data (like cached ASTs and
+entries in the function registry) needs to be cleared to ensure that the graph
+update process doesn't use stale information. This service provides the logic
+for cleanly removing all state associated with a given file.
+"""
+
 from __future__ import annotations
 
 from collections.abc import MutableMapping
@@ -14,6 +24,13 @@ from codebase_rag.data_models.types_defs import (
 
 
 class GraphStateService:
+    """
+    Manages the in-memory state of the graph update process.
+
+    This includes clearing caches and registries when files are modified or deleted
+    to ensure data consistency during incremental updates.
+    """
+
     def __init__(
         self,
         repo_path: Path,
@@ -22,6 +39,16 @@ class GraphStateService:
         function_registry: FunctionRegistry | None,
         simple_name_lookup: SimpleNameLookup,
     ) -> None:
+        """
+        Initializes the GraphStateService.
+
+        Args:
+            repo_path (Path): The root path of the repository.
+            project_name (str): The name of the project.
+            ast_cache (MutableMapping): The cache for storing parsed ASTs.
+            function_registry (FunctionRegistry | None): The registry of all known functions.
+            simple_name_lookup (SimpleNameLookup): A mapping from simple names to qualified names.
+        """
         self.repo_path = repo_path
         self.project_name = project_name
         self.ast_cache = ast_cache
@@ -29,6 +56,16 @@ class GraphStateService:
         self.simple_name_lookup = simple_name_lookup
 
     def remove_file_from_state(self, file_path: Path) -> None:
+        """
+        Removes all state associated with a given file from the in-memory caches and registries.
+
+        This method is called when a file is detected as changed or deleted. It clears
+        the file's AST from the cache and removes all functions and classes defined
+        within that file from the function registry and simple name lookup table.
+
+        Args:
+            file_path (Path): The path of the file to be removed from the state.
+        """
         logger.debug(ls.REMOVING_STATE.format(path=file_path))
 
         if file_path in self.ast_cache:
