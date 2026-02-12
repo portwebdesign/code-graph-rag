@@ -188,6 +188,10 @@ class AppConfig(BaseSettings):
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
 
+    CODEGRAPH_MAGE_CYCLES: bool = True
+    CODEGRAPH_CYCLE_LIMIT: int = 100
+    CODEGRAPH_CYCLE_MIN_SIZE: int = 2
+
     AGENT_RETRIES: int = 3
     ORCHESTRATOR_OUTPUT_RETRIES: int = 100
 

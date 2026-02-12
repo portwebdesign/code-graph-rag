@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Protocol
 
 from loguru import logger
+
+from codebase_rag.core.config import settings
 
 
 class GraphQueryProtocol(Protocol):
@@ -113,8 +114,8 @@ class GraphAlgorithms:
         logger.info("Running MAGE Cycle Detection...")
 
         try:
-            cycle_limit = int(os.getenv("CODEGRAPH_CYCLE_LIMIT", "100"))
-            min_cycle_size = int(os.getenv("CODEGRAPH_CYCLE_MIN_SIZE", "2"))
+            cycle_limit = settings.CODEGRAPH_CYCLE_LIMIT
+            min_cycle_size = settings.CODEGRAPH_CYCLE_MIN_SIZE
 
             reset_query = """
             MATCH (n) WHERE n.has_cycle = true
@@ -151,7 +152,7 @@ class GraphAlgorithms:
         except Exception as e:
             logger.error(f"Failed to run MAGE Cycle Detection: {e}")
             logger.warning(
-                "Consider disabling cycle detection with CODEGRAPH_MAGE_CYCLES=0 for large graphs."
+                "Consider disabling cycle detection with CODEGRAPH_MAGE_CYCLES=false in .env for large graphs."
             )
 
     def run_all(self, has_changes: bool = True) -> None:
@@ -164,12 +165,7 @@ class GraphAlgorithms:
             return
         self.run_pagerank()
         self.detect_communities()
-        cycles_enabled = os.getenv("CODEGRAPH_MAGE_CYCLES", "1").lower() in {
-            "1",
-            "true",
-            "yes",
-        }
-        if cycles_enabled:
+        if settings.CODEGRAPH_MAGE_CYCLES:
             self.detect_cycles()
         else:
             logger.info("Skipping MAGE cycle detection: disabled by config.")
