@@ -688,32 +688,6 @@ class MCPToolsRegistry:
         except Exception as exc:
             return {"error": str(exc)}
         return {"artifact": artifact_name, "content": content}
-        try:
-            results = self.ingestor.fetch_all(
-                CYPHER_GET_LATEST_ANALYSIS_REPORT,
-                {cs.KEY_PROJECT_NAME: Path(self.project_root).resolve().name},
-            )
-            if not results:
-                return {"error": "analysis_report_not_found"}
-            row = results[0]
-            summary_raw = row.get("analysis_summary")
-            summary = summary_raw
-            if isinstance(summary_raw, str):
-                try:
-                    summary = json.loads(summary_raw)
-                except json.JSONDecodeError:
-                    summary = summary_raw
-            if isinstance(summary, dict):
-                return {
-                    "analysis_timestamp": row.get("analysis_timestamp"),
-                    "performance_hotspots": summary.get("performance_hotspots"),
-                }
-            return {
-                "analysis_timestamp": row.get("analysis_timestamp"),
-                "summary": summary,
-            }
-        except Exception as exc:
-            return {"error": str(exc)}
 
     async def apply_diff_safe(self, file_path: str, chunks: str) -> dict[str, object]:
         if file_path.startswith(".env"):

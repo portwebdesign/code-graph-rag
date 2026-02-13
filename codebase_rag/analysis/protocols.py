@@ -147,7 +147,7 @@ class AnalysisRunnerProtocol(Protocol):
         relationships: list[RelationshipRecord],
         node_by_id: dict[int, NodeRecord],
         coverage: Any,
-        risk: Any,
+        _risk: Any,
         hotspots: Any,
         violations: Any,
     ) -> dict[str, Any]: ...

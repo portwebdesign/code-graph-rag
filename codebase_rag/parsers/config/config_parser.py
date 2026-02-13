@@ -367,7 +367,7 @@ class JSONParserMixin:
         )
 
     def extract_json_imports(
-        self, content: str, file_type: str | None = None
+        self, content: str, _file_type: str | None = None
     ) -> list[dict[str, str]]:
         """
         Extract import-like dependencies from JSON.

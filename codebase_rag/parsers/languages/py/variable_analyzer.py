@@ -53,10 +53,14 @@ class PythonVariableAnalyzerMixin(_VarBase):
             return
 
         for param in params_node.children:
-            self._process_parameter(param, local_var_types, module_qn)
+            self._process_parameter(param, local_var_types, module_qn, caller_node)
 
     def _process_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self,
+        param: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_node: ASTNode,
     ) -> None:
         """
         Process a single parameter node to infer its type.
@@ -65,17 +69,24 @@ class PythonVariableAnalyzerMixin(_VarBase):
             param: The parameter AST node.
             local_var_types: Dictionary of local variable types.
             module_qn: The module qualified name.
+            caller_node: The parent function/method node.
         """
         match param.type:
             case cs.TS_PY_IDENTIFIER:
-                self._process_untyped_parameter(param, local_var_types, module_qn)
+                self._process_untyped_parameter(
+                    param, local_var_types, module_qn, caller_node
+                )
             case cs.TS_PY_TYPED_PARAMETER:
                 self._process_typed_parameter(param, local_var_types)
             case cs.TS_PY_TYPED_DEFAULT_PARAMETER:
                 self._process_typed_default_parameter(param, local_var_types)
 
     def _process_untyped_parameter(
-        self, param: ASTNode, local_var_types: dict[str, str], module_qn: str
+        self,
+        param: ASTNode,
+        local_var_types: dict[str, str],
+        module_qn: str,
+        caller_node: ASTNode,
     ) -> None:
         """
         Process an untyped parameter (try to infer from name).
@@ -84,17 +95,17 @@ class PythonVariableAnalyzerMixin(_VarBase):
             param: The parameter AST node.
             local_var_types: Dictionary of local variable types.
             module_qn: The module qualified name.
+            caller_node: The parent function/method node.
         """
-        if (
-            param.text is None
-            or (param_name := safe_decode_text(param)) is None
-            or not (
-                inferred_type := self._infer_type_from_parameter_name(
-                    param_name, module_qn
-                )
-            )
-        ):
+        if param.text is None or (param_name := safe_decode_text(param)) is None:
             return
+
+        inferred_type = self._infer_type_from_parameter_name(
+            param_name, module_qn, caller_node
+        )
+        if not inferred_type:
+            return
+
         local_var_types[param_name] = inferred_type
         logger.debug(
             lg.PY_PARAM_TYPE_INFERRED.format(param=param_name, type=inferred_type)
@@ -149,7 +160,7 @@ class PythonVariableAnalyzerMixin(_VarBase):
         local_var_types[param_name] = param_type
 
     def _infer_type_from_parameter_name(
-        self, param_name: str, module_qn: str
+        self, param_name: str, module_qn: str, caller_node: ASTNode | None = None
     ) -> str | None:
         """
         Infer type from parameter name using heuristic matching against available classes.
@@ -157,16 +168,115 @@ class PythonVariableAnalyzerMixin(_VarBase):
         Args:
             param_name: The parameter name.
             module_qn: The module qualified name.
+            caller_node: The function/method node (for decorator checks).
 
         Returns:
             The best matching class name, or None.
         """
+        if param_name == "cls" and caller_node:
+            class_type = self._infer_cls_type(caller_node, module_qn)
+            if class_type:
+                return class_type
+
+        if param_name == "self" and caller_node:
+            class_type = self._infer_self_type(caller_node, module_qn)
+            if class_type:
+                return class_type
+
         logger.debug(
             lg.PY_TYPE_INFER_ATTEMPT.format(param=param_name, module=module_qn)
         )
         available_class_names = self._collect_available_classes(module_qn)
         logger.debug(lg.PY_AVAILABLE_CLASSES.format(classes=available_class_names))
         return self._find_best_class_match(param_name, available_class_names)
+
+    def _infer_cls_type(self, caller_node: ASTNode, module_qn: str) -> str | None:
+        """
+        Infer type for 'cls' parameter in @classmethod.
+
+        Args:
+            caller_node: The function/method node.
+            module_qn: The module qualified name.
+
+        Returns:
+            The class qualified name, or None.
+        """
+        if not self._has_classmethod_decorator(caller_node):
+            return None
+
+        parent_class_node = self._find_parent_class(caller_node)
+        if not parent_class_node:
+            return None
+
+        class_name_node = parent_class_node.child_by_field_name("name")
+        if not class_name_node:
+            return None
+
+        class_name = safe_decode_text(class_name_node)
+        if not class_name:
+            return None
+
+        return f"{module_qn}.{class_name}"
+
+    def _infer_self_type(self, caller_node: ASTNode, module_qn: str) -> str | None:
+        """
+        Infer type for 'self' parameter in instance methods.
+
+        Args:
+            caller_node: The function/method node.
+            module_qn: The module qualified name.
+
+        Returns:
+            The class qualified name, or None.
+        """
+        parent_class_node = self._find_parent_class(caller_node)
+        if not parent_class_node:
+            return None
+
+        class_name_node = parent_class_node.child_by_field_name("name")
+        if not class_name_node:
+            return None
+
+        class_name = safe_decode_text(class_name_node)
+        if not class_name:
+            return None
+
+        return f"{module_qn}.{class_name}"
+
+    def _has_classmethod_decorator(self, node: ASTNode) -> bool:
+        """
+        Check if a function has @classmethod decorator.
+
+        Args:
+            node: The function/method node.
+
+        Returns:
+            True if has @classmethod decorator.
+        """
+        for child in node.children:
+            if child.type != "decorator":
+                continue
+            decorator_text = safe_decode_text(child)
+            if decorator_text and "classmethod" in decorator_text:
+                return True
+        return False
+
+    def _find_parent_class(self, node: ASTNode) -> ASTNode | None:
+        """
+        Find the parent class node of a method.
+
+        Args:
+            node: The function/method node.
+
+        Returns:
+            The parent class node, or None.
+        """
+        current = node.parent
+        while current:
+            if current.type == "class_definition":
+                return current
+            current = current.parent
+        return None
 
     def _collect_available_classes(self, module_qn: str) -> list[str]:
         """

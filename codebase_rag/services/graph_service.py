@@ -116,7 +116,7 @@ class MemgraphIngestor:
         self,
         exc_type: type | None,
         exc_val: Exception | None,
-        exc_tb: types.TracebackType | None,
+        _exc_tb: types.TracebackType | None,
     ) -> None:
         """
         Flushes all buffered data and closes the database connection upon exiting a `with` block.
@@ -569,23 +569,30 @@ class MemgraphIngestor:
             params_list (Sequence[RelBatchRow]): The list of parameters for the failed batch.
             results (Sequence[ResultRow]): The results from the batch execution.
         """
-        samples = 0
+        failed_rows = []
         for row, result in zip(params_list, results):
             created = result.get(KEY_CREATED, 0)
             if isinstance(created, int) and created > 0:
                 continue
+            failed_rows.append(row)
+
+        if not failed_rows:
+            return
+
+        from_values = [row[KEY_FROM_VAL] for row in failed_rows]
+        to_values = [row[KEY_TO_VAL] for row in failed_rows]
+
+        from_existence = self._batch_check_node_existence(
+            from_label, from_key, from_values
+        )
+        to_existence = self._batch_check_node_existence(to_label, to_key, to_values)
+
+        samples = 0
+        for row in failed_rows:
             from_val = row[KEY_FROM_VAL]
             to_val = row[KEY_TO_VAL]
-            from_exists = self._execute_query(
-                f"MATCH (a:{from_label} {{{from_key}: $value}}) RETURN count(a) as count",
-                {"value": from_val},
-            )
-            to_exists = self._execute_query(
-                f"MATCH (b:{to_label} {{{to_key}: $value}}) RETURN count(b) as count",
-                {"value": to_val},
-            )
-            from_count = from_exists[0].get("count", 0) if from_exists else 0
-            to_count = to_exists[0].get("count", 0) if to_exists else 0
+            from_count = from_existence.get(from_val, 0)
+            to_count = to_existence.get(to_val, 0)
             logger.warning(
                 ls.MG_REL_ENDPOINT_MISSING.format(
                     from_label=from_label,
@@ -601,6 +608,40 @@ class MemgraphIngestor:
             samples += 1
             if samples >= 3:
                 break
+
+    def _batch_check_node_existence(
+        self, label: str, key: str, values: list[PropertyValue]
+    ) -> dict[PropertyValue, int]:
+        """
+        Batch check existence of multiple nodes.
+
+        Args:
+            label (str): Node label.
+            key (str): Node unique key property.
+            values (list[PropertyValue]): List of values to check.
+
+        Returns:
+            dict[PropertyValue, int]: Map of value to existence count (0 or 1).
+        """
+        if not values:
+            return {}
+
+        unique_values = list(set(values))
+        query = f"""
+        UNWIND $values AS val
+        OPTIONAL MATCH (n:{label} {{{key}: val}})
+        RETURN val, count(n) as count
+        """
+        results = self._execute_query(query, {"values": unique_values})
+
+        existence_map: dict[PropertyValue, int] = {}
+        for row in results:
+            val = row.get("val")
+            count = row.get("count", 0)
+            if val is not None:
+                existence_map[val] = count if isinstance(count, int) else 0
+
+        return existence_map
 
     def flush_all(self) -> None:
         """Flushes all buffered nodes and relationships to the database."""

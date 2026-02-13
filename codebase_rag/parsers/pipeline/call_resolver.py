@@ -419,6 +419,13 @@ class CallResolver:
             tuple[str, str] | None: Resolved call information or None.
         """
         search_name = re.split(r"[.:]|::", call_name)[-1]
+
+        if self._is_likely_builtin_method(call_name, search_name):
+            logger.debug(
+                f"Skipping trie fallback for likely built-in method: {call_name}"
+            )
+            return None
+
         possible_matches = self.function_registry.find_ending_with(search_name)
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED.format(call_name=call_name))
@@ -432,6 +439,81 @@ class CallResolver:
             ls.CALL_TRIE_FALLBACK.format(call_name=call_name, qn=best_candidate_qn)
         )
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _is_likely_builtin_method(self, call_name: str, method_name: str) -> bool:
+        """
+        Check if a call is likely a built-in type method.
+
+        Args:
+            call_name: The full call name (e.g., "dict.get", "cls._categories[].add").
+            method_name: The extracted method name (e.g., "get", "add").
+
+        Returns:
+            True if likely a built-in method that should not be resolved via trie.
+        """
+        BUILTIN_METHODS = {
+            "add",
+            "remove",
+            "update",
+            "discard",
+            "pop",
+            "clear",
+            "get",
+            "set",
+            "keys",
+            "values",
+            "items",
+            "setdefault",
+            "append",
+            "extend",
+            "insert",
+            "index",
+            "count",
+            "reverse",
+            "sort",
+            "replace",
+            "split",
+            "join",
+            "strip",
+            "format",
+            "upper",
+            "lower",
+            "startswith",
+            "endswith",
+            "find",
+            "decode",
+            "encode",
+        }
+
+        if method_name not in BUILTIN_METHODS:
+            return False
+
+        parts = re.split(r"[.:]|::", call_name)
+        if len(parts) < 2:
+            return False
+
+        first_part = parts[0].strip()
+
+        container_indicators = [
+            "[",
+            "{",
+            "_",
+            "self",
+            "cls",
+            "dict",
+            "list",
+            "set",
+            "str",
+            "bytes",
+        ]
+
+        if any(indicator in first_part.lower() for indicator in container_indicators):
+            return True
+
+        if first_part and first_part[0].islower():
+            return True
+
+        return False
 
     def _resolve_two_part_call(
         self,
@@ -1102,11 +1184,12 @@ class CallResolver:
         Returns:
             tuple[str, str] | None: Resolved method information or None.
         """
-        if not self.type_inference:
+        type_inference = self.type_inference
+        if not type_inference or not hasattr(type_inference, "java_type_inference"):
             return None
-        java_engine = self.type_inference.java_type_inference  # ty: ignore[possibly-missing-attribute]
+        java_engine = type_inference.java_type_inference
 
-        result = java_engine.resolve_java_method_call(
+        result = java_engine.resolve_java_method_call(  # type: ignore[attr-defined]
             call_node, local_var_types, module_qn
         )
 
