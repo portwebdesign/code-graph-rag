@@ -15,12 +15,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if sys.platform == "win32":
-    import codecs
-
-    if hasattr(sys.stdout, "buffer"):
-        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "replace")
-    if hasattr(sys.stderr, "buffer"):
-        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "replace")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
 
 from loguru import logger
 from prompt_toolkit import prompt
