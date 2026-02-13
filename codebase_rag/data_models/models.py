@@ -54,8 +54,8 @@ class SessionState:
 
 
 def _default_console() -> Console:
-    """Creates a default Rich Console instance."""
-    return Console(width=None, force_terminal=True)
+    """Creates a default Rich Console instance with UTF-8 support for Windows."""
+    return Console(width=None, force_terminal=True, legacy_windows=False)
 
 
 @dataclass

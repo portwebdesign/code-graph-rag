@@ -1,5 +1,12 @@
 import asyncio
+import sys
 from pathlib import Path
+
+if sys.platform == "win32":
+    import codecs
+
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "replace")
+    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "replace")
 
 import typer
 from loguru import logger

@@ -14,6 +14,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+if sys.platform == "win32":
+    import codecs
+
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "replace")
+    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "replace")
+
 from loguru import logger
 from prompt_toolkit import prompt
 from prompt_toolkit.formatted_text import HTML
