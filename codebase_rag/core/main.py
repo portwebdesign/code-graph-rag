@@ -17,8 +17,10 @@ from typing import TYPE_CHECKING
 if sys.platform == "win32":
     import codecs
 
-    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "replace")
-    sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "replace")
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "replace")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "replace")
 
 from loguru import logger
 from prompt_toolkit import prompt
