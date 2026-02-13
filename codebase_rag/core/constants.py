@@ -47,6 +47,7 @@ class KeyBinding(StrEnum):
     """Enumerates key bindings for prompt-toolkit."""
 
     CTRL_J = "c-j"
+    CTRL_D = "c-d"
     ENTER = "enter"
     CTRL_C = "c-c"
 
@@ -1002,6 +1003,9 @@ OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
 PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
 MULTILINE_INPUT_HINT = "(Press Ctrl+J to submit, Enter for new line)"
+MULTILINE_INPUT_HINT_WINDOWS = (
+    "(Press Esc then Enter, or Ctrl+D to submit, Enter for new line)"
+)
 
 # (H) Interactive setup prompt - grouped view
 INTERACTIVE_TITLE_GROUPED = "Detected Directories (will be excluded unless kept)"

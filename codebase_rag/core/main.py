@@ -712,9 +712,18 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         str: The user's input, stripped of leading/trailing whitespace.
     """
     bindings = KeyBindings()
+    is_windows = os.name == "nt"
 
     @bindings.add(cs.KeyBinding.CTRL_J)
-    def submit(event: KeyPressEvent) -> None:
+    def submit_ctrl_j(event: KeyPressEvent) -> None:
+        event.app.exit(result=event.app.current_buffer.text)
+
+    @bindings.add(cs.KeyBinding.CTRL_D)
+    def submit_ctrl_d(event: KeyPressEvent) -> None:
+        event.app.exit(result=event.app.current_buffer.text)
+
+    @bindings.add("escape", "enter")
+    def submit_esc_enter(event: KeyPressEvent) -> None:
         event.app.exit(result=event.app.current_buffer.text)
 
     @bindings.add(cs.KeyBinding.ENTER)
@@ -726,26 +735,27 @@ def get_multiline_input(prompt_text: str = cs.PROMPT_ASK_QUESTION) -> str:
         event.app.exit(exception=KeyboardInterrupt)
 
     clean_prompt = Text.from_markup(prompt_text).plain
+    hint = cs.MULTILINE_INPUT_HINT_WINDOWS if is_windows else cs.MULTILINE_INPUT_HINT
 
     print_formatted_text(
-        HTML(
-            cs.UI_INPUT_PROMPT_HTML.format(
-                prompt=clean_prompt, hint=cs.MULTILINE_INPUT_HINT
-            )
-        )
+        HTML(cs.UI_INPUT_PROMPT_HTML.format(prompt=clean_prompt, hint=hint))
     )
 
-    result = prompt(
-        "",
-        multiline=True,
-        key_bindings=bindings,
-        wrap_lines=True,
-        style=ORANGE_STYLE,
-    )
-    if result is None:
-        raise EOFError
-    stripped: str = result.strip()
-    return stripped
+    try:
+        result = prompt(
+            "",
+            multiline=True,
+            key_bindings=bindings,
+            wrap_lines=True,
+            style=ORANGE_STYLE,
+        )
+        if result is None:
+            raise EOFError
+        stripped: str = result.strip()
+        return stripped
+    except (EOFError, KeyboardInterrupt) as e:
+        logger.warning(f"Input interrupted: {type(e).__name__}")
+        raise
 
 
 def _create_model_from_string(
