@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -12,6 +13,35 @@ from ..types import NodeRecord
 
 
 class QualityMixin:
+    @staticmethod
+    def _should_skip_duplicate_path(path: str) -> bool:
+        normalized = path.replace("\\", "/").strip("/").lower()
+        if not normalized:
+            return True
+        parts = [part for part in normalized.split("/") if part]
+        include_tests = str(
+            os.getenv("CODEGRAPH_ANALYSIS_INCLUDE_TESTS", "")
+        ).lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        skip_parts = {
+            "output",
+            "build",
+            "dist",
+            "node_modules",
+            "agent-logs",
+            "__pycache__",
+            "htmlcov",
+            "memgraph_logs",
+            ".venv",
+            "venv",
+        }
+        if not include_tests:
+            skip_parts |= {"test", "tests", "examples", "docs"}
+        return any(part in skip_parts for part in parts)
+
     def _churn_ownership(
         self: AnalysisRunnerProtocol, nodes: list[NodeRecord]
     ) -> dict[str, int]:
@@ -68,13 +98,17 @@ class QualityMixin:
     def _public_api_surface(
         self: AnalysisRunnerProtocol, nodes: list[NodeRecord]
     ) -> dict[str, int]:
-        public_nodes = [
-            node
-            for node in nodes
-            if node.properties.get(cs.KEY_IS_EXPORTED)
-            or cs.NodeLabel.ENDPOINT.value in node.labels
+        exported_nodes = [
+            node for node in nodes if node.properties.get(cs.KEY_IS_EXPORTED)
         ]
-        report_payload = [
+        endpoint_nodes = [
+            node for node in nodes if cs.NodeLabel.ENDPOINT.value in node.labels
+        ]
+        public_nodes = exported_nodes + [
+            node for node in endpoint_nodes if node not in exported_nodes
+        ]
+
+        symbols = [
             {
                 "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
                 "name": node.properties.get(cs.KEY_NAME),
@@ -83,6 +117,19 @@ class QualityMixin:
             }
             for node in public_nodes
         ]
+        report_payload = {
+            "summary": {
+                "public_symbols": len(public_nodes),
+                "exported_symbols": len(exported_nodes),
+                "endpoint_symbols": len(endpoint_nodes),
+            },
+            "reason": (
+                "No exported symbols or endpoint nodes detected"
+                if not symbols
+                else None
+            ),
+            "symbols": symbols,
+        }
         self._write_json_report("public_api_report.json", report_payload)
         return {"public_symbols": len(public_nodes)}
 
@@ -103,6 +150,8 @@ class QualityMixin:
             start_line = int(str(node.properties.get(cs.KEY_START_LINE) or 0))
             end_line = int(str(node.properties.get(cs.KEY_END_LINE) or 0))
             if not path or not start_line or not end_line:
+                continue
+            if self._should_skip_duplicate_path(path):
                 continue
             source = extract_source_lines(self.repo_path / path, start_line, end_line)
             if not source:

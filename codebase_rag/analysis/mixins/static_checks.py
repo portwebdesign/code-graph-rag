@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import keyword
 import os
 import re
 
@@ -10,6 +11,76 @@ from ..types import NodeRecord
 
 
 class StaticChecksMixin:
+    @staticmethod
+    def _should_skip_static_analysis_path(path: str) -> bool:
+        normalized = path.replace("\\", "/").strip("/").lower()
+        if not normalized:
+            return True
+        parts = [part for part in normalized.split("/") if part]
+        include_tests = str(
+            os.getenv("CODEGRAPH_ANALYSIS_INCLUDE_TESTS", "")
+        ).lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        skip_parts = {
+            "output",
+            "build",
+            "dist",
+            "node_modules",
+            "agent-logs",
+            "__pycache__",
+            "htmlcov",
+            "memgraph_logs",
+            ".venv",
+            "venv",
+        }
+        if not include_tests:
+            skip_parts |= {"test", "tests", "examples", "docs"}
+        if any(part in skip_parts for part in parts):
+            return True
+        return normalized.endswith((".min.js", ".min.css"))
+
+    @staticmethod
+    def _is_likely_ignored_variable(name: str) -> bool:
+        if not name:
+            return True
+        if name.startswith("_"):
+            return True
+        if name.isupper():
+            return True
+        if keyword.iskeyword(name):
+            return True
+        return False
+
+    @staticmethod
+    def _leading_indent(line: str) -> int:
+        return len(line) - len(line.lstrip(" \t"))
+
+    @staticmethod
+    def _next_executable_line(
+        lines: list[str], start_idx: int
+    ) -> tuple[int | None, str | None]:
+        for idx in range(start_idx + 1, len(lines)):
+            candidate = lines[idx].strip()
+            if not candidate:
+                continue
+            if candidate.startswith(("#", "//", "/*", "*", "*/")):
+                continue
+            return idx, lines[idx]
+        return None, None
+
+    @staticmethod
+    def _is_control_transfer_line(line: str) -> bool:
+        if not re.search(r"\b(return|raise|throw|break|continue)\b", line):
+            return False
+        if re.search(r"\bif\b.*\b(return|raise|throw|break|continue)\b", line):
+            return False
+        if re.search(r"\?.*:", line):
+            return False
+        return True
+
     def _unused_variables(
         self: AnalysisRunnerProtocol,
         nodes: list[NodeRecord],
@@ -19,6 +90,8 @@ class StaticChecksMixin:
         findings: list[dict[str, object]] = []
 
         for path in file_paths:
+            if self._should_skip_static_analysis_path(path):
+                continue
             file_path = self.repo_path / path
             if not file_path.exists() or file_path.stat().st_size > 1_000_000:
                 continue
@@ -37,6 +110,8 @@ class StaticChecksMixin:
 
             for match in re.finditer(pattern, content, re.MULTILINE):
                 name = match.group(1)
+                if self._is_likely_ignored_variable(name):
+                    continue
                 usages = len(re.findall(rf"\b{re.escape(name)}\b", content))
                 if usages <= 1:
                     findings.append({"path": path, "name": name, "usages": usages})
@@ -56,6 +131,8 @@ class StaticChecksMixin:
         findings: list[dict[str, object]] = []
 
         for path in file_paths:
+            if self._should_skip_static_analysis_path(path):
+                continue
             file_path = self.repo_path / path
             if not file_path.exists() or file_path.stat().st_size > 1_000_000:
                 continue
@@ -67,14 +144,29 @@ class StaticChecksMixin:
                 continue
 
             for idx, line in enumerate(lines[:-1]):
-                if re.search(r"\b(return|raise|throw)\b", line):
-                    next_line = lines[idx + 1].strip()
-                    if next_line and not next_line.startswith(
-                        ("}", "elif", "except", "finally")
-                    ):
-                        findings.append(
-                            {"path": path, "line": idx + 2, "code": next_line}
-                        )
+                if not self._is_control_transfer_line(line):
+                    continue
+                next_idx, next_line_raw = self._next_executable_line(lines, idx)
+                if next_idx is None or next_line_raw is None:
+                    continue
+                next_line = next_line_raw.strip()
+                if next_line.startswith(
+                    ("}", "elif", "except", "finally", "case ", "default:")
+                ):
+                    continue
+
+                current_indent = self._leading_indent(line)
+                next_indent = self._leading_indent(next_line_raw)
+                if next_indent < current_indent:
+                    continue
+
+                findings.append(
+                    {
+                        "path": path,
+                        "line": next_idx + 1,
+                        "code": next_line,
+                    }
+                )
 
         self._write_json_report("unreachable_code_report.json", findings)
         return {

@@ -125,16 +125,22 @@ class ResolverPass:
             if not lang_spec:
                 continue
             language = lang_spec.language
+            supported_language = cast(cs.SupportedLanguage, language)
             for full_name in mappings.values():
                 module_path = self.import_processor._resolve_module_path(
                     cast(Any, full_name),
                     module_qn,
-                    cast(cs.SupportedLanguage, language),
+                    supported_language,
                 )
                 self.ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     cs.RelationshipType.RESOLVES_IMPORT,
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_path),
+                    {
+                        "import_kind": "static",
+                        "confidence": 0.95,
+                        "source_parser": f"tree-sitter-{supported_language.value}",
+                    },
                 )
 
             import_nodes = self.import_processor.import_nodes_by_module.get(
@@ -146,7 +152,7 @@ class ResolverPass:
                         module_path = self.import_processor._resolve_module_path(
                             cast(Any, full_name),
                             module_qn,
-                            cast(cs.SupportedLanguage, language),
+                            supported_language,
                         )
                         self.ingestor.ensure_relationship_batch(
                             (cs.NodeLabel.IMPORT, cs.KEY_QUALIFIED_NAME, import_qn),
@@ -155,6 +161,10 @@ class ResolverPass:
                             {
                                 cs.KEY_IMPORTED_SYMBOL: local_name,
                                 cs.KEY_LOCAL_NAME: local_name,
+                                "import_kind": "static",
+                                "alias": local_name,
+                                "confidence": 0.95,
+                                "source_parser": f"tree-sitter-{supported_language.value}",
                             },
                         )
 
@@ -219,6 +229,10 @@ class ResolverPass:
                     cs.KEY_IMPORTED_SYMBOL: local_name or "",
                     cs.KEY_IS_DEFAULT_IMPORT: is_default,
                     cs.KEY_IS_NAMESPACE_IMPORT: is_namespace,
+                    "import_kind": "static",
+                    "alias": local_name or "",
+                    "confidence": 0.9,
+                    "source_parser": "resolver_pass",
                 },
             )
 

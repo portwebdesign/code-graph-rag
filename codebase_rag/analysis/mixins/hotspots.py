@@ -42,8 +42,21 @@ class HotspotsMixin:
                 }
             )
 
+        report_payload = {
+            "summary": {
+                "hotspots": len(hotspots),
+                "min_complexity": 10,
+                "min_fan_in": 5,
+            },
+            "reason": (
+                "No function/method reached complexity>=10 and fan_in>=5"
+                if not hotspots
+                else None
+            ),
+            "hotspots": hotspots,
+        }
         output_dir = self.repo_path / "output" / "analysis"
         output_dir.mkdir(parents=True, exist_ok=True)
         report_path = output_dir / "performance_hotspots.json"
-        report_path.write_text(json.dumps(hotspots, indent=2), encoding="utf-8")
+        report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
         return {"hotspots": len(hotspots)}

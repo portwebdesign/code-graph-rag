@@ -421,6 +421,14 @@ class FrameworkLinker:
         relative_path = str(file_path.relative_to(self.repo_path))
         for endpoint in endpoints:
             endpoint_qn = self._ensure_endpoint_node(endpoint, relative_path)
+            endpoint_props = {
+                cs.KEY_RELATION_TYPE: endpoint.framework,
+                "http_method": endpoint.method,
+                "route_path": endpoint.path,
+                "auth_required": False,
+                "framework": endpoint.framework,
+                "source_parser": "framework_linker",
+            }
 
             handler_qn = None
             if endpoint.handler_name:
@@ -435,7 +443,7 @@ class FrameworkLinker:
                         (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
                         cs.RelationshipType.HAS_ENDPOINT,
                         (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                        {cs.KEY_RELATION_TYPE: endpoint.framework},
+                        endpoint_props,
                     )
 
             if endpoint.controller_name:
@@ -445,14 +453,14 @@ class FrameworkLinker:
                         (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
                         cs.RelationshipType.ROUTES_TO_CONTROLLER,
                         (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, controller_qn),
-                        {cs.KEY_RELATION_TYPE: endpoint.framework},
+                        endpoint_props,
                     )
                     if handler_qn and handler_type:
                         self.ingestor.ensure_relationship_batch(
                             (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
                             cs.RelationshipType.ROUTES_TO_ACTION,
                             (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
-                            {cs.KEY_RELATION_TYPE: endpoint.framework},
+                            endpoint_props,
                         )
 
     def _find_best_handler_qn(
@@ -1082,6 +1090,14 @@ class FrameworkLinker:
         module_qn = self._module_qn_for_path(file_path)
         for endpoint in endpoints:
             endpoint_qn = self._ensure_endpoint_node(endpoint, relative_path)
+            endpoint_props = {
+                cs.KEY_RELATION_TYPE: "next_api",
+                "http_method": endpoint.method,
+                "route_path": endpoint.path,
+                "auth_required": False,
+                "framework": "next",
+                "source_parser": "framework_linker",
+            }
             handler_qn = None
             if endpoint.handler_name:
                 handler_qn = self._find_best_handler_qn(endpoint.handler_name, None)
@@ -1092,14 +1108,14 @@ class FrameworkLinker:
                         (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
                         cs.RelationshipType.HAS_ENDPOINT,
                         (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                        {cs.KEY_RELATION_TYPE: "next_api"},
+                        endpoint_props,
                     )
             else:
                 self.ingestor.ensure_relationship_batch(
                     (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
                     cs.RelationshipType.HAS_ENDPOINT,
                     (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                    {cs.KEY_RELATION_TYPE: "next_api"},
+                    endpoint_props,
                 )
 
     def _link_tailwind_assets(self) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from loguru import logger
@@ -125,6 +126,49 @@ class UsageInMemoryMixin:
             and node.node_id not in reachable
         ]
 
+        call_in_degree_map: dict[int, int] = {}
+        relation_links_map: dict[int, dict[str, int]] = {}
+        for rel in relationships:
+            if rel.rel_type == cs.RelationshipType.CALLS:
+                call_in_degree_map[rel.to_id] = call_in_degree_map.get(rel.to_id, 0) + 1
+
+            rel_bucket = relation_links_map.setdefault(
+                rel.to_id,
+                {
+                    "decorator_links": 0,
+                    "registration_links": 0,
+                    "imported_by_cli_links": 0,
+                    "config_reference_links": 0,
+                },
+            )
+            if rel.rel_type in {
+                cs.RelationshipType.DECORATES,
+                cs.RelationshipType.ANNOTATES,
+            }:
+                rel_bucket["decorator_links"] += 1
+            if rel.rel_type in {
+                cs.RelationshipType.HAS_ENDPOINT,
+                cs.RelationshipType.ROUTES_TO_ACTION,
+                cs.RelationshipType.REQUESTS_ENDPOINT,
+                cs.RelationshipType.REGISTERS_SERVICE,
+                cs.RelationshipType.HOOKS,
+                cs.RelationshipType.REGISTERS_BLOCK,
+            }:
+                rel_bucket["registration_links"] += 1
+            if rel.rel_type in {
+                cs.RelationshipType.USES_HANDLER,
+                cs.RelationshipType.USES_SERVICE,
+                cs.RelationshipType.REQUESTS_ENDPOINT,
+                cs.RelationshipType.ROUTES_TO_ACTION,
+            }:
+                rel_bucket["imported_by_cli_links"] += 1
+            if rel.rel_type in {
+                cs.RelationshipType.IMPORTS,
+                cs.RelationshipType.RESOLVES_IMPORT,
+                cs.RelationshipType.USES_COMPONENT,
+            }:
+                rel_bucket["config_reference_links"] += 1
+
         report = {
             "total_functions": len(
                 [
@@ -140,10 +184,55 @@ class UsageInMemoryMixin:
                     "name": node.properties.get(cs.KEY_NAME),
                     "path": node.properties.get(cs.KEY_PATH),
                     "start_line": node.properties.get(cs.KEY_START_LINE),
+                    "label": (
+                        cs.NodeLabel.METHOD
+                        if cs.NodeLabel.METHOD.value in node.labels
+                        else cs.NodeLabel.FUNCTION
+                    ),
+                    "call_in_degree": call_in_degree_map.get(node.node_id, 0),
+                    "out_call_count": len(call_graph.get(node.node_id, set())),
+                    "is_entrypoint_name": str(node.properties.get(cs.KEY_NAME) or "")
+                    in entry_points,
+                    "has_entry_decorator": bool(
+                        set(
+                            cast(
+                                Iterable[Any],
+                                node.properties.get(cs.KEY_DECORATORS) or [],
+                            )
+                        )
+                        & decorators
+                    ),
+                    "decorator_links": relation_links_map.get(node.node_id, {}).get(
+                        "decorator_links", 0
+                    ),
+                    "registration_links": relation_links_map.get(node.node_id, {}).get(
+                        "registration_links", 0
+                    ),
+                    "imported_by_cli_links": relation_links_map.get(
+                        node.node_id, {}
+                    ).get("imported_by_cli_links", 0),
+                    "config_reference_links": relation_links_map.get(
+                        node.node_id, {}
+                    ).get("config_reference_links", 0),
+                    "decorators": node.properties.get(cs.KEY_DECORATORS) or [],
+                    "is_exported": bool(node.properties.get(cs.KEY_IS_EXPORTED)),
                 }
                 for node in dead_nodes
             ],
         }
+
+        dead_functions = cast(list[dict[str, Any]], report["dead_functions"])
+
+        analysis_run_id = datetime.now(UTC).replace(microsecond=0).isoformat()
+        self._apply_dead_code_node_cache(
+            dead_functions,
+            analysis_run_id=analysis_run_id,
+        )
+
+        except_test_summary = self._write_dead_code_except_test_report(
+            dead_functions,
+            max_files=200,
+        )
 
         output_dir = self.repo_path / "output" / "analysis"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -154,6 +243,7 @@ class UsageInMemoryMixin:
         return {
             "total_functions": report["total_functions"],
             "dead_functions": report["dead_functions"],
+            "dead_code_except_test": except_test_summary,
         }
 
     def _unused_imports(
@@ -233,7 +323,20 @@ class UsageInMemoryMixin:
         output_dir = self.repo_path / "output" / "analysis"
         output_dir.mkdir(parents=True, exist_ok=True)
         report_path = output_dir / "unused_imports_report.json"
-        report_path.write_text(json.dumps(findings, indent=2), encoding="utf-8")
+        report_payload = {
+            "summary": {
+                "unused_imports": len(findings),
+                "files_with_unused": len({item["path"] for item in findings}),
+                "source": "in_memory",
+            },
+            "reason": (
+                "No unused import candidate found by text scan"
+                if not findings
+                else None
+            ),
+            "findings": findings,
+        }
+        report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
         return {
             "unused_imports": len(findings),
             "files_with_unused": len({item["path"] for item in findings}),

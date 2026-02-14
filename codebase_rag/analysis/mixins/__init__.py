@@ -1,5 +1,6 @@
 from .complexity import ComplexityMixin
 from .config import AnalysisConfigMixin
+from .dead_code_exports import DeadCodeExportsMixin
 from .dependencies import DependenciesMixin
 from .graph_access import AnalysisGraphAccessMixin
 from .hotspots import HotspotsMixin
@@ -20,6 +21,7 @@ __all__ = [
     "AnalysisConfigMixin",
     "AnalysisGraphAccessMixin",
     "ComplexityMixin",
+    "DeadCodeExportsMixin",
     "DependenciesMixin",
     "HotspotsMixin",
     "MigrationPlanMixin",

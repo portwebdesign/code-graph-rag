@@ -239,6 +239,11 @@ class DefinitionProcessor(
                 cs.RelationshipType.CONTAINS_MODULE,
                 (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
             )
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.FILE, cs.KEY_PATH, relative_path_str),
+                cs.RelationshipType.CONTAINS_MODULE,
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            )
 
             self.import_processor.parse_imports(root_node, module_qn, language, queries)
             safe_roots = self._get_error_tolerant_roots(root_node)

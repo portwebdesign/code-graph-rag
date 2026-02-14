@@ -17,6 +17,7 @@ from .mixins import (
     AnalysisConfigMixin,
     AnalysisGraphAccessMixin,
     ComplexityMixin,
+    DeadCodeExportsMixin,
     DependenciesMixin,
     HotspotsMixin,
     MigrationPlanMixin,
@@ -56,6 +57,7 @@ from .types import NodeRecord, RelationshipRecord
 
 class AnalysisRunner(
     AnalysisConfigMixin,
+    DeadCodeExportsMixin,
     AnalysisGraphAccessMixin,
     ComplexityMixin,
     DependenciesMixin,

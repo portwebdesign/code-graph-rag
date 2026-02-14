@@ -110,6 +110,26 @@ MATCH (r:AnalysisReport {analysis_run_id: m.analysis_run_id, project_name: m.pro
 MERGE (r)-[:HAS_METRIC]->(m)
 """
 
+CYPHER_BACKFILL_DEAD_CODE_NODE_CACHE_DEFAULTS = """
+MATCH (f)
+WHERE f:Function OR f:Method
+SET f.in_call_count = coalesce(f.in_call_count, 0),
+    f.out_call_count = coalesce(f.out_call_count, 0),
+    f.is_reachable = coalesce(f.is_reachable, true),
+    f.reachability_source = coalesce(f.reachability_source, 'legacy_unknown'),
+    f.analysis_run_id = coalesce(f.analysis_run_id, 'legacy_backfill'),
+    f.dead_code_score = coalesce(f.dead_code_score, 0)
+RETURN count(f) AS updated
+"""
+
+CYPHER_BACKFILL_RELATION_METADATA_DEFAULTS = """
+MATCH ()-[r]->()
+SET r.source_parser = coalesce(r.source_parser, 'legacy_backfill'),
+    r.analysis_run_id = coalesce(r.analysis_run_id, 'legacy_backfill'),
+    r.last_seen_at = coalesce(r.last_seen_at, datetime())
+RETURN count(r) AS updated
+"""
+
 CYPHER_DELETE_MODULE_BY_PATH = """
 MATCH (m:Module {path: $path})
 OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..5]->(defined)
@@ -267,7 +287,7 @@ LIMIT 1
 
 CYPHER_ANALYSIS_USAGE = """
 MATCH (p:Project {name: $project_name})
-OPTIONAL MATCH (p)-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(n)
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(n)
 WITH collect(DISTINCT n) AS nodes
 UNWIND nodes AS node
 WITH node
@@ -279,7 +299,7 @@ RETURN node.qualified_name AS qualified_name,
 
 CYPHER_ANALYSIS_USAGE_FILTERED = """
 MATCH (p:Project {name: $project_name})
-OPTIONAL MATCH (p)-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(n)
+OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(n)
 WHERE $module_paths IS NULL OR m.path IN $module_paths
 WITH collect(DISTINCT n) AS nodes
 UNWIND nodes AS node
@@ -291,47 +311,95 @@ RETURN node.qualified_name AS qualified_name,
 """
 
 CYPHER_ANALYSIS_DEAD_CODE = """
-MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+MATCH (p:Project {name: $project_name})-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
 WHERE (f:Function OR f:Method)
-    AND NOT (f)<-[:CALLS]-()
     AND (f.is_exported IS NULL OR f.is_exported = false)
-    AND NOT f.name IN $entry_names
-    AND NOT ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators)
-RETURN f.qualified_name AS qualified_name,
-             f.name AS name,
-             m.path AS path,
-             f.start_line AS start_line
+WITH f, collect(DISTINCT m.path)[0] AS path
+OPTIONAL MATCH (caller)-[:CALLS]->(f)
+WITH f, path, count(DISTINCT caller) AS call_in_degree,
+     CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
+     CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
+WHERE call_in_degree = 0
+OPTIONAL MATCH (f)-[:CALLS]->(callee)
+WITH f, path, call_in_degree, is_entrypoint_name, has_entry_decorator, count(DISTINCT callee) AS out_call_count
+OPTIONAL MATCH ()-[decor_rel:DECORATES|ANNOTATES]->(f)
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, count(DISTINCT decor_rel) AS decorator_links
+OPTIONAL MATCH (f)-[reg_rel:HAS_ENDPOINT|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK]->()
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, decorator_links, count(DISTINCT reg_rel) AS registration_links
+OPTIONAL MATCH ()-[cli_rel:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, decorator_links, registration_links, count(DISTINCT cli_rel) AS imported_by_cli_links
+OPTIONAL MATCH ()-[cfg_rel:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, decorator_links, registration_links, imported_by_cli_links, count(DISTINCT cfg_rel) AS config_reference_links
+RETURN DISTINCT f.qualified_name AS qualified_name,
+                f.name AS name,
+                path AS path,
+                f.start_line AS start_line,
+                labels(f)[0] AS label,
+                call_in_degree,
+                out_call_count,
+                is_entrypoint_name,
+                has_entry_decorator,
+                decorator_links,
+                registration_links,
+                imported_by_cli_links,
+                config_reference_links,
+                coalesce(f.decorators, []) AS decorators,
+                coalesce(f.is_exported, false) AS is_exported
 """
 
 CYPHER_ANALYSIS_DEAD_CODE_FILTERED = """
-MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+MATCH (p:Project {name: $project_name})-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
 WHERE (f:Function OR f:Method)
     AND ($module_paths IS NULL OR m.path IN $module_paths)
-    AND NOT (f)<-[:CALLS]-()
     AND (f.is_exported IS NULL OR f.is_exported = false)
-    AND NOT f.name IN $entry_names
-    AND NOT ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators)
-RETURN f.qualified_name AS qualified_name,
-             f.name AS name,
-             m.path AS path,
-             f.start_line AS start_line
+WITH f, collect(DISTINCT m.path)[0] AS path
+OPTIONAL MATCH (caller)-[:CALLS]->(f)
+WITH f, path, count(DISTINCT caller) AS call_in_degree,
+     CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
+     CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
+WHERE call_in_degree = 0
+OPTIONAL MATCH (f)-[:CALLS]->(callee)
+WITH f, path, call_in_degree, is_entrypoint_name, has_entry_decorator, count(DISTINCT callee) AS out_call_count
+OPTIONAL MATCH ()-[decor_rel:DECORATES|ANNOTATES]->(f)
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, count(DISTINCT decor_rel) AS decorator_links
+OPTIONAL MATCH (f)-[reg_rel:HAS_ENDPOINT|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK]->()
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, decorator_links, count(DISTINCT reg_rel) AS registration_links
+OPTIONAL MATCH ()-[cli_rel:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, decorator_links, registration_links, count(DISTINCT cli_rel) AS imported_by_cli_links
+OPTIONAL MATCH ()-[cfg_rel:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
+WITH f, path, call_in_degree, out_call_count, is_entrypoint_name, has_entry_decorator, decorator_links, registration_links, imported_by_cli_links, count(DISTINCT cfg_rel) AS config_reference_links
+RETURN DISTINCT f.qualified_name AS qualified_name,
+                f.name AS name,
+                path AS path,
+                f.start_line AS start_line,
+                labels(f)[0] AS label,
+                call_in_degree,
+                out_call_count,
+                is_entrypoint_name,
+                has_entry_decorator,
+                decorator_links,
+                registration_links,
+                imported_by_cli_links,
+                config_reference_links,
+                coalesce(f.decorators, []) AS decorators,
+                coalesce(f.is_exported, false) AS is_exported
 """
 
 CYPHER_ANALYSIS_TOTAL_FUNCTIONS = """
-MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+MATCH (p:Project {name: $project_name})-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
 WHERE (f:Function OR f:Method)
 RETURN count(DISTINCT f) AS total_functions
 """
 
 CYPHER_ANALYSIS_TOTAL_FUNCTIONS_FILTERED = """
-MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
+MATCH (p:Project {name: $project_name})-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES|DEFINES_METHOD*0..1]->(f)
 WHERE (f:Function OR f:Method)
     AND ($module_paths IS NULL OR m.path IN $module_paths)
 RETURN count(DISTINCT f) AS total_functions
 """
 
 CYPHER_ANALYSIS_UNUSED_IMPORTS = """
-MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES]->(i:Import)
+MATCH (p:Project {name: $project_name})-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES]->(i:Import)
 WHERE NOT (i)-[:RESOLVES_IMPORT]->()
 RETURN m.path AS path,
              i.import_source AS name,
@@ -339,7 +407,7 @@ RETURN m.path AS path,
 """
 
 CYPHER_ANALYSIS_UNUSED_IMPORTS_FILTERED = """
-MATCH (p:Project {name: $project_name})-[:CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES]->(i:Import)
+MATCH (p:Project {name: $project_name})-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(m:Module)-[:DEFINES]->(i:Import)
 WHERE ($module_paths IS NULL OR m.path IN $module_paths)
     AND NOT (i)-[:RESOLVES_IMPORT]->()
 RETURN m.path AS path,

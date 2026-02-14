@@ -229,6 +229,12 @@ class JsTsModuleSystemMixin:
                         cs.KEY_QUALIFIED_NAME,
                         resolved_source_module,
                     ),
+                    {
+                        "import_kind": "dynamic",
+                        "alias": imported_name,
+                        "confidence": 0.85,
+                        "source_parser": "tree-sitter-javascript",
+                    },
                 )
 
                 logger.debug(

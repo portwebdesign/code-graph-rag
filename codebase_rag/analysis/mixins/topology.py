@@ -28,7 +28,7 @@ class TopologyMixin:
 
         cycles = self._collect_cycles(graph)
 
-        report_payload = [
+        cycles_payload = [
             {
                 "cycle": [
                     node.properties.get(cs.KEY_QUALIFIED_NAME)
@@ -38,6 +38,14 @@ class TopologyMixin:
             }
             for cycle in cycles
         ]
+        report_payload = {
+            "summary": {
+                "cycles": len(cycles_payload),
+                "modules_in_graph": len(module_ids),
+            },
+            "reason": ("No import cycle detected" if not cycles_payload else None),
+            "cycles": cycles_payload,
+        }
         self._write_json_report("cycles_report.json", report_payload)
         return {"cycles": len(cycles)}
 
@@ -180,7 +188,19 @@ class TopologyMixin:
                     }
                 )
 
-        self._write_json_report("layering_violations.json", violations)
+        report_payload = {
+            "summary": {
+                "violations": len(violations),
+                "modules_analyzed": len(module_nodes),
+            },
+            "reason": (
+                "No cross-layer violation matched configured layer rules"
+                if not violations
+                else None
+            ),
+            "violations": violations,
+        }
+        self._write_json_report("layering_violations.json", report_payload)
         return {"violations": len(violations)}
 
     @staticmethod

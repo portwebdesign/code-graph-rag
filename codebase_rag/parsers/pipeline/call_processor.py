@@ -25,6 +25,7 @@ from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
+    PropertyDict,
 )
 from codebase_rag.infrastructure.language_spec import LanguageSpec
 from codebase_rag.parsers.core.utils import (
@@ -125,6 +126,33 @@ class CallProcessor:
         if not name_node:
             return None
         return safe_decode_text(name_node)
+
+    @staticmethod
+    def _build_call_relationship_props(
+        language: cs.SupportedLanguage,
+        call_node: Node,
+        *,
+        is_dynamic: bool,
+        confidence: float,
+        relation_type: str,
+        extra: PropertyDict | None = None,
+    ) -> PropertyDict:
+        props: PropertyDict = {
+            "callsite_count": 1,
+            "line": int(call_node.start_point[0]) + 1,
+            "column": int(call_node.start_point[1]),
+            "is_dynamic": bool(is_dynamic),
+            "confidence": float(confidence),
+            "source_parser": f"tree-sitter-{language.value}",
+            "relation_type": relation_type,
+        }
+        run_id = os.getenv("CODEGRAPH_ANALYSIS_RUN_ID", "").strip()
+        if run_id:
+            props["analysis_run_id"] = run_id
+            props["last_seen_run"] = run_id
+        if extra:
+            props.update(extra)
+        return props
 
     def process_calls_in_file(
         self,
@@ -479,20 +507,27 @@ class CallProcessor:
             callee_info = self._resolver.resolve_function_call(
                 call_name, module_qn, local_var_types
             )
+            is_dynamic = False
+            confidence = 1.0
             if callee_info:
                 callee_type, callee_qn = callee_info
             elif dynamic_info := self._resolve_dynamic_call(
                 call_node, module_qn, source_bytes, source_text
             ):
                 callee_type, callee_qn = dynamic_info
+                is_dynamic = True
+                confidence = 0.65
             elif builtin_info := self._resolver.resolve_builtin_call(call_name):
                 callee_type, callee_qn = builtin_info
+                confidence = 0.9
             elif operator_info := self._resolver.resolve_cpp_operator_call(
                 call_name, module_qn
             ):
                 callee_type, callee_qn = operator_info
+                confidence = 0.85
             elif self._placeholder_nodes_enabled:
                 callee_type, callee_qn = self._ensure_placeholder_function(call_name)
+                confidence = 0.5
             else:
                 continue
 
@@ -503,12 +538,19 @@ class CallProcessor:
                 (cs.NodeLabel.FILE, cs.KEY_PATH, relative_path),
                 cs.RelationshipType.CALLS,
                 (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                {
-                    cs.KEY_FILE_LEVEL_CALL: True,
-                    cs.KEY_IS_PLACEHOLDER: callee_qn.startswith(
-                        f"{self.project_name}{cs.SEPARATOR_DOT}framework."
-                    ),
-                },
+                self._build_call_relationship_props(
+                    language,
+                    call_node,
+                    is_dynamic=is_dynamic,
+                    confidence=confidence,
+                    relation_type="file_level_call",
+                    extra={
+                        cs.KEY_FILE_LEVEL_CALL: True,
+                        cs.KEY_IS_PLACEHOLDER: callee_qn.startswith(
+                            f"{self.project_name}{cs.SEPARATOR_DOT}framework."
+                        ),
+                    },
+                ),
             )
 
     @staticmethod
@@ -742,18 +784,24 @@ class CallProcessor:
                 callee_info = self._resolver.resolve_function_call(
                     call_name, module_qn, local_var_types, class_context
                 )
+            is_dynamic = False
+            confidence = 1.0
             if callee_info:
                 callee_type, callee_qn = callee_info
             elif dynamic_info := self._resolve_dynamic_call(
                 call_node, module_qn, source_bytes, source_text
             ):
                 callee_type, callee_qn = dynamic_info
+                is_dynamic = True
+                confidence = 0.65
             elif builtin_info := self._resolver.resolve_builtin_call(call_name):
                 callee_type, callee_qn = builtin_info
+                confidence = 0.9
             elif operator_info := self._resolver.resolve_cpp_operator_call(
                 call_name, module_qn
             ):
                 callee_type, callee_qn = operator_info
+                confidence = 0.85
             else:
                 continue
 
@@ -772,6 +820,13 @@ class CallProcessor:
                 (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
+                self._build_call_relationship_props(
+                    language,
+                    call_node,
+                    is_dynamic=is_dynamic,
+                    confidence=confidence,
+                    relation_type="call",
+                ),
             )
 
     def _build_nested_qualified_name(

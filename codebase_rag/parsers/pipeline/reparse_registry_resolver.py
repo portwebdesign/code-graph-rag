@@ -182,7 +182,15 @@ class ReparseRegistryResolver:
                 (caller_type.value, cs.KEY_QUALIFIED_NAME, caller_qn),
                 cs.RelationshipType.CALLS,
                 (callee_type, cs.KEY_QUALIFIED_NAME, callee_qn),
-                {cs.KEY_RELATION_TYPE: "reparse_registry"},
+                {
+                    cs.KEY_RELATION_TYPE: "reparse_registry",
+                    "callsite_count": 1,
+                    "line": int(call_node.start_point[0]) + 1,
+                    "column": int(call_node.start_point[1]),
+                    "is_dynamic": False,
+                    "confidence": 0.7,
+                    "source_parser": f"tree-sitter-{language.value}",
+                },
             )
 
     def _find_enclosing_caller_qn(

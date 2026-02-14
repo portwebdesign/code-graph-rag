@@ -14,6 +14,14 @@ class ApiCallChainModule(AnalysisModule):
 
     def run(self, context: AnalysisContext) -> dict[str, Any]:
         if not context.nodes or not context.relationships:
+            context.runner._write_json_report(
+                "api_call_chain_report.json",
+                {
+                    "summary": {"chains": 0, "endpoints": 0},
+                    "reason": "No graph nodes/relationships available for API chain analysis",
+                    "chains": [],
+                },
+            )
             return {}
         return self._build_report(context)
 
@@ -30,7 +38,14 @@ class ApiCallChainModule(AnalysisModule):
             if cs.NodeLabel.ENDPOINT.value in node.labels
         }
         if not endpoints:
-            context.runner._write_json_report("api_call_chain_report.json", [])
+            context.runner._write_json_report(
+                "api_call_chain_report.json",
+                {
+                    "summary": {"chains": 0, "endpoints": 0},
+                    "reason": "No Endpoint nodes detected in graph",
+                    "chains": [],
+                },
+            )
             return {"chains": 0, "endpoints": 0}
 
         chains: list[dict[str, Any]] = []
@@ -106,7 +121,14 @@ class ApiCallChainModule(AnalysisModule):
                 }
             )
 
-        context.runner._write_json_report("api_call_chain_report.json", chains)
+        context.runner._write_json_report(
+            "api_call_chain_report.json",
+            {
+                "summary": {"chains": len(chains), "endpoints": len(endpoints)},
+                "reason": None,
+                "chains": chains,
+            },
+        )
         return {"chains": len(chains), "endpoints": len(endpoints)}
 
     @staticmethod
