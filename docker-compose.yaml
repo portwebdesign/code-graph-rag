@@ -18,5 +18,7 @@ services:
 volumes:
   memgraph_data:
     driver: local
+    name: code-graph-rag-memgraph-data
   memgraph_logs:
     driver: local
+    name: code-graph-rag-memgraph-logs

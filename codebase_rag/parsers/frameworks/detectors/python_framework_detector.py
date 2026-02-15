@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from typing import Any
 
@@ -595,4 +595,17 @@ class PythonFrameworkDetector:
         elif framework == PythonFrameworkType.FASTAPI:
             metadata["routes"] = self.extract_fastapi_routes(module_node, source_code)
 
-        return metadata
+        return self._to_serializable_metadata(metadata)
+
+    def _to_serializable_metadata(self, value: Any) -> Any:
+        if is_dataclass(value):
+            return {
+                k: self._to_serializable_metadata(v) for k, v in asdict(value).items()
+            }
+        if isinstance(value, dict):
+            return {k: self._to_serializable_metadata(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._to_serializable_metadata(v) for v in value]
+        if isinstance(value, tuple):
+            return [self._to_serializable_metadata(v) for v in value]
+        return value

@@ -451,7 +451,9 @@ def _normalize_query_captures(
     return combined
 
 
-def _compile_query(language: Language, query_text: str) -> Query | None:
+def _compile_query(
+    language: Language, query_text: str, *, log_warning: bool = True
+) -> Query | None:
     """
     Compiles a tree-sitter query string.
 
@@ -467,7 +469,8 @@ def _compile_query(language: Language, query_text: str) -> Query | None:
     try:
         return Query(language, query_text)
     except Exception as e:
-        logger.warning(f"Failed to compile SCM query: {e}")
+        if log_warning:
+            logger.warning(f"Failed to compile SCM query: {e}")
         return None
 
 
@@ -541,9 +544,36 @@ def _apply_language_override(
             standard_captures[key],
             dict.fromkeys(alias_list),
         )
+        if not normalized:
+            overrides[key] = None
+            continue
 
+        valid_parts: list[str] = []
+        invalid_parts = 0
+        for part in parts:
+            normalized_part = _normalize_query_captures(
+                [part],
+                standard_captures[key],
+                dict.fromkeys(alias_list),
+            )
+            if not normalized_part:
+                continue
+            if _compile_query(language_obj, normalized_part, log_warning=False):
+                valid_parts.append(normalized_part)
+            else:
+                invalid_parts += 1
+
+        if invalid_parts:
+            logger.debug(
+                "Skipped {} invalid SCM query fragments for {}:{}",
+                invalid_parts,
+                language.value,
+                key,
+            )
+
+        normalized_valid = _combine_queries(valid_parts)
         overrides[key] = (
-            _compile_query(language_obj, normalized) if normalized else None
+            _compile_query(language_obj, normalized_valid) if normalized_valid else None
         )
 
     merged: LanguageQueries = {

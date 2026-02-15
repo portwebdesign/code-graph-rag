@@ -128,6 +128,7 @@ class GraphAlgorithms:
             YIELD cycle
             WITH cycle, size(cycle) AS cycle_size
             WHERE cycle IS NOT NULL AND cycle_size >= {min_cycle_size}
+            WITH cycle, cycle_size
             ORDER BY cycle_size DESC
             LIMIT {cycle_limit}
             UNWIND cycle AS n
