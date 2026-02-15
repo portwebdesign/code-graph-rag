@@ -189,7 +189,9 @@ class TestProcessParameter:
         param = create_mock_node(cs.TS_PY_IDENTIFIER, "user")
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(_as_ast(param), local_var_types, "test.module")
+        engine._process_parameter(
+            _as_ast(param), local_var_types, "test.module", _as_ast(param)
+        )
 
         assert local_var_types == {}
 
@@ -203,7 +205,9 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(_as_ast(param), local_var_types, "test.module")
+        engine._process_parameter(
+            _as_ast(param), local_var_types, "test.module", _as_ast(param)
+        )
 
         assert local_var_types["count"] == "int"
 
@@ -218,7 +222,9 @@ class TestProcessParameter:
         )
         local_var_types: dict[str, str] = {}
 
-        engine._process_parameter(_as_ast(param), local_var_types, "test.module")
+        engine._process_parameter(
+            _as_ast(param), local_var_types, "test.module", _as_ast(param)
+        )
 
         assert local_var_types["count"] == "int"
 

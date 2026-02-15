@@ -3,13 +3,17 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import ItemsView, KeysView
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.core import constants as cs
-from codebase_rag.data_models.types_defs import NodeType, QualifiedName
+from codebase_rag.data_models.types_defs import (
+    FunctionRegistryTrieProtocol,
+    NodeType,
+    QualifiedName,
+)
 from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.parsers.pipeline.call_resolver import CallResolver
@@ -104,7 +108,7 @@ def call_resolver(
     mock_type_inference: TypeInferenceEngine,
 ) -> CallResolver:
     return CallResolver(
-        function_registry=mock_function_registry,
+        function_registry=cast(FunctionRegistryTrieProtocol, mock_function_registry),
         import_processor=mock_import_processor,
         type_inference=mock_type_inference,
         class_inheritance={},

@@ -40,14 +40,14 @@ class TestDirectoryListerInit:
 
     def test_init_with_relative_path(self) -> None:
         lister = DirectoryLister(".")
-        assert lister.project_root == Path("../..").resolve()
+        assert lister.project_root == Path(".").resolve()
 
 
 class TestListDirectoryContents:
     def test_list_root_directory(
         self, directory_lister: DirectoryLister, sample_directory_structure: Path
     ) -> None:
-        result = directory_lister.list_directory_contents("../..")
+        result = directory_lister.list_directory_contents(".")
         assert "file1.txt" in result
         assert "file2.py" in result
         assert "subdir1" in result

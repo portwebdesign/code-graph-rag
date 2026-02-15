@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from codebase_rag.analysis.analysis_runner import AnalysisRunner
+from codebase_rag.services import IngestorProtocol
 
 
 class DummyIngestor:
@@ -49,7 +50,7 @@ class DummyIngestor:
 
 
 def test_dead_code_except_test_report_created(tmp_path: Path) -> None:
-    runner = AnalysisRunner(DummyIngestor(), tmp_path)
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
     result = runner._dead_code_report_db(module_paths=None)
 
     assert "dead_code_except_test" in result
@@ -69,7 +70,7 @@ def test_dead_code_except_test_report_created(tmp_path: Path) -> None:
 
 
 def test_dead_code_except_test_report_has_categories(tmp_path: Path) -> None:
-    runner = AnalysisRunner(DummyIngestor(), tmp_path)
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
     payload = runner._write_dead_code_except_test_report(
         [
             {
@@ -116,7 +117,7 @@ def test_dead_code_except_test_report_has_categories(tmp_path: Path) -> None:
 def test_dead_code_except_test_report_contains_graph_confidence_and_risk(
     tmp_path: Path,
 ) -> None:
-    runner = AnalysisRunner(DummyIngestor(), tmp_path)
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
     runner._write_dead_code_except_test_report(
         [
             {

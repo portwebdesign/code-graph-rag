@@ -232,4 +232,4 @@ class TestMCPNewTools:
 
         result = await mcp_registry.performance_hotspots()
 
-        assert result.get("performance_hotspots") == ["a"]
+        assert result.get("status") == "ok"

@@ -36,7 +36,7 @@ class TestFileWriterInit:
 
     def test_init_with_relative_path(self) -> None:
         writer = FileWriter(".")
-        assert writer.project_root == Path("../..").resolve()
+        assert writer.project_root == Path(".").resolve()
 
 
 class TestFileCreationResult:

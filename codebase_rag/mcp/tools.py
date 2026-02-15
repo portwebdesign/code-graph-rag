@@ -8,6 +8,7 @@ from typing import Any, cast
 from loguru import logger
 
 from codebase_rag.analysis.analysis_runner import AnalysisRunner
+from codebase_rag.architecture.registry import ToolRegistry
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as lg
 from codebase_rag.data_models.models import ToolMetadata
@@ -825,4 +826,59 @@ def create_mcp_tools_registry(
         project_root=project_root,
         ingestor=ingestor,
         cypher_gen=cypher_gen,
+    )
+
+
+@ToolRegistry.register(cs.MCPToolName.LIST_PROJECTS, category="core")
+def _register_list_projects(registry: MCPToolsRegistry) -> ToolMetadata:
+    return ToolMetadata(
+        name=cs.MCPToolName.LIST_PROJECTS,
+        description=td.MCP_TOOLS[cs.MCPToolName.LIST_PROJECTS],
+        input_schema=MCPInputSchema(
+            type=cs.MCPSchemaType.OBJECT,
+            properties={},
+            required=[],
+        ),
+        handler=registry.list_projects,
+        returns_json=True,
+    )
+
+
+@ToolRegistry.register(cs.MCPToolName.DELETE_PROJECT, category="core")
+def _register_delete_project(registry: MCPToolsRegistry) -> ToolMetadata:
+    return ToolMetadata(
+        name=cs.MCPToolName.DELETE_PROJECT,
+        description=td.MCP_TOOLS[cs.MCPToolName.DELETE_PROJECT],
+        input_schema=MCPInputSchema(
+            type=cs.MCPSchemaType.OBJECT,
+            properties={
+                cs.MCPParamName.PROJECT_NAME: MCPInputSchemaProperty(
+                    type=cs.MCPSchemaType.STRING,
+                    description=td.MCP_PARAM_PROJECT_NAME,
+                )
+            },
+            required=[cs.MCPParamName.PROJECT_NAME],
+        ),
+        handler=registry.delete_project,
+        returns_json=True,
+    )
+
+
+@ToolRegistry.register(cs.MCPToolName.WIPE_DATABASE, category="core")
+def _register_wipe_database(registry: MCPToolsRegistry) -> ToolMetadata:
+    return ToolMetadata(
+        name=cs.MCPToolName.WIPE_DATABASE,
+        description=td.MCP_TOOLS[cs.MCPToolName.WIPE_DATABASE],
+        input_schema=MCPInputSchema(
+            type=cs.MCPSchemaType.OBJECT,
+            properties={
+                cs.MCPParamName.CONFIRM: MCPInputSchemaProperty(
+                    type=cs.MCPSchemaType.BOOLEAN,
+                    description=td.MCP_PARAM_CONFIRM,
+                )
+            },
+            required=[cs.MCPParamName.CONFIRM],
+        ),
+        handler=registry.wipe_database,
+        returns_json=False,
     )

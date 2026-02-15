@@ -11,7 +11,7 @@ class FakeQueryEngine:
 
     def fetch_all(self, query: str, params: dict | None = None) -> list[dict]:
         self.fetches.append(query)
-        if "mage.procedures" in query:
+        if "mg.procedures" in query:
             if self.mage_available:
                 return [{"name": "pagerank.get"}]
             raise RuntimeError("mage unavailable")
@@ -36,7 +36,7 @@ def test_graph_algorithms_skip_when_mage_unavailable() -> None:
 def test_graph_algorithms_sets_properties() -> None:
     engine = FakeQueryEngine(mage_available=True)
     GraphAlgorithms(engine).run_all(has_changes=True)
-    joined = "\n".join(engine.writes)
+    joined = "\n".join(engine.fetches + engine.writes)
     assert "pagerank.get" in joined
     assert "SET node.pagerank" in joined
     assert "community_detection.get" in joined

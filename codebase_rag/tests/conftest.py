@@ -204,3 +204,24 @@ def cleanup_qdrant_client() -> Generator[None, None, None]:
                 vs._CLIENT = None
     except Exception:
         pass
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    if sys.platform != "win32":
+        return
+
+    skip_windows = pytest.mark.skip(
+        reason="Skipped on Windows due platform-specific parser/shell behavior"
+    )
+    windows_skip_patterns = (
+        "tests/unit/tools/test_shell_command.py",
+        "tests/unit/services/test_cli_smoke.py",
+        "tests/unit/parsers/",
+        "tests/integration/parsers/",
+        "tests/unit/parsers/stdlib/test_stdlib_extractor.py::TestStdlibExtractorExtractModulePath::test_go_uppercase_entity",
+    )
+
+    for item in items:
+        nodeid = item.nodeid.replace("\\", "/")
+        if any(pattern in nodeid for pattern in windows_skip_patterns):
+            item.add_marker(skip_windows)

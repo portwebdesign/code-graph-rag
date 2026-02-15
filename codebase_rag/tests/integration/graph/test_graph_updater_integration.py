@@ -1,10 +1,23 @@
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
 from codebase_rag.tests.conftest import get_relationships, run_updater
+
+
+def _norm(value: object) -> object:
+    return value.value if hasattr(value, "value") else value
+
+
+def _relationship_signature(call_obj: Any) -> tuple[object, object, object]:
+    args = call_obj.args
+    source = tuple(_norm(part) for part in args[0])
+    rel_type = _norm(args[1])
+    target = tuple(_norm(part) for part in args[2])
+    return source, rel_type, target
 
 
 @pytest.fixture
@@ -37,21 +50,21 @@ def test_function_call_relationships_are_created(
     util_func_qn = f"{project_name}.utils.util_func"
     local_func_qn = f"{project_name}.main.local_func"
 
-    expected_calls = [
-        call(
+    expected_calls = {
+        (
             ("Function", "qualified_name", main_func_qn),
             "CALLS",
             ("Function", "qualified_name", util_func_qn),
         ),
-        call(
+        (
             ("Function", "qualified_name", main_func_qn),
             "CALLS",
             ("Function", "qualified_name", local_func_qn),
         ),
-    ]
+    }
 
     actual_calls = get_relationships(mock_ingestor, "CALLS")
+    actual_signatures = {_relationship_signature(call_obj) for call_obj in actual_calls}
 
-    assert len(actual_calls) >= len(expected_calls)
-    assert expected_calls[0] in actual_calls
-    assert expected_calls[1] in actual_calls
+    assert len(actual_signatures) >= len(expected_calls)
+    assert expected_calls.issubset(actual_signatures)

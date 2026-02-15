@@ -51,7 +51,7 @@ class TestFileReaderInit:
 
     def test_init_with_relative_path(self) -> None:
         reader = FileReader(".")
-        assert reader.project_root == Path("../..").resolve()
+        assert reader.project_root == Path(".").resolve()
 
     def test_binary_extensions_set(self) -> None:
         assert ".pdf" in cs.BINARY_EXTENSIONS

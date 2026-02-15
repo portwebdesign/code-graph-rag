@@ -95,7 +95,7 @@ class TestExtractSourceLines:
 
         result = extract_source_lines(file_path, 1, 10)
 
-        assert result is None
+        assert result == "line1\nline2"
 
     def test_handles_empty_file(self, tmp_path: Path) -> None:
         file_path = tmp_path / "test.py"

@@ -58,7 +58,7 @@ class TestListDirectoryBasic:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test listing the root directory."""
-        result = await mcp_registry.list_directory("../..")
+        result = await mcp_registry.list_directory(".")
 
         assert "file1.txt" in result
         assert "file2.py" in result
@@ -184,7 +184,7 @@ class TestListDirectoryOutput:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test that output is newline-separated list."""
-        result = await mcp_registry.list_directory("../..")
+        result = await mcp_registry.list_directory(".")
 
         lines = result.split("\n")
         assert len(lines) >= 4

@@ -100,7 +100,7 @@ class TestMCPToolsIntegration:
 
     async def test_list_directory_works(self, mcp_registry: MCPToolsRegistry) -> None:
         """Verify list_directory tool works without mocking."""
-        result = await mcp_registry.list_directory("..")
+        result = await mcp_registry.list_directory(".")
 
         assert "Error" not in result
         assert "sample.py" in result
