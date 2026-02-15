@@ -4,15 +4,16 @@ import asyncio
 import difflib
 import json
 import os
+import re
 import shlex
 import shutil
 import sys
 import uuid
 from collections import deque
 from collections.abc import Coroutine
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -53,6 +54,7 @@ from codebase_rag.data_models.types_defs import (
     ToolArgs,
 )
 from codebase_rag.providers.base import get_provider_from_config
+from codebase_rag.services.context7_client import Context7Client
 from codebase_rag.services.context7_persistence import (
     Context7KnowledgeStore,
     Context7MemoryStore,
@@ -123,6 +125,14 @@ def dim(text: str) -> str:
 
 
 app_context = AppContext()
+
+
+@dataclass(frozen=True)
+class Context7AutoDocsRuntime:
+    client: Context7Client
+    knowledge_store: Context7KnowledgeStore
+    memory_store: Context7MemoryStore
+    persistence: Context7Persistence
 
 
 def init_session_log(project_root: Path) -> Path:
@@ -449,6 +459,7 @@ async def run_optimization_loop(
     language: str,
     tool_names: ConfirmationToolNames,
     reference_document: str | None = None,
+    context7_runtime: Context7AutoDocsRuntime | None = None,
 ) -> None:
     """
     Runs the interactive loop specifically for the code optimization task.
@@ -490,6 +501,7 @@ async def run_optimization_loop(
         style(cs.PROMPT_YOUR_RESPONSE, cs.Color.CYAN),
         tool_names,
         initial_question,
+        context7_runtime=context7_runtime,
     )
 
 
@@ -879,6 +891,99 @@ def _handle_model_command(
         return current_model, current_model_string, current_config
 
 
+def _format_context7_docs_text(docs: object) -> str:
+    if isinstance(docs, str):
+        text = docs
+    elif isinstance(docs, dict):
+        docs_dict = cast(dict[str, object], docs)
+        content = docs_dict.get("content")
+        text = str(content) if content else json.dumps(docs_dict, ensure_ascii=False)
+    elif isinstance(docs, list):
+        docs_list = cast(list[object], docs)
+        parts: list[str] = []
+        for item in docs_list[:3]:
+            if isinstance(item, dict):
+                item_dict = cast(dict[str, object], item)
+                title = str(
+                    item_dict.get("title") or item_dict.get("topic") or ""
+                ).strip()
+                content = str(
+                    item_dict.get("content") or item_dict.get("summary") or ""
+                ).strip()
+                if title and content:
+                    parts.append(f"{title}: {content}")
+                elif content:
+                    parts.append(content)
+                elif title:
+                    parts.append(title)
+            else:
+                parts.append(str(item))
+        text = "\n".join(part for part in parts if part)
+    else:
+        text = str(docs)
+
+    collapsed = re.sub(r"\n{3,}", "\n\n", text.strip())
+    max_chars = max(settings.CONTEXT7_MEMORY_MAX_CHARS, 800)
+    if len(collapsed) <= max_chars:
+        return collapsed
+    return f"{collapsed[: max_chars - 3].rstrip()}..."
+
+
+def _inject_context7_auto_docs(question: str, result: dict[str, object]) -> str:
+    docs = _format_context7_docs_text(result.get("docs"))
+    if not docs:
+        return question
+    library = str(result.get("library_id") or result.get("library") or "unknown")
+    prefix = (
+        "[Context7 Auto Docs]\n"
+        f"Library: {library}\n"
+        "Reference:\n"
+        f"{docs}\n"
+        "[Use this reference when relevant.]"
+    )
+    return f"{prefix}\n\nUser question:\n{question}"
+
+
+async def _resolve_context7_auto_docs(
+    question: str,
+    runtime: Context7AutoDocsRuntime | None,
+) -> dict[str, object] | None:
+    if runtime is None:
+        return None
+    if not settings.CONTEXT7_AUTO_ENABLED:
+        return None
+    if not question.strip():
+        return None
+    if not runtime.client.is_configured():
+        return None
+
+    library_name = runtime.client.detect_library(question)
+    if not library_name:
+        return None
+
+    cached = runtime.knowledge_store.lookup(library_name, question)
+    if cached:
+        return cached
+
+    cached = runtime.memory_store.lookup(library_name, question)
+    if cached:
+        return cached
+
+    result = await runtime.client.auto_docs(question)
+    if not isinstance(result, dict):
+        return None
+    if result.get("error"):
+        return None
+
+    runtime.persistence.persist(
+        str(result.get("library_id", "")),
+        library_name,
+        question,
+        result.get("docs"),
+    )
+    return result
+
+
 async def _run_interactive_loop(
     rag_agent: Agent[None, str | DeferredToolRequests],
     message_history: list[ModelMessage],
@@ -887,6 +992,7 @@ async def _run_interactive_loop(
     input_prompt: str,
     tool_names: ConfirmationToolNames,
     initial_question: str | None = None,
+    context7_runtime: Context7AutoDocsRuntime | None = None,
 ) -> None:
     """The main interactive REPL for chatting with the agent.
 
@@ -949,6 +1055,14 @@ async def _run_interactive_loop(
                 question_with_context, project_root
             )
 
+            auto_docs = await _resolve_context7_auto_docs(
+                stripped_question, context7_runtime
+            )
+            if auto_docs:
+                question_with_context = _inject_context7_auto_docs(
+                    question_with_context, auto_docs
+                )
+
             await _run_agent_response_loop(
                 rag_agent,
                 message_history,
@@ -972,6 +1086,7 @@ async def run_chat_loop(
     message_history: list[ModelMessage],
     project_root: Path,
     tool_names: ConfirmationToolNames,
+    context7_runtime: Context7AutoDocsRuntime | None = None,
 ) -> None:
     """
     Initializes and runs the general-purpose chat loop.
@@ -989,6 +1104,7 @@ async def run_chat_loop(
         CHAT_LOOP_UI,
         style(cs.PROMPT_ASK_QUESTION, cs.Color.CYAN),
         tool_names,
+        context7_runtime=context7_runtime,
     )
 
 
@@ -1372,7 +1488,11 @@ def _validate_provider_config(role: cs.ModelRole, config: ModelConfig) -> None:
 
 def _initialize_services_and_agent(
     repo_path: str, ingestor: MemgraphIngestor
-) -> tuple[Agent[None, str | DeferredToolRequests], ConfirmationToolNames]:
+) -> tuple[
+    Agent[None, str | DeferredToolRequests],
+    ConfirmationToolNames,
+    Context7AutoDocsRuntime,
+]:
     """
     Initializes all services, tools, and the main agent for an interactive session.
 
@@ -1401,6 +1521,12 @@ def _initialize_services_and_agent(
     context7_knowledge = Context7KnowledgeStore(ingestor)
     context7_memory = Context7MemoryStore(repo_path)
     context7_persistence = Context7Persistence(ingestor, repo_path)
+    context7_runtime = Context7AutoDocsRuntime(
+        client=Context7Client(),
+        knowledge_store=context7_knowledge,
+        memory_store=context7_memory,
+        persistence=context7_persistence,
+    )
 
     query_tool = create_query_tool(ingestor, cypher_generator, app_context.console)
     code_tool = create_code_retrieval_tool(code_retriever)
@@ -1439,7 +1565,7 @@ def _initialize_services_and_agent(
             context7_tool,
         ]
     )
-    return rag_agent, confirmation_tool_names
+    return rag_agent, confirmation_tool_names, context7_runtime
 
 
 async def main_async(repo_path: str, batch_size: int) -> None:
@@ -1464,8 +1590,16 @@ async def main_async(repo_path: str, batch_size: int) -> None:
             )
         )
 
-        rag_agent, tool_names = _initialize_services_and_agent(repo_path, ingestor)
-        await run_chat_loop(rag_agent, [], project_root, tool_names)
+        rag_agent, tool_names, context7_runtime = _initialize_services_and_agent(
+            repo_path, ingestor
+        )
+        await run_chat_loop(
+            rag_agent,
+            [],
+            project_root,
+            tool_names,
+            context7_runtime=context7_runtime,
+        )
 
 
 async def main_optimize_async(
@@ -1505,9 +1639,15 @@ async def main_optimize_async(
     with connect_memgraph(effective_batch_size) as ingestor:
         app_context.console.print(style(cs.MSG_CONNECTED_MEMGRAPH, cs.Color.GREEN))
 
-        rag_agent, tool_names = _initialize_services_and_agent(
+        rag_agent, tool_names, context7_runtime = _initialize_services_and_agent(
             target_repo_path, ingestor
         )
         await run_optimization_loop(
-            rag_agent, [], project_root, language, tool_names, reference_document
+            rag_agent,
+            [],
+            project_root,
+            language,
+            tool_names,
+            reference_document,
+            context7_runtime=context7_runtime,
         )
