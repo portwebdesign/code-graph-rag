@@ -1,12 +1,22 @@
 services:
   memgraph:
     image: memgraph/memgraph-mage
+    command: ["--schema-info-enabled=true"]
     ports:
       - "${MEMGRAPH_PORT:-7687}:7687"
       - "${MEMGRAPH_HTTP_PORT:-7444}:7444"
+    volumes:
+      - memgraph_data:/var/lib/memgraph
+      - memgraph_logs:/var/log/memgraph
   lab:
-    image: memgraph/lab
+    image: memgraph/lab:3.8.0
     ports:
       - "${LAB_PORT:-3000}:3000"
     environment:
       QUICK_CONNECT_MG_HOST: memgraph
+
+volumes:
+  memgraph_data:
+    driver: local
+  memgraph_logs:
+    driver: local
