@@ -113,6 +113,76 @@ class TestFindCodeSnippet:
         assert "end_line" in query or "end" in query
         assert params == {"qn": "module.func"}
 
+    @pytest.mark.asyncio
+    async def test_resolves_source_from_absolute_path(
+        self, mock_ingestor: MagicMock, tmp_path: Path
+    ) -> None:
+        project_root = tmp_path / "code-graph-rag"
+        project_root.mkdir(parents=True, exist_ok=True)
+
+        external_file = tmp_path / "acente" / "src" / "report.py"
+        external_file.parent.mkdir(parents=True, exist_ok=True)
+        external_file.write_text(
+            "def kasa_extre_pdf():\n    return 'ok'\n",
+            encoding="utf-8",
+        )
+
+        retriever = CodeRetriever(str(project_root), mock_ingestor)
+        mock_ingestor.fetch_all.return_value = [
+            {
+                "path": str(external_file),
+                "start": 1,
+                "end": 2,
+                "name": "kasa_extre_pdf",
+            }
+        ]
+
+        result = await retriever.find_code_snippet("acente.report.kasa_extre_pdf")
+
+        assert result.found is True
+        assert "def kasa_extre_pdf" in result.source_code
+
+    @pytest.mark.asyncio
+    async def test_resolves_source_from_sibling_repo_by_qualified_name(
+        self, mock_ingestor: MagicMock, tmp_path: Path
+    ) -> None:
+        project_root = tmp_path / "code-graph-rag"
+        project_root.mkdir(parents=True, exist_ok=True)
+
+        sibling_file = (
+            tmp_path
+            / "acenterobotu-main"
+            / "app"
+            / "Http"
+            / "Controllers"
+            / "KasaRaporController.php"
+        )
+        sibling_file.parent.mkdir(parents=True, exist_ok=True)
+        sibling_file.write_text(
+            "<?php\nfunction kasaExtrePDF() {}\n",
+            encoding="utf-8",
+        )
+
+        retriever = CodeRetriever(str(project_root), mock_ingestor)
+        mock_ingestor.fetch_all.return_value = [
+            {
+                "path": "app/Http/Controllers/KasaRaporController.php",
+                "start": 1,
+                "end": 2,
+                "name": "kasaExtrePDF",
+            }
+        ]
+
+        qualified_name = (
+            "acenterobotu-main.app.Http.Controllers."
+            "KasaRaporController.KasaRaporController.kasaExtrePDF"
+        )
+        result = await retriever.find_code_snippet(qualified_name)
+
+        assert result.found is True
+        assert "kasaExtrePDF" in result.source_code
+        assert result.file_path == "app/Http/Controllers/KasaRaporController.php"
+
 
 class TestCreateCodeRetrievalTool:
     def test_creates_tool_with_description(self) -> None:

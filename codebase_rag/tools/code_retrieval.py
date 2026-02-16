@@ -14,6 +14,7 @@ of specific code elements it discovers through graph queries or other means.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 from pydantic_ai import Tool
@@ -44,6 +45,41 @@ class CodeRetriever:
         self.project_root = Path(project_root).resolve()
         self.ingestor = ingestor
         logger.info(ls.CODE_RETRIEVER_INIT.format(root=self.project_root))
+
+    def _resolve_source_path(
+        self, file_path_str: str, qualified_name: str, result: dict[str, Any]
+    ) -> Path:
+        path_value = Path(file_path_str)
+        if path_value.is_absolute() and path_value.exists():
+            return path_value
+
+        direct_path = (self.project_root / path_value).resolve()
+        if direct_path.exists():
+            return direct_path
+
+        candidate_roots: list[Path] = []
+
+        project_name = result.get("project_name")
+        if isinstance(project_name, str) and project_name.strip():
+            candidate_roots.append((self.project_root.parent / project_name).resolve())
+
+        repo_hint = qualified_name.split(".", 1)[0].strip()
+        if repo_hint:
+            candidate_roots.append((self.project_root.parent / repo_hint).resolve())
+
+        unique_roots: list[Path] = []
+        seen_roots: set[Path] = set()
+        for root in candidate_roots:
+            if root not in seen_roots:
+                seen_roots.add(root)
+                unique_roots.append(root)
+
+        for root in unique_roots:
+            candidate = (root / path_value).resolve()
+            if candidate.exists():
+                return candidate
+
+        return direct_path
 
     async def find_code_snippet(self, qualified_name: str) -> CodeSnippet:
         """
@@ -93,7 +129,7 @@ class CodeRetriever:
                     error_message=te.CODE_MISSING_LOCATION,
                 )
 
-            full_path = self.project_root / file_path_str
+            full_path = self._resolve_source_path(file_path_str, qualified_name, res)
             with full_path.open("r", encoding=ENCODING_UTF8) as f:
                 all_lines = f.readlines()
 
