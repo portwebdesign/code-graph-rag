@@ -57,6 +57,7 @@ treesitter-full = [
     "tree-sitter-cpp==0.23.4",
     "tree-sitter-lua>=0.0.19",
     "tree-sitter-ruby>=0.23.0",
+    "tree-sitter-c-sharp>=0.23.0",
     "tree-sitter-kotlin>=0.3.6",
     "tree-sitter-yaml>=0.7.0",
     "tree-sitter-json>=0.24.0",
@@ -108,7 +109,7 @@ quote-style = "double"
 python-version = "3.12"
 
 [tool.ty.src]
-exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py"]
+exclude = ["codebase_rag/tests/test_cypher_queries.py", "codebase_rag/tests/test_code_retrieval.py", "codebase_rag/tests/test_call_resolver.py", "grammars/**"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

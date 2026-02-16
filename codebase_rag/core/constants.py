@@ -1062,6 +1062,7 @@ class TreeSitterModule(StrEnum):
     SCALA = "tree_sitter_scala"
     JAVA = "tree_sitter_java"
     CPP = "tree_sitter_cpp"
+    CSHARP = "tree_sitter_c_sharp"
     LUA = "tree_sitter_lua"
     RUBY = "tree_sitter_ruby"
     KOTLIN = "tree_sitter_kotlin"
@@ -3116,8 +3117,8 @@ SPEC_PHP_CALL_TYPES = (
 SPEC_RUBY_FUNCTION_TYPES = ("method", "singleton_method")
 SPEC_RUBY_CLASS_TYPES = ("class", "module")
 SPEC_RUBY_MODULE_TYPES = ("program",)
-SPEC_RUBY_CALL_TYPES = ("call", "method_call")
-SPEC_RUBY_IMPORT_TYPES = ("call", "method_call")
+SPEC_RUBY_CALL_TYPES = ("call",)
+SPEC_RUBY_IMPORT_TYPES = ("call",)
 
 # (H) LANGUAGE_SPECS node type tuples for Kotlin
 SPEC_KOTLIN_FUNCTION_TYPES = ("function_declaration",)

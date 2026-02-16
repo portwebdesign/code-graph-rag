@@ -1,0 +1,3 @@
+[submodule "grammars/tree-sitter-dockerfile"]
+	path = grammars/tree-sitter-dockerfile
+	url = https://github.com/camdencheek/tree-sitter-dockerfile

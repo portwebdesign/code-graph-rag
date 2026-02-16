@@ -1,4 +1,3 @@
-import ctypes
 import importlib
 import os
 import subprocess
@@ -60,6 +59,8 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
                     cwd=str(submodule_path),
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
 
                 if result.returncode != 0:
@@ -72,6 +73,7 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
                 logger.debug(ls.BUILD_SUCCESS.format(lang=lang_name))
 
             logger.debug(ls.IMPORTING_MODULE.format(module=module_name))
+            sys.modules.pop(module_name, None)
             module = importlib.import_module(module_name)
 
             language_attrs: list[str] = [
@@ -180,6 +182,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.TreeSitterModule.CPP,
             cs.QUERY_LANGUAGE,
             cs.SupportedLanguage.CPP,
+        ),
+        LanguageImport(
+            cs.SupportedLanguage.CSHARP,
+            cs.TreeSitterModule.CSHARP,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.CSHARP,
         ),
         LanguageImport(
             cs.SupportedLanguage.LUA,
@@ -452,9 +460,12 @@ def _process_language(
 
     try:
         lang_obj = lang_lib()
-        if isinstance(lang_obj, int):
-            lang_obj = ctypes.c_void_p(lang_obj)
-        language = lang_obj if isinstance(lang_obj, Language) else Language(lang_obj)
+        if isinstance(lang_obj, Language):
+            language = lang_obj
+        elif isinstance(lang_obj, int):
+            language = Language(lang_obj)
+        else:
+            language = Language(lang_obj)
         parser = Parser(language)
         parsers[lang_name] = parser
         queries[lang_name] = _create_language_queries(
@@ -479,13 +490,9 @@ def _is_windows_unsupported(lang_name: cs.SupportedLanguage) -> bool:
         return False
 
     return lang_name in {
-        cs.SupportedLanguage.GRAPHQL,
         cs.SupportedLanguage.VUE,
-        cs.SupportedLanguage.RUBY,
         cs.SupportedLanguage.KOTLIN,
         cs.SupportedLanguage.SCSS,
-        cs.SupportedLanguage.CSHARP,
-        cs.SupportedLanguage.DOCKERFILE,
     }
 
 

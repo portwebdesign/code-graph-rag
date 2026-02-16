@@ -1,7 +1,8 @@
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 
 class CSharpFrameworkType(Enum):
@@ -19,6 +20,13 @@ class AspNetRoute:
 @dataclass
 class AspNetController:
     name: str
+
+
+@dataclass
+class DependencyInjectionRegistration:
+    service: str
+    implementation: str | None
+    lifetime: str
 
 
 class CSharpFrameworkDetector:
@@ -51,6 +59,16 @@ class CSharpFrameworkDetector:
         ".MapMethods(",
     ]
 
+    DI_MARKERS = [
+        "IServiceCollection",
+        "builder.Services",
+        "services.AddScoped(",
+        "services.AddTransient(",
+        "services.AddSingleton(",
+        "AddDbContext<",
+        "AddIdentity<",
+    ]
+
     def detect_from_source(self, source_code: str) -> CSharpFrameworkType:
         if any(
             marker in source_code
@@ -58,6 +76,8 @@ class CSharpFrameworkDetector:
         ):
             return CSharpFrameworkType.ASPNET_CORE
         if any(marker in source_code for marker in self.MINIMAL_API_MARKERS):
+            return CSharpFrameworkType.ASPNET_CORE
+        if any(marker in source_code for marker in self.DI_MARKERS):
             return CSharpFrameworkType.ASPNET_CORE
         return CSharpFrameworkType.NONE
 
@@ -94,7 +114,25 @@ class CSharpFrameworkDetector:
 
         return routes
 
-    def get_framework_metadata(self, source_code: str) -> dict:
+    def extract_dependency_injection(
+        self, source_code: str
+    ) -> list[DependencyInjectionRegistration]:
+        registrations: list[DependencyInjectionRegistration] = []
+        pattern = r"(?:builder\.Services|services)\.Add(Scoped|Transient|Singleton)\s*<\s*([^,>]+)\s*(?:,\s*([^>]+)\s*)?>"
+        for match in re.finditer(pattern, source_code):
+            lifetime = match.group(1)
+            service = (match.group(2) or "").strip()
+            implementation = match.group(3).strip() if match.group(3) else None
+            registrations.append(
+                DependencyInjectionRegistration(
+                    service=service,
+                    implementation=implementation,
+                    lifetime=lifetime,
+                )
+            )
+        return registrations
+
+    def get_framework_metadata(self, source_code: str) -> dict[str, Any]:
         framework = self.detect_from_source(source_code)
         metadata: dict = {
             "framework_type": framework.value,
@@ -104,5 +142,21 @@ class CSharpFrameworkDetector:
         if framework != CSharpFrameworkType.NONE:
             metadata["controllers"] = self.extract_controllers(source_code)
             metadata["routes"] = self.extract_routes(source_code)
+            metadata["dependency_injection"] = self.extract_dependency_injection(
+                source_code
+            )
 
-        return metadata
+        return self._to_serializable_metadata(metadata)
+
+    def _to_serializable_metadata(self, value: Any) -> Any:
+        if is_dataclass(value):
+            return {
+                k: self._to_serializable_metadata(v) for k, v in asdict(value).items()
+            }
+        if isinstance(value, dict):
+            return {k: self._to_serializable_metadata(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._to_serializable_metadata(v) for v in value]
+        if isinstance(value, tuple):
+            return [self._to_serializable_metadata(v) for v in value]
+        return value

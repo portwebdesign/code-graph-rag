@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -93,16 +94,54 @@ class UsageDbMixin:
             cs.KEY_PROJECT_NAME: self.project_name,
             "entry_names": entry_points,
             "decorators": decorators,
+            "dead_code_limit": int(os.getenv("CODEGRAPH_DEAD_CODE_LIMIT", "20000")),
         }
         if module_paths:
             params["module_paths"] = module_paths
 
         ingestor = cast(QueryProtocol, self.ingestor)
-        rows = ingestor.fetch_all(query, cast(Any, params))
         total_rows = ingestor.fetch_all(total_query, cast(Any, params))
         total_functions = 0
         if total_rows:
             total_functions = int(cast(Any, total_rows[0].get("total_functions")) or 0)
+
+        max_db_functions = int(
+            os.getenv("CODEGRAPH_DEAD_CODE_DB_MAX_FUNCTIONS", "30000")
+        )
+        if module_paths is None and total_functions > max_db_functions:
+            logger.warning(
+                "Dead code DB analysis skipped for {}: total_functions={} exceeds CODEGRAPH_DEAD_CODE_DB_MAX_FUNCTIONS={}",
+                self.project_name,
+                total_functions,
+                max_db_functions,
+            )
+            return {
+                "total_functions": total_functions,
+                "dead_functions": [],
+                "dead_code_except_test": {
+                    "reason": "skipped_large_project",
+                    "threshold": max_db_functions,
+                },
+            }
+
+        try:
+            rows = ingestor.fetch_all(query, cast(Any, params))
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                logger.warning(
+                    "Dead code DB analysis timed out for {} and was skipped: {}",
+                    self.project_name,
+                    e,
+                )
+                return {
+                    "total_functions": total_functions,
+                    "dead_functions": [],
+                    "dead_code_except_test": {
+                        "reason": "db_timeout",
+                        "error": str(e),
+                    },
+                }
+            raise
 
         report = {
             "total_functions": total_functions,

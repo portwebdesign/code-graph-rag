@@ -346,6 +346,7 @@ test = [
     { name = "testcontainers", marker = "sys_platform == 'win32'" },
 ]
 treesitter-full = [
+    { name = "tree-sitter-c-sharp", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-cpp", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-css", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-dockerfile", marker = "sys_platform == 'win32'" },
@@ -410,6 +411,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
     { name = "transformers", marker = "extra == 'semantic'", specifier = ">=4.0.0" },
     { name = "tree-sitter", specifier = "==0.25.0" },
+    { name = "tree-sitter-c-sharp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.0" },
     { name = "tree-sitter-cpp", marker = "extra == 'treesitter-full'", specifier = "==0.23.4" },
     { name = "tree-sitter-css", marker = "extra == 'treesitter-full'", specifier = "==0.25.0" },
     { name = "tree-sitter-dockerfile", marker = "sys_platform == 'win32' and extra == 'treesitter-full'", specifier = "==0.0.0a1" },
@@ -2681,6 +2683,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/98/21/e952c3180f0fd83d0
 wheels = [
     { url = "https://files.pythonhosted.org/packages/13/d3/5dff82a02646619545c4e7c9b9ec87bc126f1937760228fcf2e91f5079c7/tree_sitter-0.25.0-cp312-cp312-win_amd64.whl", hash = "sha256:1807bd1dae1f50721d65b270e6ffa85de84234ae39f98f4da702db56c2627e23", size = 126785, upload-time = "2025-07-20T13:17:38.488Z" },
     { url = "https://files.pythonhosted.org/packages/71/61/4fffd405569d9c1551906766825da75a2d8f1c075be8994542d5d7ba7768/tree_sitter-0.25.0-cp312-cp312-win_arm64.whl", hash = "sha256:7848be6aeab5c1d62d649506d80d0e463727cb1bb55f423e88bf317db0be8d67", size = 113615, upload-time = "2025-07-20T13:17:39.965Z" },
+]
+
+[[package]]
+name = "tree-sitter-c-sharp"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/85/a61c782afbb706a47d990eaee6977e7c2bd013771c5bf5c81c617684f286/tree_sitter_c_sharp-0.23.1.tar.gz", hash = "sha256:322e2cfd3a547a840375276b2aea3335fa6458aeac082f6c60fec3f745c967eb", size = 1317728, upload-time = "2024-11-11T05:25:32.535Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/47/d2/4facaa34b40f8104d8751746d0e1cd2ddf0beb9f1404b736b97f372bd1f3/tree_sitter_c_sharp-0.23.1-cp39-abi3-win_amd64.whl", hash = "sha256:ae9a9e859e8f44e2b07578d44f9a220d3fa25b688966708af6aa55d42abeebb3", size = 377562, upload-time = "2024-11-11T05:25:27.539Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/88/3cf6bd9959d94d1fec1e6a9c530c5f08ff4115a474f62aedb5fedb0f7241/tree_sitter_c_sharp-0.23.1-cp39-abi3-win_arm64.whl", hash = "sha256:c81548347a93347be4f48cb63ec7d60ef4b0efa91313330e69641e49aa5a08c5", size = 375157, upload-time = "2024-11-11T05:25:30.839Z" },
 ]
 
 [[package]]
