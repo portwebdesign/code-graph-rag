@@ -49,6 +49,35 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 
         try:
             module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
+            language_attrs: list[str] = [
+                cs.QUERY_LANGUAGE,
+                f"{cs.LANG_ATTR_PREFIX}{lang_name}",
+                f"{cs.LANG_ATTR_PREFIX}{lang_name.replace('-', '_')}",
+            ]
+
+            def _load_from_module() -> LanguageLoader | None:
+                logger.debug(ls.IMPORTING_MODULE.format(module=module_name))
+                sys.modules.pop(module_name, None)
+                module = importlib.import_module(module_name)
+
+                for attr_name in language_attrs:
+                    if hasattr(module, attr_name):
+                        logger.debug(
+                            ls.LOADED_FROM_SUBMODULE.format(
+                                lang=lang_name, attr=attr_name
+                            )
+                        )
+                        loader: LanguageLoader = getattr(module, attr_name)
+                        return loader
+
+                logger.debug(
+                    ls.NO_LANG_ATTR.format(module=module_name, available=dir(module))
+                )
+                return None
+
+            existing_loader = _load_from_module()
+            if existing_loader is not None:
+                return existing_loader
 
             setup_py_path = submodule_path / cs.SETUP_PY
             if setup_py_path.exists():
@@ -72,27 +101,9 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
                     return None
                 logger.debug(ls.BUILD_SUCCESS.format(lang=lang_name))
 
-            logger.debug(ls.IMPORTING_MODULE.format(module=module_name))
-            sys.modules.pop(module_name, None)
-            module = importlib.import_module(module_name)
-
-            language_attrs: list[str] = [
-                cs.QUERY_LANGUAGE,
-                f"{cs.LANG_ATTR_PREFIX}{lang_name}",
-                f"{cs.LANG_ATTR_PREFIX}{lang_name.replace('-', '_')}",
-            ]
-
-            for attr_name in language_attrs:
-                if hasattr(module, attr_name):
-                    logger.debug(
-                        ls.LOADED_FROM_SUBMODULE.format(lang=lang_name, attr=attr_name)
-                    )
-                    loader: LanguageLoader = getattr(module, attr_name)
-                    return loader
-
-            logger.debug(
-                ls.NO_LANG_ATTR.format(module=module_name, available=dir(module))
-            )
+            rebuilt_loader = _load_from_module()
+            if rebuilt_loader is not None:
+                return rebuilt_loader
 
         finally:
             if python_bindings_str in sys.path:
