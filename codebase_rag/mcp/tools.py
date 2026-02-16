@@ -8,7 +8,6 @@ from typing import Any, cast
 from loguru import logger
 
 from codebase_rag.analysis.analysis_runner import AnalysisRunner
-from codebase_rag.architecture.registry import ToolRegistry
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as lg
 from codebase_rag.data_models.models import ToolMetadata
@@ -46,6 +45,295 @@ from codebase_rag.tools.directory_lister import (
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+
+
+class MCPMemoryStore:
+    def __init__(self, project_root: str, max_entries: int = 1000) -> None:
+        self._max_entries = max_entries
+        self._storage_path = (
+            Path(project_root) / ".codebase_rag" / "mcp_memory" / "entries.json"
+        )
+        self._entries = self._load_entries()
+
+    def add_entry(self, text: str, tags: list[str]) -> dict[str, object]:
+        record = {
+            "text": text,
+            "tags": tags,
+            "timestamp": int(time.time()),
+        }
+        self._entries.insert(0, record)
+        self._entries = self._entries[: self._max_entries]
+        self._persist_entries()
+        return record
+
+    def list_entries(self, limit: int = 50) -> list[dict[str, object]]:
+        return self._entries[: max(0, limit)]
+
+    def _load_entries(self) -> list[dict[str, object]]:
+        if not self._storage_path.exists():
+            return []
+        try:
+            raw = self._storage_path.read_text(encoding=cs.ENCODING_UTF8)
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [item for item in parsed if isinstance(item, dict)]
+            return []
+        except Exception as exc:
+            logger.warning(
+                lg.MCP_SERVER_TOOL_ERROR.format(name="memory_load", error=exc)
+            )
+            return []
+
+    def _persist_entries(self) -> None:
+        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._storage_path.write_text(
+            json.dumps(self._entries, ensure_ascii=False, indent=2),
+            encoding=cs.ENCODING_UTF8,
+        )
+
+
+class MCPImpactGraphService:
+    _IMPACT_REL_TYPES = "CALLS|IMPORTS|INHERITS|USES"
+
+    def __init__(self, ingestor: MemgraphIngestor) -> None:
+        self._ingestor = ingestor
+
+    def query(
+        self,
+        qualified_name: str | None = None,
+        file_path: str | None = None,
+        depth: int = 3,
+        limit: int = 200,
+    ) -> dict[str, object]:
+        bounded_depth = min(max(1, int(depth)), 6)
+        bounded_limit = min(max(1, int(limit)), 1000)
+        query = f"""
+MATCH (start)
+WHERE (
+    $qualified_name IS NOT NULL
+    AND start.qualified_name = $qualified_name
+) OR (
+    $file_path IS NOT NULL
+    AND (
+        start.path = $file_path
+        OR start.file_path = $file_path
+        OR start.path ENDS WITH $file_path
+        OR start.file_path ENDS WITH $file_path
+    )
+)
+WITH collect(DISTINCT start) AS seeds
+UNWIND seeds AS seed
+MATCH p=(seed)-[:{self._IMPACT_REL_TYPES}*1..{bounded_depth}]->(target)
+WITH seed, target, relationships(p) AS rels, length(p) AS hop_count
+RETURN DISTINCT
+    coalesce(seed.qualified_name, seed.path, seed.file_path, seed.name, toString(id(seed))) AS source,
+    labels(seed) AS source_labels,
+    coalesce(target.qualified_name, target.path, target.file_path, target.name, toString(id(target))) AS target,
+    labels(target) AS target_labels,
+    type(last(rels)) AS relation,
+    hop_count
+LIMIT $limit
+"""
+        params = {
+            "qualified_name": qualified_name,
+            "file_path": file_path,
+            "limit": bounded_limit,
+        }
+        results = self._ingestor.fetch_all(query, params)
+        return {
+            "count": len(results),
+            "depth": bounded_depth,
+            "limit": bounded_limit,
+            "results": results,
+        }
+
+
+def _build_tool_metadata(registry: "MCPToolsRegistry") -> dict[str, ToolMetadata]:
+    return {
+        cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
+            name=cs.MCPToolName.LIST_PROJECTS,
+            description=td.MCP_TOOLS[cs.MCPToolName.LIST_PROJECTS],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={},
+                required=[],
+            ),
+            handler=registry.list_projects,
+            returns_json=True,
+        ),
+        cs.MCPToolName.DELETE_PROJECT: ToolMetadata(
+            name=cs.MCPToolName.DELETE_PROJECT,
+            description=td.MCP_TOOLS[cs.MCPToolName.DELETE_PROJECT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.PROJECT_NAME: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_PROJECT_NAME,
+                    )
+                },
+                required=[cs.MCPParamName.PROJECT_NAME],
+            ),
+            handler=registry.delete_project,
+            returns_json=True,
+        ),
+        cs.MCPToolName.WIPE_DATABASE: ToolMetadata(
+            name=cs.MCPToolName.WIPE_DATABASE,
+            description=td.MCP_TOOLS[cs.MCPToolName.WIPE_DATABASE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.CONFIRM: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.BOOLEAN,
+                        description=td.MCP_PARAM_CONFIRM,
+                    )
+                },
+                required=[cs.MCPParamName.CONFIRM],
+            ),
+            handler=registry.wipe_database,
+            returns_json=False,
+        ),
+        cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
+            name=cs.MCPToolName.INDEX_REPOSITORY,
+            description=td.MCP_TOOLS[cs.MCPToolName.INDEX_REPOSITORY],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={},
+                required=[],
+            ),
+            handler=registry.index_repository,
+            returns_json=False,
+        ),
+        cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
+            name=cs.MCPToolName.QUERY_CODE_GRAPH,
+            description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
+                    ),
+                    "output_format": MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description="Output format: 'json' (default), 'text', or 'cypher'.",
+                        default="json",
+                    ),
+                },
+                required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
+            ),
+            handler=registry.query_code_graph,
+            returns_json=True,
+        ),
+        cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
+            name=cs.MCPToolName.GET_CODE_SNIPPET,
+            description=td.MCP_TOOLS[cs.MCPToolName.GET_CODE_SNIPPET],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUALIFIED_NAME,
+                    )
+                },
+                required=[cs.MCPParamName.QUALIFIED_NAME],
+            ),
+            handler=registry.get_code_snippet,
+            returns_json=True,
+        ),
+        cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
+            name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
+            description=td.MCP_TOOLS[cs.MCPToolName.SURGICAL_REPLACE_CODE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FILE_PATH,
+                    ),
+                    cs.MCPParamName.TARGET_CODE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_TARGET_CODE,
+                    ),
+                    cs.MCPParamName.REPLACEMENT_CODE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_REPLACEMENT_CODE,
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.FILE_PATH,
+                    cs.MCPParamName.TARGET_CODE,
+                    cs.MCPParamName.REPLACEMENT_CODE,
+                ],
+            ),
+            handler=registry.surgical_replace_code,
+            returns_json=False,
+        ),
+        cs.MCPToolName.READ_FILE: ToolMetadata(
+            name=cs.MCPToolName.READ_FILE,
+            description=td.MCP_TOOLS[cs.MCPToolName.READ_FILE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FILE_PATH,
+                    ),
+                    cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.INTEGER,
+                        description=td.MCP_PARAM_OFFSET,
+                    ),
+                    cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.INTEGER,
+                        description=td.MCP_PARAM_LIMIT,
+                    ),
+                },
+                required=[cs.MCPParamName.FILE_PATH],
+            ),
+            handler=registry.read_file,
+            returns_json=False,
+        ),
+        cs.MCPToolName.WRITE_FILE: ToolMetadata(
+            name=cs.MCPToolName.WRITE_FILE,
+            description=td.MCP_TOOLS[cs.MCPToolName.WRITE_FILE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FILE_PATH,
+                    ),
+                    cs.MCPParamName.CONTENT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CONTENT,
+                    ),
+                },
+                required=[
+                    cs.MCPParamName.FILE_PATH,
+                    cs.MCPParamName.CONTENT,
+                ],
+            ),
+            handler=registry.write_file,
+            returns_json=False,
+        ),
+        cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
+            name=cs.MCPToolName.LIST_DIRECTORY,
+            description=td.MCP_TOOLS[cs.MCPToolName.LIST_DIRECTORY],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.DIRECTORY_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_DIRECTORY_PATH,
+                        default=cs.MCP_DEFAULT_DIRECTORY,
+                    )
+                },
+                required=[],
+            ),
+            handler=registry.list_directory,
+            returns_json=False,
+        ),
+    }
 
 
 class MCPToolsRegistry:
@@ -94,193 +382,9 @@ class MCPToolsRegistry:
 
         self._planner_agent = SimpleNamespace(plan=_default_plan)
         self._test_agent = SimpleNamespace(run=_default_run)
-        self._memory_entries: list[dict[str, object]] = []
-
-        self._tools: dict[str, ToolMetadata] = {
-            cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
-                name=cs.MCPToolName.LIST_PROJECTS,
-                description=td.MCP_TOOLS[cs.MCPToolName.LIST_PROJECTS],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={},
-                    required=[],
-                ),
-                handler=self.list_projects,
-                returns_json=True,
-            ),
-            cs.MCPToolName.DELETE_PROJECT: ToolMetadata(
-                name=cs.MCPToolName.DELETE_PROJECT,
-                description=td.MCP_TOOLS[cs.MCPToolName.DELETE_PROJECT],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.PROJECT_NAME: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_PROJECT_NAME,
-                        )
-                    },
-                    required=[cs.MCPParamName.PROJECT_NAME],
-                ),
-                handler=self.delete_project,
-                returns_json=True,
-            ),
-            cs.MCPToolName.WIPE_DATABASE: ToolMetadata(
-                name=cs.MCPToolName.WIPE_DATABASE,
-                description=td.MCP_TOOLS[cs.MCPToolName.WIPE_DATABASE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.CONFIRM: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.BOOLEAN,
-                            description=td.MCP_PARAM_CONFIRM,
-                        )
-                    },
-                    required=[cs.MCPParamName.CONFIRM],
-                ),
-                handler=self.wipe_database,
-                returns_json=False,
-            ),
-            cs.MCPToolName.INDEX_REPOSITORY: ToolMetadata(
-                name=cs.MCPToolName.INDEX_REPOSITORY,
-                description=td.MCP_TOOLS[cs.MCPToolName.INDEX_REPOSITORY],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={},
-                    required=[],
-                ),
-                handler=self.index_repository,
-                returns_json=False,
-            ),
-            cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
-                name=cs.MCPToolName.QUERY_CODE_GRAPH,
-                description=td.MCP_TOOLS[cs.MCPToolName.QUERY_CODE_GRAPH],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
-                        ),
-                        "output_format": MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description="Output format: 'json' (default), 'text', or 'cypher'.",
-                            default="json",
-                        ),
-                    },
-                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
-                ),
-                handler=self.query_code_graph,
-                returns_json=True,
-            ),
-            cs.MCPToolName.GET_CODE_SNIPPET: ToolMetadata(
-                name=cs.MCPToolName.GET_CODE_SNIPPET,
-                description=td.MCP_TOOLS[cs.MCPToolName.GET_CODE_SNIPPET],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_QUALIFIED_NAME,
-                        )
-                    },
-                    required=[cs.MCPParamName.QUALIFIED_NAME],
-                ),
-                handler=self.get_code_snippet,
-                returns_json=True,
-            ),
-            cs.MCPToolName.SURGICAL_REPLACE_CODE: ToolMetadata(
-                name=cs.MCPToolName.SURGICAL_REPLACE_CODE,
-                description=td.MCP_TOOLS[cs.MCPToolName.SURGICAL_REPLACE_CODE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_FILE_PATH,
-                        ),
-                        cs.MCPParamName.TARGET_CODE: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_TARGET_CODE,
-                        ),
-                        cs.MCPParamName.REPLACEMENT_CODE: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_REPLACEMENT_CODE,
-                        ),
-                    },
-                    required=[
-                        cs.MCPParamName.FILE_PATH,
-                        cs.MCPParamName.TARGET_CODE,
-                        cs.MCPParamName.REPLACEMENT_CODE,
-                    ],
-                ),
-                handler=self.surgical_replace_code,
-                returns_json=False,
-            ),
-            cs.MCPToolName.READ_FILE: ToolMetadata(
-                name=cs.MCPToolName.READ_FILE,
-                description=td.MCP_TOOLS[cs.MCPToolName.READ_FILE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_FILE_PATH,
-                        ),
-                        cs.MCPParamName.OFFSET: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.INTEGER,
-                            description=td.MCP_PARAM_OFFSET,
-                        ),
-                        cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.INTEGER,
-                            description=td.MCP_PARAM_LIMIT,
-                        ),
-                    },
-                    required=[cs.MCPParamName.FILE_PATH],
-                ),
-                handler=self.read_file,
-                returns_json=False,
-            ),
-            cs.MCPToolName.WRITE_FILE: ToolMetadata(
-                name=cs.MCPToolName.WRITE_FILE,
-                description=td.MCP_TOOLS[cs.MCPToolName.WRITE_FILE],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_FILE_PATH,
-                        ),
-                        cs.MCPParamName.CONTENT: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_CONTENT,
-                        ),
-                    },
-                    required=[
-                        cs.MCPParamName.FILE_PATH,
-                        cs.MCPParamName.CONTENT,
-                    ],
-                ),
-                handler=self.write_file,
-                returns_json=False,
-            ),
-            cs.MCPToolName.LIST_DIRECTORY: ToolMetadata(
-                name=cs.MCPToolName.LIST_DIRECTORY,
-                description=td.MCP_TOOLS[cs.MCPToolName.LIST_DIRECTORY],
-                input_schema=MCPInputSchema(
-                    type=cs.MCPSchemaType.OBJECT,
-                    properties={
-                        cs.MCPParamName.DIRECTORY_PATH: MCPInputSchemaProperty(
-                            type=cs.MCPSchemaType.STRING,
-                            description=td.MCP_PARAM_DIRECTORY_PATH,
-                            default=cs.MCP_DEFAULT_DIRECTORY,
-                        )
-                    },
-                    required=[],
-                ),
-                handler=self.list_directory,
-                returns_json=False,
-            ),
-        }
+        self._memory_store = MCPMemoryStore(project_root=project_root)
+        self._impact_service = MCPImpactGraphService(ingestor=ingestor)
+        self._tools = _build_tool_metadata(self)
 
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
@@ -766,16 +870,11 @@ class MCPToolsRegistry:
         parsed_tags: list[str] = []
         if tags:
             parsed_tags = [item.strip() for item in tags.split(",") if item.strip()]
-        record = {
-            "text": entry,
-            "tags": parsed_tags,
-            "timestamp": int(time.time()),
-        }
-        self._memory_entries.insert(0, record)
+        record = self._memory_store.add_entry(entry, parsed_tags)
         return {"status": "ok", "entry": record["text"], "tags": record["tags"]}
 
     async def memory_list(self, limit: int = 50) -> dict[str, object]:
-        entries = self._memory_entries[: max(0, limit)]
+        entries = self._memory_store.list_entries(limit=limit)
         return {"count": len(entries), "entries": entries}
 
     async def plan_task(
@@ -796,15 +895,15 @@ class MCPToolsRegistry:
         depth: int = 3,
         limit: int = 200,
     ) -> dict[str, object]:
-        _ = depth
-        _ = limit
         if not qualified_name and not file_path:
             return {"error": "missing_target"}
-        query = "MATCH (n) RETURN n LIMIT 50"
-        params = {"qualified_name": qualified_name, "file_path": file_path}
         try:
-            results = self.ingestor.fetch_all(query, params)
-            return {"count": len(results), "results": results}
+            return self._impact_service.query(
+                qualified_name=qualified_name,
+                file_path=file_path,
+                depth=depth,
+                limit=limit,
+            )
         except Exception as exc:
             return {"error": str(exc), "results": []}
 
@@ -859,59 +958,4 @@ def create_mcp_tools_registry(
         project_root=project_root,
         ingestor=ingestor,
         cypher_gen=cypher_gen,
-    )
-
-
-@ToolRegistry.register(cs.MCPToolName.LIST_PROJECTS, category="core")
-def _register_list_projects(registry: MCPToolsRegistry) -> ToolMetadata:
-    return ToolMetadata(
-        name=cs.MCPToolName.LIST_PROJECTS,
-        description=td.MCP_TOOLS[cs.MCPToolName.LIST_PROJECTS],
-        input_schema=MCPInputSchema(
-            type=cs.MCPSchemaType.OBJECT,
-            properties={},
-            required=[],
-        ),
-        handler=registry.list_projects,
-        returns_json=True,
-    )
-
-
-@ToolRegistry.register(cs.MCPToolName.DELETE_PROJECT, category="core")
-def _register_delete_project(registry: MCPToolsRegistry) -> ToolMetadata:
-    return ToolMetadata(
-        name=cs.MCPToolName.DELETE_PROJECT,
-        description=td.MCP_TOOLS[cs.MCPToolName.DELETE_PROJECT],
-        input_schema=MCPInputSchema(
-            type=cs.MCPSchemaType.OBJECT,
-            properties={
-                cs.MCPParamName.PROJECT_NAME: MCPInputSchemaProperty(
-                    type=cs.MCPSchemaType.STRING,
-                    description=td.MCP_PARAM_PROJECT_NAME,
-                )
-            },
-            required=[cs.MCPParamName.PROJECT_NAME],
-        ),
-        handler=registry.delete_project,
-        returns_json=True,
-    )
-
-
-@ToolRegistry.register(cs.MCPToolName.WIPE_DATABASE, category="core")
-def _register_wipe_database(registry: MCPToolsRegistry) -> ToolMetadata:
-    return ToolMetadata(
-        name=cs.MCPToolName.WIPE_DATABASE,
-        description=td.MCP_TOOLS[cs.MCPToolName.WIPE_DATABASE],
-        input_schema=MCPInputSchema(
-            type=cs.MCPSchemaType.OBJECT,
-            properties={
-                cs.MCPParamName.CONFIRM: MCPInputSchemaProperty(
-                    type=cs.MCPSchemaType.BOOLEAN,
-                    description=td.MCP_PARAM_CONFIRM,
-                )
-            },
-            required=[cs.MCPParamName.CONFIRM],
-        ),
-        handler=registry.wipe_database,
-        returns_json=False,
     )
