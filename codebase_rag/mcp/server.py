@@ -120,7 +120,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
 
             result = await handler(**arguments)
 
-            if returns_json:
+            if returns_json and not isinstance(result, str):
                 result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
             else:
                 result_text = str(result)

@@ -68,7 +68,10 @@ class MCPToolsRegistry:
         self.directory_lister = DirectoryLister(project_root=project_root)
 
         self._query_tool = create_query_tool(
-            ingestor=ingestor, cypher_gen=cypher_gen, console=None
+            ingestor=ingestor,
+            cypher_gen=cypher_gen,
+            console=None,
+            render_output=False,
         )
         self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
         self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
@@ -157,7 +160,12 @@ class MCPToolsRegistry:
                         cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
                             type=cs.MCPSchemaType.STRING,
                             description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
-                        )
+                        ),
+                        "output_format": MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description="Output format: 'json' (default), 'text', or 'cypher'.",
+                            default="json",
+                        ),
                     },
                     required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
                 ),
@@ -337,7 +345,9 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)
 
-    async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
+    async def query_code_graph(
+        self, natural_language_query: str, output_format: str = "json"
+    ) -> QueryResultDict | str:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
             graph_data = await self._query_tool.function(natural_language_query)
@@ -347,6 +357,29 @@ class MCPToolsRegistry:
                     count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))
                 )
             )
+
+            normalized_format = output_format.strip().lower()
+            if normalized_format == "cypher":
+                return str(result_dict.get("query_used", ""))
+
+            if normalized_format == "text":
+                query_used = str(result_dict.get("query_used", ""))
+                summary = str(result_dict.get("summary", ""))
+                results = result_dict.get("results", [])
+                results_text = json.dumps(
+                    results,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                return (
+                    "CYPHER QUERY:\n"
+                    f"{query_used}\n\n"
+                    "RESULTS:\n"
+                    f"{results_text}\n\n"
+                    "SUMMARY:\n"
+                    f"{summary}"
+                )
+
             return result_dict
         except Exception as e:
             logger.exception(lg.MCP_ERROR_QUERY.format(error=e))

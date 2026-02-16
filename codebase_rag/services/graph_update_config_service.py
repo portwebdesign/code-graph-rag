@@ -140,7 +140,7 @@ class GraphUpdateConfigService:
         }
         framework_metadata_enabled = os.getenv(
             "CODEGRAPH_FRAMEWORK_METADATA", ""
-        ).lower() in {"1", "true", "yes"}
+        ).lower() not in {"0", "false", "no"}
         tailwind_metadata_enabled = os.getenv(
             "CODEGRAPH_TAILWIND_METADATA", ""
         ).lower() in {"1", "true", "yes"}

@@ -39,6 +39,7 @@ def create_query_tool(
     ingestor: QueryProtocol,
     cypher_gen: CypherGenerator,
     console: Console | None = None,
+    render_output: bool = True,
 ) -> Tool:
     """
     Factory function to create a `pydantic-ai` Tool for querying the knowledge graph.
@@ -51,7 +52,7 @@ def create_query_tool(
     Returns:
         Tool: An initialized `pydantic-ai` Tool.
     """
-    if console is None:
+    if console is None and render_output:
         console = Console(width=None, force_terminal=True)
 
     async def query_codebase_knowledge_graph(
@@ -78,7 +79,7 @@ def create_query_tool(
 
             results = ingestor.fetch_all(cypher_query)
 
-            if results:
+            if results and render_output and console is not None:
                 table = Table(
                     show_header=True,
                     header_style="bold magenta",

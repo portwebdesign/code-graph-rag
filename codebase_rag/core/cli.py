@@ -445,17 +445,15 @@ def mcp_server() -> None:
 
         asyncio.run(mcp_main())
     except KeyboardInterrupt:
-        app_context.console.print(style(cs.CLI_MSG_APP_TERMINATED, cs.Color.RED))
+        typer.echo(cs.CLI_MSG_APP_TERMINATED.strip(), err=True)
     except ValueError as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_CONFIG.format(error=e), cs.Color.RED)
-        )
-        _info(style(cs.CLI_MSG_HINT_TARGET_REPO, cs.Color.YELLOW))
+        typer.echo(cs.CLI_ERR_CONFIG.format(error=e), err=True)
+        typer.echo(cs.CLI_MSG_HINT_TARGET_REPO, err=True)
+        raise typer.Exit(1) from e
 
     except Exception as e:
-        app_context.console.print(
-            style(cs.CLI_ERR_MCP_SERVER.format(error=e), cs.Color.RED)
-        )
+        typer.echo(cs.CLI_ERR_MCP_SERVER.format(error=e), err=True)
+        raise typer.Exit(1) from e
 
 
 @app.command(name=ch.CLICommandName.GRAPH_LOADER, help=ch.CMD_GRAPH_LOADER)

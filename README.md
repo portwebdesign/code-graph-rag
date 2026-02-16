@@ -520,7 +520,7 @@ The agent will incorporate the guidance from your reference documents when sugge
 - `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
 - `--reference-document`: Path to reference documentation (optimization only)
 
-## 🔌 MCP Server (Claude Code Integration)
+## 🔌 MCP Server (VS Code, GitHub Copilot, Claude Code, Cline)
 
 Code-Graph-RAG can run as an MCP (Model Context Protocol) server, enabling seamless integration with Claude Code and other MCP clients.
 
@@ -561,6 +561,37 @@ claude mcp add --transport stdio code-graph-rag \
 ```
 
 For detailed setup, see [Claude Code Setup Guide](docs/claude-code-setup.md).
+
+### VS Code + GitHub Copilot / Cline Usage
+
+`code-graph-rag` can be used directly as an MCP server in VS Code chat clients (GitHub Copilot, Cline, and other MCP-capable clients).
+
+Recommended `mcp.json` strategy for multi-root workspaces:
+
+- `code-graph-rag` profile: no `TARGET_REPO_PATH` (default to current opened workspace context)
+- `code-graph-rag-manual-path` profile: `TARGET_REPO_PATH=${input:targetRepoPath}` for explicit repository targeting
+
+Why two profiles?
+
+- In multi-root workspaces, `${workspaceFolder}` can be ambiguous.
+- Default profile works without prompts for normal usage.
+- Manual profile is available when you want to analyze another absolute path.
+
+Tool invocation behavior:
+
+- `#tool_name` is optional.
+- In agent mode, Copilot/Cline can auto-select tools based on tool descriptions.
+- Use `#query_code_graph` when you want to force Cypher-focused analysis explicitly.
+
+Typical flow in VS Code:
+
+1. Start MCP server from `MCP: List Servers`.
+2. Open chat Tool Picker and enable `code-graph-rag` tools.
+3. Ask natural-language analysis prompts, for example:
+  - "Analyze auth/login flow with file + method chain."
+  - "List critical entry points and downstream service calls."
+
+For a detailed Turkish guide, see [Task26 MCP integration notes](agent-logs/Task26-MCP-VSCode-Copilot-Cline-Entegrasyonu.md).
 
 ## 📊 Graph Schema
 
