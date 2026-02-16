@@ -385,6 +385,28 @@ dev = [
     { name = "types-toml", marker = "sys_platform == 'win32'" },
     { name = "vulture", marker = "sys_platform == 'win32'" },
 ]
+treesitter = [
+    { name = "tree-sitter-c-sharp", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-cpp", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-css", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-dockerfile", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-go", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-graphql", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-html", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-java", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-json", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-kotlin", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-lua", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-php", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-ruby", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-rust", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-scala", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-scss", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-sql", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-svelte", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-typescript", marker = "sys_platform == 'win32'" },
+    { name = "tree-sitter-yaml", marker = "sys_platform == 'win32'" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -457,6 +479,31 @@ dev = [
     { name = "types-protobuf", specifier = ">=5.0.0" },
     { name = "types-toml", specifier = ">=0.10.8.20240310" },
     { name = "vulture", specifier = ">=2.14" },
+]
+treesitter = [
+    { name = "tree-sitter-c-sharp", specifier = ">=0.23.0" },
+    { name = "tree-sitter-cpp", specifier = "==0.23.4" },
+    { name = "tree-sitter-css", specifier = "==0.25.0" },
+    { name = "tree-sitter-dockerfile", marker = "sys_platform != 'win32'", specifier = ">=0.2.0" },
+    { name = "tree-sitter-dockerfile", marker = "sys_platform == 'win32'", specifier = "==0.0.0a1" },
+    { name = "tree-sitter-go", specifier = "==0.25.0" },
+    { name = "tree-sitter-graphql", marker = "sys_platform != 'win32'", specifier = ">=0.24.0" },
+    { name = "tree-sitter-graphql", marker = "sys_platform == 'win32'", specifier = "==0.1.0" },
+    { name = "tree-sitter-html", specifier = ">=0.23.2" },
+    { name = "tree-sitter-java", specifier = ">=0.23.5" },
+    { name = "tree-sitter-json", specifier = ">=0.24.0" },
+    { name = "tree-sitter-kotlin", specifier = ">=0.3.6" },
+    { name = "tree-sitter-lua", specifier = ">=0.0.19" },
+    { name = "tree-sitter-php", specifier = ">=0.23.2" },
+    { name = "tree-sitter-ruby", specifier = ">=0.23.0" },
+    { name = "tree-sitter-rust", specifier = ">=0.24.0" },
+    { name = "tree-sitter-scala", specifier = ">=0.24.0" },
+    { name = "tree-sitter-scss", specifier = ">=0.23.0" },
+    { name = "tree-sitter-sql", specifier = ">=0.3.7" },
+    { name = "tree-sitter-svelte", specifier = ">=0.2.1" },
+    { name = "tree-sitter-typescript", specifier = ">=0.23.2" },
+    { name = "tree-sitter-vue", marker = "sys_platform != 'win32'", specifier = ">=0.2.1" },
+    { name = "tree-sitter-yaml", specifier = ">=0.7.0" },
 ]
 
 [[package]]

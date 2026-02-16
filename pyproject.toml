@@ -33,6 +33,7 @@ cgr = "codebase_rag.cli:app"
 [tool.uv]
 package = true
 environments = ["sys_platform == 'win32'"]
+default-groups = ["treesitter"]
 
 [tool.setuptools]
 packages = ["codebase_rag", "codec"]
@@ -125,6 +126,32 @@ markers = [
 ]
 
 [dependency-groups]
+treesitter = [
+    "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-rust>=0.24.0",
+    "tree-sitter-go==0.25.0",
+    "tree-sitter-scala>=0.24.0",
+    "tree-sitter-java>=0.23.5",
+    "tree-sitter-cpp==0.23.4",
+    "tree-sitter-lua>=0.0.19",
+    "tree-sitter-ruby>=0.23.0",
+    "tree-sitter-c-sharp>=0.23.0",
+    "tree-sitter-kotlin>=0.3.6",
+    "tree-sitter-yaml>=0.7.0",
+    "tree-sitter-json>=0.24.0",
+    "tree-sitter-php>=0.23.2",
+    "tree-sitter-html>=0.23.2",
+    "tree-sitter-css==0.25.0",
+    "tree-sitter-scss>=0.23.0",
+    "tree-sitter-graphql>=0.24.0; platform_system != 'Windows'",
+    "tree-sitter-graphql==0.1.0; platform_system == 'Windows'",
+    "tree-sitter-dockerfile>=0.2.0; platform_system != 'Windows'",
+    "tree-sitter-dockerfile==0.0.0a1; platform_system == 'Windows'",
+    "tree-sitter-sql>=0.3.7",
+    "tree-sitter-vue>=0.2.1; platform_system != 'Windows'",
+    "tree-sitter-svelte>=0.2.1",
+]
+
 dev = [
     "bandit>=1.9.2",
     "coverage>=7.13.0",

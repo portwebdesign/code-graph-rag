@@ -8,7 +8,7 @@ help: ## Show this help message
 
 all: ## Install everything for full development environment (deps, grammars, hooks, tests)
 	@echo "🚀 Setting up complete development environment..."
-	uv sync --all-extras
+	uv sync --all-extras --group treesitter --frozen
 	git submodule update --init --recursive --depth 1
 	$(PYTHON) pre-commit install
 	$(PYTHON) pre-commit install --hook-type commit-msg
@@ -19,13 +19,13 @@ all: ## Install everything for full development environment (deps, grammars, hoo
 	@echo "✓ Tests passed successfully"
 
 install: ## Install project dependencies with full language support
-	uv sync --extra treesitter-full
+	uv sync --group treesitter --frozen
 
 python: ## Install project dependencies for Python only
-	uv sync
+	uv sync --frozen
 
 dev: ## Setup development environment (install deps + pre-commit hooks)
-	uv sync --extra treesitter-full --extra test --extra semantic --group dev
+	uv sync --group treesitter --extra test --extra semantic --group dev --frozen
 	$(PYTHON) pre-commit install
 	$(PYTHON) pre-commit install --hook-type commit-msg
 	@echo "✅ Development environment ready!"
