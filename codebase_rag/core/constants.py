@@ -2760,6 +2760,7 @@ class MCPParamName(StrEnum):
     LIMIT = "limit"
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
+    REPO_PATH = "repo_path"
 
 
 # (H) MCP server constants

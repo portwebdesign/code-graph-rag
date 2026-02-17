@@ -133,6 +133,7 @@ MCP_PARAM_OFFSET = "Line number to start reading from (0-based, optional)"
 MCP_PARAM_LIMIT = "Maximum number of lines to read (optional)"
 MCP_PARAM_CONTENT = "Content to write to the file"
 MCP_PARAM_DIRECTORY_PATH = "Relative path to directory from project root (default: '.')"
+MCP_PARAM_REPO_PATH = "Absolute path to target repository root"
 
 
 MCP_TOOLS: dict[MCPToolName, str] = {

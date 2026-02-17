@@ -198,8 +198,13 @@ def _build_tool_metadata(registry: "MCPToolsRegistry") -> dict[str, ToolMetadata
             description=td.MCP_TOOLS[cs.MCPToolName.INDEX_REPOSITORY],
             input_schema=MCPInputSchema(
                 type=cs.MCPSchemaType.OBJECT,
-                properties={},
-                required=[],
+                properties={
+                    cs.MCPParamName.REPO_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_REPO_PATH,
+                    )
+                },
+                required=[cs.MCPParamName.REPO_PATH],
             ),
             handler=registry.index_repository,
             returns_json=False,
@@ -322,13 +327,17 @@ def _build_tool_metadata(registry: "MCPToolsRegistry") -> dict[str, ToolMetadata
             input_schema=MCPInputSchema(
                 type=cs.MCPSchemaType.OBJECT,
                 properties={
+                    cs.MCPParamName.REPO_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_REPO_PATH,
+                    ),
                     cs.MCPParamName.DIRECTORY_PATH: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
                         description=td.MCP_PARAM_DIRECTORY_PATH,
                         default=cs.MCP_DEFAULT_DIRECTORY,
-                    )
+                    ),
                 },
-                required=[],
+                required=[cs.MCPParamName.REPO_PATH],
             ),
             handler=registry.list_directory,
             returns_json=False,
@@ -386,6 +395,31 @@ class MCPToolsRegistry:
         self._impact_service = MCPImpactGraphService(ingestor=ingestor)
         self._tools = _build_tool_metadata(self)
 
+    def _resolve_repo_root(self, repo_path: str) -> Path:
+        candidate = Path(repo_path).resolve()
+        if not candidate.exists() or not candidate.is_dir():
+            raise ValueError(te.MCP_PATH_NOT_EXISTS.format(path=candidate))
+        return candidate
+
+    def _set_project_root(self, repo_path: str) -> Path:
+        resolved_repo = self._resolve_repo_root(repo_path)
+        resolved_repo_str = str(resolved_repo)
+        self.project_root = resolved_repo_str
+        self.code_retriever = CodeRetriever(resolved_repo_str, self.ingestor)
+        self.file_editor = FileEditor(project_root=resolved_repo_str)
+        self.file_reader = FileReader(project_root=resolved_repo_str)
+        self.file_writer = FileWriter(project_root=resolved_repo_str)
+        self.directory_lister = DirectoryLister(project_root=resolved_repo_str)
+        self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
+        self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
+        self._file_reader_tool = create_file_reader_tool(file_reader=self.file_reader)
+        self._file_writer_tool = create_file_writer_tool(file_writer=self.file_writer)
+        self._directory_lister_tool = create_directory_lister_tool(
+            directory_lister=self.directory_lister
+        )
+        self._memory_store = MCPMemoryStore(project_root=resolved_repo_str)
+        return resolved_repo
+
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
@@ -427,23 +461,24 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
-    async def index_repository(self) -> str:
-        logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
-        project_name = Path(self.project_root).resolve().name
+    async def index_repository(self, repo_path: str) -> str:
         try:
+            resolved_repo = self._set_project_root(repo_path)
+            logger.info(lg.MCP_INDEXING_REPO.format(path=resolved_repo))
+            project_name = resolved_repo.name
             logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
             self.ingestor.delete_project(project_name)
 
             updater = GraphUpdater(
                 ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
+                repo_path=resolved_repo,
                 parsers=self.parsers,
                 queries=self.queries,
             )
             updater.run()
 
             return cs.MCP_INDEX_SUCCESS_PROJECT.format(
-                path=self.project_root, project_name=project_name
+                path=resolved_repo, project_name=project_name
             )
         except Exception as e:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
@@ -583,10 +618,11 @@ class MCPToolsRegistry:
             return te.ERROR_WRAPPER.format(message=e)
 
     async def list_directory(
-        self, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
+        self, repo_path: str, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
     ) -> str:
-        logger.info(lg.MCP_LIST_DIR.format(path=directory_path))
         try:
+            self._set_project_root(repo_path)
+            logger.info(lg.MCP_LIST_DIR.format(path=f"{repo_path}:{directory_path}"))
             result = self._directory_lister_tool.function(directory_path=directory_path)
             return str(result)
         except Exception as e:
