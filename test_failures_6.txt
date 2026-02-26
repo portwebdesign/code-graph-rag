@@ -1,8 +1,0 @@
-......                                                                   [100%]
-============================== warnings summary ===============================
-codebase_rag/tests/unit/mcp/test_mcp_list_directory.py: 18 warnings
-  D:\PROGRAMMING\code-graph-rag\codebase_rag\infrastructure\parser_loader.py:477: DeprecationWarning: int argument support is deprecated
-    language = Language(lang_obj)
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-6 passed, 3764 deselected, 18 warnings in 25.85s
