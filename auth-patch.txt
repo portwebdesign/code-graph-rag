@@ -1,0 +1,232 @@
+diff --git a/.env.example b/.env.example
+index dc518b5..4b61b42 100644
+--- a/.env.example
++++ b/.env.example
+@@ -68,6 +68,12 @@
+ MEMGRAPH_HOST=localhost
+ MEMGRAPH_PORT=7687
+ MEMGRAPH_HTTP_PORT=7444
++# Memgraph authentication credentials
++# Leave MEMGRAPH_USERNAME empty (or omit it) if your Memgraph instance doesn't require authentication
++# If authentication is enabled, provide both username and password
++# Common defaults: username=neo4j, password=password (or your custom credentials)
++MEMGRAPH_USERNAME=
++MEMGRAPH_PASSWORD=
+ LAB_PORT=3000
+ MEMGRAPH_BATCH_SIZE=1000
+
+diff --git a/codebase_rag/config.py b/codebase_rag/config.py
+index f0400b4..b331894 100644
+--- a/codebase_rag/config.py
++++ b/codebase_rag/config.py
+@@ -145,6 +145,8 @@ class AppConfig(BaseSettings):
+     MEMGRAPH_HOST: str = "localhost"
+     MEMGRAPH_PORT: int = 7687
+     MEMGRAPH_HTTP_PORT: int = 7444
++    MEMGRAPH_USERNAME: str | None = None
++    MEMGRAPH_PASSWORD: str | None = None
+     LAB_PORT: int = 3000
+     MEMGRAPH_BATCH_SIZE: int = 1000
+     AGENT_RETRIES: int = 3
+diff --git a/codebase_rag/exceptions.py b/codebase_rag/exceptions.py
+index f302023..46305bc 100644
+--- a/codebase_rag/exceptions.py
++++ b/codebase_rag/exceptions.py
+@@ -48,6 +48,10 @@ LLM_INIT_ORCHESTRATOR = "Failed to initialize RAG Orchestrator: {error}"
+ # (H) Graph service errors
+ BATCH_SIZE = "batch_size must be a positive integer"
+ CONN = "Not connected to Memgraph."
++AUTH_INCOMPLETE = (
++    "Both username and password are required for authentication. "
++    "Either provide both or neither."
++)
+
+ # (H) Access control errors (used with raise)
+ ACCESS_DENIED = "Access denied: Cannot access files outside the project root."
+diff --git a/codebase_rag/main.py b/codebase_rag/main.py
+index af58a84..4bb8905 100644
+--- a/codebase_rag/main.py
++++ b/codebase_rag/main.py
+@@ -752,6 +752,8 @@ def connect_memgraph(batch_size: int) -> MemgraphIngestor:
+         host=settings.MEMGRAPH_HOST,
+         port=settings.MEMGRAPH_PORT,
+         batch_size=batch_size,
++        username=settings.MEMGRAPH_USERNAME,
++        password=settings.MEMGRAPH_PASSWORD,
+     )
+
+
+diff --git a/codebase_rag/mcp/server.py b/codebase_rag/mcp/server.py
+index 9218a2d..879e6a1 100644
+--- a/codebase_rag/mcp/server.py
++++ b/codebase_rag/mcp/server.py
+@@ -71,6 +71,8 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
+         host=settings.MEMGRAPH_HOST,
+         port=settings.MEMGRAPH_PORT,
+         batch_size=settings.MEMGRAPH_BATCH_SIZE,
++        username=settings.MEMGRAPH_USERNAME,
++        password=settings.MEMGRAPH_PASSWORD,
+     )
+
+     cypher_generator = CypherGenerator()
+diff --git a/codebase_rag/services/graph_service.py b/codebase_rag/services/graph_service.py
+index b867456..1e0c0e8 100644
+--- a/codebase_rag/services/graph_service.py
++++ b/codebase_rag/services/graph_service.py
+@@ -51,9 +51,20 @@ from ..types_defs import (
+
+
+ class MemgraphIngestor:
+-    def __init__(self, host: str, port: int, batch_size: int = 1000):
++    def __init__(
++        self,
++        host: str,
++        port: int,
++        batch_size: int = 1000,
++        username: str | None = None,
++        password: str | None = None,
++    ):
+         self._host = host
+         self._port = port
++        self._username = username.strip() if username and username.strip() else None
++        self._password = password.strip() if password and password.strip() else None
++        if (self._username is None) != (self._password is None):
++            raise ValueError(ex.AUTH_INCOMPLETE)
+         if batch_size < 1:
+             raise ValueError(ex.BATCH_SIZE)
+         self.batch_size = batch_size
+@@ -70,7 +81,15 @@ class MemgraphIngestor:
+
+     def __enter__(self) -> MemgraphIngestor:
+         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
+-        self.conn = mgclient.connect(host=self._host, port=self._port)
++        if self._username is not None:
++            self.conn = mgclient.connect(
++                host=self._host,
++                port=self._port,
++                username=self._username,
++                password=self._password,
++            )
++        else:
++            self.conn = mgclient.connect(host=self._host, port=self._port)
+         self.conn.autocommit = True
+         logger.info(ls.MG_CONNECTED)
+         return self
+diff --git a/codebase_rag/tests/test_graph_service.py b/codebase_rag/tests/test_graph_service.py
+index c31b307..2a5c8ac 100644
+--- a/codebase_rag/tests/test_graph_service.py
++++ b/codebase_rag/tests/test_graph_service.py
+@@ -45,6 +45,56 @@ class TestMemgraphIngestorInit:
+
+         assert ingestor.conn is None
+
++    def test_init_stores_auth_credentials(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username="user", password="pass"
++        )
++
++        assert ingestor._username == "user"
++        assert ingestor._password == "pass"
++
++    def test_init_defaults_auth_to_none(self) -> None:
++        ingestor = MemgraphIngestor(host="localhost", port=7687)
++
++        assert ingestor._username is None
++        assert ingestor._password is None
++
++    def test_init_raises_for_username_without_password(self) -> None:
++        with pytest.raises(ValueError, match="Both username and password"):
++            MemgraphIngestor(host="localhost", port=7687, username="user")
++
++    def test_init_raises_for_password_without_username(self) -> None:
++        with pytest.raises(ValueError, match="Both username and password"):
++            MemgraphIngestor(host="localhost", port=7687, password="pass")
++
++    def test_init_normalizes_empty_strings_to_none(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username="", password=""
++        )
++
++        assert ingestor._username is None
++        assert ingestor._password is None
++
++    def test_init_normalizes_whitespace_only_to_none(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username="  ", password="  "
++        )
++
++        assert ingestor._username is None
++        assert ingestor._password is None
++
++    def test_init_strips_whitespace_from_credentials(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username=" user ", password=" pass "
++        )
++
++        assert ingestor._username == "user"
++        assert ingestor._password == "pass"
++
++    def test_init_raises_for_empty_password_with_valid_username(self) -> None:
++        with pytest.raises(ValueError, match="Both username and password"):
++            MemgraphIngestor(host="localhost", port=7687, username="user", password="")
++
+
+ class TestContextManager:
+     def test_enter_connects_to_memgraph(self) -> None:
+@@ -60,6 +110,30 @@ class TestContextManager:
+             assert mock_conn.autocommit is True
+             assert result is ingestor
+
++    def test_enter_passes_auth_when_provided(self) -> None:
++        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
++            mock_conn = MagicMock()
++            mock_mgclient.connect.return_value = mock_conn
++
++            ingestor = MemgraphIngestor(
++                host="testhost", port=1234, username="user", password="pass"
++            )
++            ingestor.__enter__()
++
++            mock_mgclient.connect.assert_called_once_with(
++                host="testhost", port=1234, username="user", password="pass"
++            )
++
++    def test_enter_omits_auth_when_not_provided(self) -> None:
++        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
++            mock_conn = MagicMock()
++            mock_mgclient.connect.return_value = mock_conn
++
++            ingestor = MemgraphIngestor(host="testhost", port=1234)
++            ingestor.__enter__()
++
++            mock_mgclient.connect.assert_called_once_with(host="testhost", port=1234)
++
+     def test_exit_flushes_and_closes_connection(self) -> None:
+         ingestor = MemgraphIngestor(host="localhost", port=7687)
+         mock_conn = MagicMock()
+diff --git a/realtime_updater.py b/realtime_updater.py
+index 4fd95d5..7786742 100644
+--- a/realtime_updater.py
++++ b/realtime_updater.py
+@@ -123,6 +123,8 @@ def start_watcher(
+         host=host,
+         port=port,
+         batch_size=effective_batch_size,
++        username=settings.MEMGRAPH_USERNAME,
++        password=settings.MEMGRAPH_PASSWORD,
+     ) as ingestor:
+         _run_watcher_loop(ingestor, repo_path_obj, parsers, queries)
+
+diff --git a/uv.lock b/uv.lock
+index a126827..e566496 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -461,7 +461,7 @@ wheels = [
+
+ [[package]]
+ name = "code-graph-rag"
+-version = "0.0.79"
++version = "0.0.81"
+ source = { editable = "." }
+ dependencies = [
+     { name = "click" },

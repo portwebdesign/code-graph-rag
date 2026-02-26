@@ -1,0 +1,89 @@
+diff --git a/codebase_rag/parsers/stdlib_extractor.py b/codebase_rag/parsers/stdlib_extractor.py
+index fbcbddd..6f8f996 100644
+--- a/codebase_rag/parsers/stdlib_extractor.py
++++ b/codebase_rag/parsers/stdlib_extractor.py
+@@ -248,7 +248,7 @@ class StdlibExtractor:
+
+         result = (
+             cs.SEPARATOR_DOT.join(parts[:-1])
+-            if entity_name[0].isupper()
++            if entity_name[:1].isupper()
+             else full_qualified_name
+         )
+         _cache_stdlib_result(cs.SupportedLanguage.PYTHON, full_qualified_name, result)
+@@ -332,7 +332,7 @@ class StdlibExtractor:
+
+         result = (
+             cs.SEPARATOR_DOT.join(parts[:-1])
+-            if entity_name[0].isupper()
++            if entity_name[:1].isupper()
+             else full_qualified_name
+         )
+         _cache_stdlib_result(cs.SupportedLanguage.JS, full_qualified_name, result)
+@@ -464,7 +464,7 @@ func main() {
+                 pass
+
+             entity_name = parts[-1]
+-            if entity_name[0].isupper():
++            if entity_name[:1].isupper():
+                 return cs.SEPARATOR_SLASH.join(parts[:-1])
+
+         return full_qualified_name
+@@ -475,7 +475,7 @@ func main() {
+             entity_name = parts[-1]
+
+             if (
+-                entity_name[0].isupper()
++                entity_name[:1].isupper()
+                 or entity_name.isupper()
+                 or (cs.CHAR_UNDERSCORE not in entity_name and entity_name.islower())
+             ):
+@@ -541,7 +541,7 @@ int main() {{
+
+                 entity_name = parts[-1]
+                 if (
+-                    entity_name[0].isupper()
++                    entity_name[:1].isupper()
+                     or entity_name.startswith(cs.CPP_PREFIX_IS)
+                     or entity_name.startswith(cs.CPP_PREFIX_HAS)
+                     or entity_name in cs.CPP_STDLIB_ENTITIES
+@@ -668,7 +668,7 @@ public class StdlibCheck {
+
+             entity_name = parts[-1]
+             if (
+-                entity_name[0].isupper()
++                entity_name[:1].isupper()
+                 or entity_name.endswith(cs.JAVA_SUFFIX_EXCEPTION)
+                 or entity_name.endswith(cs.JAVA_SUFFIX_ERROR)
+                 or entity_name.endswith(cs.JAVA_SUFFIX_INTERFACE)
+@@ -750,7 +750,7 @@ end
+                 pass
+
+             entity_name = parts[-1]
+-            if entity_name[0].isupper() or entity_name in cs.LUA_STDLIB_MODULES:
++            if entity_name[:1].isupper() or entity_name in cs.LUA_STDLIB_MODULES:
+                 return cs.SEPARATOR_DOT.join(parts[:-1])
+
+         return full_qualified_name
+@@ -759,7 +759,7 @@ end
+         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
+         if len(parts) >= 2:
+             entity_name = parts[-1]
+-            if entity_name[0].isupper():
++            if entity_name[:1].isupper():
+                 return cs.SEPARATOR_DOT.join(parts[:-1])
+
+         return full_qualified_name
+diff --git a/uv.lock b/uv.lock
+index 378d8d9..0235103 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -461,7 +461,7 @@ wheels = [
+
+ [[package]]
+ name = "code-graph-rag"
+-version = "0.0.71"
++version = "0.0.72"
+ source = { editable = "." }
+ dependencies = [
+     { name = "click" },

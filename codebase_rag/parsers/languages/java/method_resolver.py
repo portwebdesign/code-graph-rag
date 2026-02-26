@@ -9,6 +9,7 @@ from loguru import logger
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import ASTNode, NodeType
+from codebase_rag.infrastructure.decorators import recursion_guard
 from codebase_rag.parsers.core.utils import safe_decode_text
 
 from .utils import extract_method_call_info, get_class_context_from_qn
@@ -278,6 +279,10 @@ class JavaMethodResolverMixin:
             or member == f"{method_name}{cs.EMPTY_PARENS}"
         )
 
+    @recursion_guard(
+        key_func=lambda self, class_qn, *_, **__: class_qn,
+        guard_name=cs.GUARD_INHERITED_METHOD,
+    )
     def _find_inherited_method(
         self, class_qn: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
@@ -321,8 +326,10 @@ class JavaMethodResolverMixin:
         parts = method_call.split(cs.SEPARATOR_DOT)
         if len(parts) < 2:
             method_name = method_call
-            if current_class_qn := self._get_current_class_name(module_qn):
-                return self._find_method_return_type(current_class_qn, method_name)
+            if (current_class_qn := self._get_current_class_name(module_qn)) and (
+                result := self._find_method_return_type(current_class_qn, method_name)
+            ):
+                return result
         else:
             object_part = cs.SEPARATOR_DOT.join(parts[:-1])
             method_name = parts[-1]

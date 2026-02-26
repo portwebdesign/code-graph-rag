@@ -1,0 +1,470 @@
+commit b0e72b8fed940b2622ae8b713eb48122870d2293
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Wed Feb 25 21:15:53 2026 +0000
+
+    chore: bump version to 0.0.82
+
+commit e1aec44a4674d79c3d4bfb1f0a96ea11138d7a5c
+Merge: 1449df2 9d5040e
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Wed Feb 25 21:15:43 2026 +0000
+
+    Merge pull request #359 from vitali87/feat/memgraph-auth
+
+    feat(memgraph): add optional authentication support
+
+commit 9d5040e48f810e520ffda04087ed114bf41a8112
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 21:10:04 2026 +0000
+
+    fix(memgraph): normalize empty string credentials to None
+
+commit 9209a0281105dd23b063203e3afbf08b29c7d7c2
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 21:04:13 2026 +0000
+
+    test(memgraph): add unit tests for authentication validation and connect
+
+commit 3abbecc57da9c54c4cbf08780faa4d6fe50a08ea
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 21:03:02 2026 +0000
+
+    fix(memgraph): pass auth params conditionally to avoid TypeError on None
+
+commit e368ccc784d751d4388481c750a42bda7cf1a136
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 20:59:56 2026 +0000
+
+    refactor(memgraph): adapt auth support to current codebase conventions
+
+commit dec28394a8eeeac831788574e253de7e7b6d97b8
+Author: Damien Berezenko <qdrddr@gmail.com>
+Date:   Sat Dec 27 17:55:14 2025 -0600
+
+    fix(graph_service): enforce both username and password for authentication
+
+commit 1e699ede3ea347b4ff55d0f057532eb1780b7847
+Author: Damien Berezenko <qdrddr@gmail.com>
+Date:   Mon Nov 17 12:22:21 2025 -0600
+
+    feat(memgraph): add support for optional authentication
+
+    - Update MemgraphIngestor to conditionally include auth parameters
+    - Only add username/password to connection if username is provided
+    - Allows connection to both authenticated and non-authenticated Memgraph instances
+    - Add documentation to .env.example explaining authentication configuration
+
+commit 430de23f1d9a90c33313b6805bbbb99a952243cf
+Author: Damien Berezenko <qdrddr@gmail.com>
+Date:   Mon Nov 17 11:42:29 2025 -0600
+
+    fix(memgraph): correct attribute name from _user to _username in validation
+
+commit 0568ab4bbc7d98729291aa69edb842fa9ce611c7
+Author: Damien <qdrddr@gmail.com>
+Date:   Mon Nov 17 09:54:12 2025 -0600
+
+    Update codebase_rag/services/graph_service.py
+
+    Co-authored-by: gemini-code-assist[bot] <176961590+gemini-code-assist[bot]@users.noreply.github.com>
+
+commit 8fc91d897512e6dae90cf03a08fa0a4ff21232f4
+Author: Damien Berezenko <qdrddr@gmail.com>
+Date:   Mon Nov 17 09:38:34 2025 -0600
+
+    Add Memgraph authentication support
+
+    - Add MEMGRAPH_USERNAME and MEMGRAPH_PASSWORD environment variables
+    - Update MemgraphIngestor to accept optional username/password parameters
+    - Pass credentials to all Memgraph connections throughout the codebase
+    - Update configuration files to support authenticated connections
+
+commit 1449df224e51942e6a0729476410f061bfdebc98
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Wed Feb 25 11:58:11 2026 +0000
+
+    chore: bump version to 0.0.81
+
+commit d38dfeaffd0a47193a6c9c29e42729a27a7284e3
+Merge: 4aff3c3 7d27faf
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Wed Feb 25 11:58:02 2026 +0000
+
+    Merge pull request #357 from vitali87/feat/mcp-registry-submission
+
+    feat(mcp): add MCP Registry server manifest and PyPI verification tag
+
+commit 7d27faf5be1023a5f1dfec23e270a48d50b73771
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 11:51:15 2026 +0000
+
+    ci: sync server.json version from version-bump workflow
+
+commit a24dd76fabd9f5002811bc16e685101b64b34141
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 11:48:28 2026 +0000
+
+    fix: move mcp-name verification tag to PYPI_README.md
+
+commit e0ccf220d12033a091973bf65773e3123ff13c02
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 11:43:05 2026 +0000
+
+    feat(mcp): add MCP Registry server manifest and PyPI verification tag
+
+commit 4aff3c335c90ac835259acb048a6d845f0ce408f
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Wed Feb 25 11:45:21 2026 +0000
+
+    chore: bump version to 0.0.80
+
+commit 059c3911fdbecf9b4ef4cce96b95046e9c256f0f
+Merge: 662eb8e 60509ab
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Wed Feb 25 11:45:12 2026 +0000
+
+    Merge pull request #356 from vitali87/docs/pypi-readme
+
+    docs(pypi): add dedicated PyPI readme with install and SDK usage
+
+commit 60509ab68a4ceccc3965b47c6adbbb5fccab08dc
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 11:43:54 2026 +0000
+
+    docs(pypi): use docker compose v2 command syntax
+
+commit 2d4f76768a96ef0b967ed716b02aaab63bca806b
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 11:39:19 2026 +0000
+
+    docs(pypi): add example model IDs to CYPHER_MODEL description
+
+commit 78128437cb11f26807b85fbb8dbe10fca96653d9
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 11:36:11 2026 +0000
+
+    docs(pypi): add ripgrep prerequisite and clarify API key columns
+
+commit 94d0841017c1d8b2a7db99281698ee6d932b693f
+Author: vitali87 <eheva87@gmail.com>
+Date:   Wed Feb 25 11:30:39 2026 +0000
+
+    docs(pypi): add dedicated PyPI readme with install and SDK usage
+
+commit 662eb8e965c33dbdf37fa6970d7e4bedfeb777c7
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Sat Feb 21 22:59:41 2026 +0000
+
+    chore: bump version to 0.0.79
+
+commit 7a1779272432e0771dc7b9d404e2027a1d0a23c2
+Merge: a0e9138 b68370d
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Sat Feb 21 22:59:33 2026 +0000
+
+    Merge pull request #353 from vitali87/feat/cgr-sdk-shim
+
+    feat(sdk): add cgr shim package for short Python imports
+
+commit b68370d0bda8f2cd2549c81c52fa09ce9ae4b9a4
+Author: vitali87 <eheva87@gmail.com>
+Date:   Sat Feb 21 22:49:29 2026 +0000
+
+    feat(sdk): add cgr shim package for short Python imports
+
+commit a0e9138f83cd48a779b6601726348dc03ec28c18
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Sat Feb 21 20:39:29 2026 +0000
+
+    chore: bump version to 0.0.78
+
+commit c7310472a0c7310bfa63d0a86ec032244d50ad2a
+Merge: cc92d66 9af7529
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Sat Feb 21 20:39:22 2026 +0000
+
+    Merge pull request #352 from vitali87/ci/pypi-publish-workflow
+
+    ci(pypi): add trusted publisher workflow for PyPI releases
+
+commit 9af7529f23542006488b94cf614f687eca4e5255
+Author: vitali87 <eheva87@gmail.com>
+Date:   Sat Feb 21 20:34:46 2026 +0000
+
+    fix(ci): add contents:read permission and pin pypi-publish action to SHA
+
+commit cc92d663e73c1317da5323463cf4960906aef296
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Sat Feb 21 20:33:15 2026 +0000
+
+    chore: bump version to 0.0.77
+
+commit 86975a847ba6bafbc461638bdd503fc9efd3aea4
+Merge: 2e47351 645d2d3
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Sat Feb 21 20:33:06 2026 +0000
+
+    Merge pull request #351 from vitali87/chore/pypi-seo-metadata
+
+    chore(pypi): add classifiers, keywords, and license metadata
+
+commit 645d2d38e54160adffc2152d0845e4bdc01c9067
+Author: vitali87 <eheva87@gmail.com>
+Date:   Sat Feb 21 20:25:08 2026 +0000
+
+    chore(pypi): expand classifiers with AI topic, console env, and Python 3.13
+
+commit 1a74fd1076a7ece7a891ef0b6ecc0b7d2a1ca111
+Author: vitali87 <eheva87@gmail.com>
+Date:   Sat Feb 21 00:26:40 2026 +0000
+
+    ci(pypi): add trusted publisher workflow for PyPI releases
+
+commit f7640e51f036198664f2d5f88733a7394fa327bc
+Author: vitali87 <eheva87@gmail.com>
+Date:   Sat Feb 21 00:07:22 2026 +0000
+
+    chore(pypi): add classifiers, keywords, and license metadata
+
+commit 2e473519a1457e94c040bc65466ec7803db99506
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Fri Feb 20 23:37:10 2026 +0000
+
+    chore: bump version to 0.0.76
+
+commit 8bfa0aaf6d3f3d19f21e9855dc625715a803776c
+Merge: 6621d19 00f5151
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Fri Feb 20 23:37:02 2026 +0000
+
+    Merge pull request #350 from vitali87/refactor/generic-provider-type
+
+    refactor(config): revert provider_type to str for provider-agnostic ModelConfig
+
+commit 00f5151cc10a4fa56a1feae01642e8f3512311d3
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 23:29:58 2026 +0000
+
+    refactor(config): revert provider_type to str for provider-agnostic ModelConfig
+
+commit 6621d1955e3c06efe6aa14365f265f8e3817e1ca
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Fri Feb 20 23:24:26 2026 +0000
+
+    chore: bump version to 0.0.75
+
+commit 75312a7cb4f97c625fe8d684b0d5ff1331ff06fe
+Merge: a305b37 85903b5
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Fri Feb 20 23:24:18 2026 +0000
+
+    Merge pull request #349 from vitali87/fix/vertex-ai-api-key-validation
+
+    fix(config): skip API key validation for Vertex AI provider type
+
+commit 85903b5c9cfc19dd6da1731860f27b19719f6426
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 23:19:31 2026 +0000
+
+    refactor(config): cache provider.lower() call and extract LOCAL_PROVIDERS set
+
+commit 11c34db72c6f425b3dcaeea7ed8862abd8d2b8c6
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 23:07:18 2026 +0000
+
+    refactor(config): type AppConfig provider_type fields as GoogleProviderType and add regression tests
+
+commit d5aebe6871eaf401e3ef8c85d2a5e50f3855b55f
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 23:06:09 2026 +0000
+
+    test(config): add Vertex AI with stray GOOGLE_API_KEY and GLA missing key tests
+
+commit 8e0d270120bf2006bc55e83ea266234a0cb4cbfc
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 23:00:50 2026 +0000
+
+    fix(config): scope vertex check to google provider and use enum in test assertion
+
+commit 4650c025bd3e9669e466b045ecbb7ade5a71342a
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 22:52:07 2026 +0000
+
+    refactor(config): type provider_type as GoogleProviderType instead of str
+
+commit 258981e89f0cc168ff9d457e5044a53b38fe948e
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 22:49:52 2026 +0000
+
+    refactor(config): combine early return conditions in validate_api_key
+
+commit 5ef22d18b0c6bc66f3d624c1214758f73e6065ae
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 22:31:08 2026 +0000
+
+    fix(config): skip API key validation for Vertex AI provider type
+
+commit a305b377f3f5513441c1ae245104b88d58db9321
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Fri Feb 20 22:19:47 2026 +0000
+
+    chore: bump version to 0.0.74
+
+commit 96baab04cf1d6463516eeebd365deac3d8c89cc2
+Merge: 31a65ad c9b5b6c
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Fri Feb 20 22:19:36 2026 +0000
+
+    Merge pull request #347 from vitali87/fix/entity-name-index-error
+
+    fix(parsers): use slice indexing to prevent IndexError on empty entity_name
+
+commit c9b5b6cd5e651ea4b8b86bdfd9730b1de2de9045
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 22:16:21 2026 +0000
+
+    fix(parsers): use slice indexing to prevent IndexError on empty entity_name
+
+commit 31a65ad69d92b81f706e0e378a1572fd8c0ec0ff
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Fri Feb 20 21:58:16 2026 +0000
+
+    chore: bump version to 0.0.73
+
+commit 3197c29d8285cde1ec9d9927ced33b657e3932c1
+Merge: cd3a58c 4e79f18
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Fri Feb 20 21:58:08 2026 +0000
+
+    Merge pull request #345 from vitali87/fix/memgraph-readiness-check
+
+    fix(ci): use mgconsole for Memgraph readiness check instead of echo
+
+commit 4e79f185436deffe8d77d300058468ef414e11b3
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 21:55:22 2026 +0000
+
+    fix(ci): use mgconsole for Memgraph readiness check instead of echo
+
+commit cd3a58c0f1073a00ab8ce38708c4adff6c2ada3a
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Fri Feb 20 21:51:45 2026 +0000
+
+    chore: bump version to 0.0.72
+
+commit a4ac2f6eb70c2a583a0073330c939b57fea64e39
+Merge: d09a4f7 0f2d4a4
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Fri Feb 20 21:51:36 2026 +0000
+
+    Merge pull request #343 from vitali87/fix/java-heuristic-fallback-simple-method-calls
+
+    fix(java): allow heuristic fallback for simple method calls
+
+commit 0f2d4a493a732a9288f084675590b73f8c2f9c81
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 21:45:35 2026 +0000
+
+    fix(java): allow heuristic fallback for simple method calls in _resolve_java_method_return_type
+
+commit d09a4f716640debd1f8862cef84ce75108d382ef
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Fri Feb 20 21:33:37 2026 +0000
+
+    chore: bump version to 0.0.71
+
+commit 7472887f7f159ab8d3b7fbb80d13e8b79c6651ef
+Merge: 26301fa c2711d2
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Fri Feb 20 21:33:28 2026 +0000
+
+    Merge pull request #341 from vitali87/fix/java-inherited-method-cycle-detection
+
+    refactor(java): use recursion_guard decorator for _find_inherited_method cycle detection
+
+commit c2711d20f3868e2b9e3975f05bafc66c27f185ab
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 21:26:00 2026 +0000
+
+    refactor(java): use recursion_guard decorator for _find_inherited_method cycle detection
+
+commit 26301fa26688ba81f7c81a306b65445d9713bfec
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Fri Feb 20 21:06:35 2026 +0000
+
+    chore: bump version to 0.0.70
+
+commit 3f9a84fb012c18d548444b64d0da8c2bc9d9d537
+Merge: e8c69bd 8aafa89
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Fri Feb 20 21:06:24 2026 +0000
+
+    Merge pull request #339 from vitali87/fix/skip-flush-on-exception
+
+    fix(graph): guard flush_all with try/except on exception path in __exit__
+
+commit 8aafa895529c0c598c248287a325ad92934a865a
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 21:01:12 2026 +0000
+
+    fix(graph): only guard flush_all with try/except on the exception path
+
+commit ba3f73dd72b764bc79a2a3e5eca098fa89d24356
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 14:47:48 2026 +0000
+
+    fix(graph): use try/except for best-effort flush in __exit__ instead of skipping
+
+commit 234bd01884e62fded9126c62c4f27dede10fd0bf
+Author: vitali87 <eheva87@gmail.com>
+Date:   Fri Feb 20 14:36:28 2026 +0000
+
+    fix(graph): skip flush_all when __exit__ receives an active exception
+
+commit e8c69bd843afce1ab195b300d2139dbe26b869d6
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Thu Feb 19 23:49:06 2026 +0000
+
+    chore: bump version to 0.0.69
+
+commit 98d92db57a05e87c6478033780dfe9c2d2299241
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Thu Feb 19 23:48:59 2026 +0000
+
+    feat(security): update OSV-Scanner workflow to use new versions
+
+commit c1a19fe0cfbd7076b1a4a08bb3cfa5d0ee12cbfd
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Thu Feb 19 23:38:13 2026 +0000
+
+    chore: bump version to 0.0.68
+
+commit c46ba4b298111aa947e288821f5d8d5a21d3fec1
+Author: vitali87 <eheva87@gmail.com>
+Date:   Thu Feb 19 23:37:50 2026 +0000
+
+    fix(ci): use correct commit SHA for codeql-action/upload-sarif
+
+commit 5f4ede3633febdc8c670bb3819ac745754dea38f
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Thu Feb 19 23:26:38 2026 +0000
+
+    chore: bump version to 0.0.67
+
+commit e6b1eeed2264511262248d1f3a17139d1265b78b
+Author: vitali87 <eheva87@gmail.com>
+Date:   Thu Feb 19 23:26:21 2026 +0000
+
+    fix(ci): add explicit permissions to all workflow files
+
+commit 1aef13407e615ad63e9ba60d5890649387bac9dc
+Author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+Date:   Thu Feb 19 23:17:08 2026 +0000
+
+    chore: bump version to 0.0.66
+
+commit f79938ee2b9dba8d4cc75a8159bdb684a440d91f
+Author: Vitali Avagyan <eheva87@gmail.com>
+Date:   Thu Feb 19 23:17:01 2026 +0000
+
+    feat(security): setup ossf scorecard

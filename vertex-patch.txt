@@ -1,0 +1,72 @@
+diff --git a/codebase_rag/config.py b/codebase_rag/config.py
+index 31848e4..c0a089f 100644
+--- a/codebase_rag/config.py
++++ b/codebase_rag/config.py
+@@ -116,6 +116,8 @@ class ModelConfig:
+         local_providers = {cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM}
+         if self.provider.lower() in local_providers:
+             return
++        if self.provider_type == cs.GoogleProviderType.VERTEX:
++            return
+         if (
+             not self.api_key
+             or not self.api_key.strip()
+diff --git a/codebase_rag/tests/test_github_issues_integration.py b/codebase_rag/tests/test_github_issues_integration.py
+index 2b6bc08..f7608ef 100644
+--- a/codebase_rag/tests/test_github_issues_integration.py
++++ b/codebase_rag/tests/test_github_issues_integration.py
+@@ -142,9 +142,6 @@ class TestGitHubIssuesIntegration:
+             assert orchestrator.endpoint == "https://api.together.xyz/v1"
+
+     def test_vertex_ai_enterprise_scenario(self) -> None:
+-        """
+-        Test enterprise Vertex AI configuration scenario.
+-        """
+         env_content = {
+             "ORCHESTRATOR_PROVIDER": "google",
+             "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
+@@ -165,6 +162,31 @@ class TestGitHubIssuesIntegration:
+             assert orchestrator.provider_type == "vertex"
+             assert orchestrator.service_account_file == "/path/to/service-account.json"
+
++    def test_vertex_ai_skips_api_key_validation(self) -> None:
++        env_content = {
++            "ORCHESTRATOR_PROVIDER": "google",
++            "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
++            "ORCHESTRATOR_PROJECT_ID": "my-project",
++            "ORCHESTRATOR_REGION": "us-central1",
++            "ORCHESTRATOR_PROVIDER_TYPE": "vertex",
++            "ORCHESTRATOR_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
++            "CYPHER_PROVIDER": "google",
++            "CYPHER_MODEL": "gemini-2.5-flash",
++            "CYPHER_PROJECT_ID": "my-project",
++            "CYPHER_REGION": "us-central1",
++            "CYPHER_PROVIDER_TYPE": "vertex",
++            "CYPHER_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
++        }
++
++        with patch.dict(os.environ, env_content):
++            config = AppConfig()
++
++            orchestrator = config.active_orchestrator_config
++            orchestrator.validate_api_key("orchestrator")
++
++            cypher = config.active_cypher_config
++            cypher.validate_api_key("cypher")
++
+     def test_reasoning_model_thinking_budget(self) -> None:
+         """
+         Test configuration for reasoning models with thinking budget.
+diff --git a/uv.lock b/uv.lock
+index 0235103..ecbe274 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -461,7 +461,7 @@ wheels = [
+
+ [[package]]
+ name = "code-graph-rag"
+-version = "0.0.72"
++version = "0.0.74"
+ source = { editable = "." }
+ dependencies = [
+     { name = "click" },

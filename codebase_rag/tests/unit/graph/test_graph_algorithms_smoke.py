@@ -34,6 +34,9 @@ def test_graph_algorithms_skip_when_mage_unavailable() -> None:
 
 
 def test_graph_algorithms_sets_properties() -> None:
+    from codebase_rag.core.config import settings
+
+    settings.CODEGRAPH_MAGE_CYCLES = True
     engine = FakeQueryEngine(mage_available=True)
     GraphAlgorithms(engine).run_all(has_changes=True)
     joined = "\n".join(engine.fetches + engine.writes)

@@ -225,7 +225,7 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            result = await mcp_registry.index_repository()
+            result = await mcp_registry.index_repository(str(mcp_registry.project_root))
 
             assert "Error:" not in result
             assert "Success" in result or "indexed" in result.lower()
@@ -241,7 +241,7 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            await mcp_registry.index_repository()
+            await mcp_registry.index_repository(str(mcp_registry.project_root))
 
             mock_updater_class.assert_called_once()
             call_kwargs = mock_updater_class.call_args.kwargs
@@ -259,7 +259,7 @@ class TestIndexRepository:
             mock_updater.run.side_effect = Exception("Indexing failed")
             mock_updater_class.return_value = mock_updater
 
-            result = await mcp_registry.index_repository()
+            result = await mcp_registry.index_repository(str(mcp_registry.project_root))
 
             assert "Error" in result
             assert "Indexing failed" in result
@@ -279,7 +279,9 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            result = await empty_registry.index_repository()
+            result = await empty_registry.index_repository(
+                str(empty_registry.project_root)
+            )
 
             assert "Error:" not in result or "Success" in result
 
@@ -292,10 +294,14 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            result1 = await mcp_registry.index_repository()
+            result1 = await mcp_registry.index_repository(
+                str(mcp_registry.project_root)
+            )
             assert "Error:" not in result1
 
-            result2 = await mcp_registry.index_repository()
+            result2 = await mcp_registry.index_repository(
+                str(mcp_registry.project_root)
+            )
             assert "Error:" not in result2
 
             assert mock_updater.run.call_count == 2
@@ -309,7 +315,7 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            result = await mcp_registry.index_repository()
+            result = await mcp_registry.index_repository(str(mcp_registry.project_root))
 
             project_name = temp_project_root.resolve().name
             mcp_registry.ingestor.delete_project.assert_called_once_with(project_name)  # type: ignore[attr-defined]
@@ -334,7 +340,7 @@ class TestIndexRepository:
             mock_updater.run = MagicMock(side_effect=mock_run)
             mock_updater_class.return_value = mock_updater
 
-            await mcp_registry.index_repository()
+            await mcp_registry.index_repository(str(mcp_registry.project_root))
 
             assert call_order == ["delete", "run"]
 
@@ -365,10 +371,10 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            await registry1.index_repository()
+            await registry1.index_repository(str(registry1.project_root))
             mock_ingestor.delete_project.assert_called_with("project1")
 
-            await registry2.index_repository()
+            await registry2.index_repository(str(registry2.project_root))
             mock_ingestor.delete_project.assert_called_with("project2")
 
             assert mock_ingestor.delete_project.call_count == 2
@@ -386,7 +392,9 @@ class TestQueryAndIndexIntegration:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            index_result = await mcp_registry.index_repository()
+            index_result = await mcp_registry.index_repository(
+                str(mcp_registry.project_root)
+            )
             assert "Error:" not in index_result
 
             mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
@@ -411,7 +419,7 @@ class TestQueryAndIndexIntegration:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            await mcp_registry.index_repository()
+            await mcp_registry.index_repository(str(mcp_registry.project_root))
 
             mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
                 MagicMock(

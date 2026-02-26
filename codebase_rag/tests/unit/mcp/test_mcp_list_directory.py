@@ -58,7 +58,7 @@ class TestListDirectoryBasic:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test listing the root directory."""
-        result = await mcp_registry.list_directory(".")
+        result = await mcp_registry.list_directory(mcp_registry.project_root, ".")
 
         assert "file1.txt" in result
         assert "file2.py" in result
@@ -71,7 +71,7 @@ class TestListDirectoryBasic:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test listing a subdirectory."""
-        result = await mcp_registry.list_directory("subdir1")
+        result = await mcp_registry.list_directory(mcp_registry.project_root, "subdir1")
 
         assert "nested" in result
 
@@ -82,7 +82,9 @@ class TestListDirectoryBasic:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test listing a deeply nested directory."""
-        result = await mcp_registry.list_directory("subdir1/nested")
+        result = await mcp_registry.list_directory(
+            mcp_registry.project_root, "subdir1/nested"
+        )
 
         assert "nested_file.txt" in result
 
@@ -95,7 +97,7 @@ class TestListDirectoryBasic:
         empty_dir = temp_project_root / "empty"
         empty_dir.mkdir()
 
-        result = await mcp_registry.list_directory("empty")
+        result = await mcp_registry.list_directory(mcp_registry.project_root, "empty")
 
         assert "empty" in result.lower()
 
@@ -107,7 +109,9 @@ class TestListDirectoryEdgeCases:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test listing a directory that doesn't exist."""
-        result = await mcp_registry.list_directory("nonexistent")
+        result = await mcp_registry.list_directory(
+            mcp_registry.project_root, "nonexistent"
+        )
 
         assert "Error:" in result or "not a valid directory" in result
 
@@ -115,7 +119,9 @@ class TestListDirectoryEdgeCases:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test listing a file path instead of directory."""
-        result = await mcp_registry.list_directory("file1.txt")
+        result = await mcp_registry.list_directory(
+            mcp_registry.project_root, "file1.txt"
+        )
 
         assert "not a valid directory" in result
 
@@ -128,7 +134,9 @@ class TestListDirectoryEdgeCases:
         (special_dir / "file with spaces.txt").write_text("content", encoding="utf-8")
         (special_dir / "file@special#chars.py").write_text("content", encoding="utf-8")
 
-        result = await mcp_registry.list_directory("special-dir_123")
+        result = await mcp_registry.list_directory(
+            mcp_registry.project_root, "special-dir_123"
+        )
 
         assert "file with spaces.txt" in result
         assert "file@special#chars.py" in result
@@ -142,7 +150,7 @@ class TestListDirectoryEdgeCases:
         (hidden_dir / ".hidden_file").write_text("hidden", encoding="utf-8")
         (hidden_dir / "visible_file").write_text("visible", encoding="utf-8")
 
-        result = await mcp_registry.list_directory("hidden")
+        result = await mcp_registry.list_directory(mcp_registry.project_root, "hidden")
 
         assert ".hidden_file" in result
         assert "visible_file" in result
@@ -155,7 +163,9 @@ class TestListDirectoryPathHandling:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test listing with relative path."""
-        result = await mcp_registry.list_directory("./subdir1")
+        result = await mcp_registry.list_directory(
+            mcp_registry.project_root, "./subdir1"
+        )
 
         assert "nested" in result
 
@@ -164,7 +174,7 @@ class TestListDirectoryPathHandling:
     ) -> None:
         """Test listing with absolute path within project root."""
         abs_path = str(sample_directory_structure / "subdir1")
-        result = await mcp_registry.list_directory(abs_path)
+        result = await mcp_registry.list_directory(mcp_registry.project_root, abs_path)
 
         assert "nested" in result
 
@@ -172,7 +182,9 @@ class TestListDirectoryPathHandling:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test that directory traversal attacks are prevented."""
-        result = await mcp_registry.list_directory("../../../etc")
+        result = await mcp_registry.list_directory(
+            mcp_registry.project_root, "../../../etc"
+        )
 
         assert "Error:" in result or "denied" in result.lower()
 
@@ -184,7 +196,7 @@ class TestListDirectoryOutput:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test that output is newline-separated list."""
-        result = await mcp_registry.list_directory(".")
+        result = await mcp_registry.list_directory(mcp_registry.project_root, ".")
 
         lines = result.split("\n")
         assert len(lines) >= 4
@@ -193,7 +205,7 @@ class TestListDirectoryOutput:
         self, mcp_registry: MCPToolsRegistry, sample_directory_structure: Path
     ) -> None:
         """Test that output contains only names, not full paths."""
-        result = await mcp_registry.list_directory("subdir1")
+        result = await mcp_registry.list_directory(mcp_registry.project_root, "subdir1")
 
         assert "nested" in result
         assert str(sample_directory_structure / "subdir1" / "nested") not in result

@@ -98,10 +98,18 @@ class HealthChecker:
         conn = None
         cursor = None
         try:
-            conn = mgclient.connect(
-                host=settings.MEMGRAPH_HOST,
-                port=settings.MEMGRAPH_PORT,
-            )
+            if settings.MEMGRAPH_USERNAME is not None:
+                conn = mgclient.connect(
+                    host=settings.MEMGRAPH_HOST,
+                    port=settings.MEMGRAPH_PORT,
+                    username=settings.MEMGRAPH_USERNAME,
+                    password=settings.MEMGRAPH_PASSWORD,
+                )
+            else:
+                conn = mgclient.connect(
+                    host=settings.MEMGRAPH_HOST,
+                    port=settings.MEMGRAPH_PORT,
+                )
 
             cursor = conn.cursor()
             cursor.execute(cs.HEALTH_CHECK_MEMGRAPH_QUERY)

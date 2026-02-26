@@ -193,6 +193,7 @@ MG_RELS_FLUSHED = (
 )
 MG_FLUSH_START = "--- Flushing all pending writes to database... ---"
 MG_FLUSH_COMPLETE = "--- Flushing complete. ---"
+MG_FLUSH_ERROR = "--- Error during flush processing: {error} ---"
 MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
 MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."

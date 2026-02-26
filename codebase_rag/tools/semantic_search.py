@@ -71,6 +71,8 @@ def semantic_code_search(query: str, top_k: int = 5) -> list[SemanticSearchResul
             host=settings.MEMGRAPH_HOST,
             port=settings.MEMGRAPH_PORT,
             batch_size=cs.SEMANTIC_BATCH_SIZE,
+            username=settings.MEMGRAPH_USERNAME,
+            password=settings.MEMGRAPH_PASSWORD,
         ) as ingestor:
             cypher_query = build_nodes_by_ids_query(node_ids)
             params = {str(i): node_id for i, node_id in enumerate(node_ids)}
@@ -131,6 +133,8 @@ def get_function_source_code(node_id: int) -> str | None:
             host=settings.MEMGRAPH_HOST,
             port=settings.MEMGRAPH_PORT,
             batch_size=cs.SEMANTIC_BATCH_SIZE,
+            username=settings.MEMGRAPH_USERNAME,
+            password=settings.MEMGRAPH_PASSWORD,
         ) as ingestor:
             results = ingestor._execute_query(
                 CYPHER_GET_FUNCTION_SOURCE_LOCATION, {"node_id": node_id}

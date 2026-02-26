@@ -73,7 +73,14 @@ class MemgraphIngestor:
     abstraction over the raw database driver.
     """
 
-    def __init__(self, host: str, port: int, batch_size: int = 1000):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        batch_size: int = 1000,
+        username: str | None = None,
+        password: str | None = None,
+    ):
         """
         Initializes the MemgraphIngestor.
 
@@ -82,9 +89,15 @@ class MemgraphIngestor:
             port (int): The port number for the Memgraph instance.
             batch_size (int): The number of nodes or relationships to buffer in memory
                               before flushing them to the database in a single transaction.
+            username (str | None): Optional username for Memgraph authentication.
+            password (str | None): Optional password for Memgraph authentication.
         """
         self._host = host
         self._port = port
+        self._username = username.strip() if username and username.strip() else None
+        self._password = password.strip() if password and password.strip() else None
+        if (self._username is None) != (self._password is None):
+            raise ValueError(ex.AUTH_INCOMPLETE)
         if batch_size < 1:
             raise ValueError(ex.BATCH_SIZE)
         self.batch_size = batch_size
@@ -107,7 +120,15 @@ class MemgraphIngestor:
             The connected `MemgraphIngestor` instance.
         """
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        self.conn = mgclient.connect(host=self._host, port=self._port)
+        if self._username is not None:
+            self.conn = mgclient.connect(
+                host=self._host,
+                port=self._port,
+                username=self._username,
+                password=self._password,
+            )
+        else:
+            self.conn = mgclient.connect(host=self._host, port=self._port)
         self.conn.autocommit = True
         logger.info(ls.MG_CONNECTED)
         return self
@@ -128,7 +149,12 @@ class MemgraphIngestor:
         """
         if exc_type:
             logger.exception(ls.MG_EXCEPTION.format(error=exc_val))
-        self.flush_all()
+            try:
+                self.flush_all()
+            except Exception as flush_err:
+                logger.error(ls.MG_FLUSH_ERROR.format(error=flush_err))
+        else:
+            self.flush_all()
         if self.conn:
             self.conn.close()
             logger.info(ls.MG_DISCONNECTED)

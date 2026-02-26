@@ -1,0 +1,30 @@
+diff --git a/codebase_rag/parsers/java/method_resolver.py b/codebase_rag/parsers/java/method_resolver.py
+index 36d7cfa..a57503d 100644
+--- a/codebase_rag/parsers/java/method_resolver.py
++++ b/codebase_rag/parsers/java/method_resolver.py
+@@ -240,8 +240,10 @@ class JavaMethodResolverMixin:
+         parts = method_call.split(cs.SEPARATOR_DOT)
+         if len(parts) < 2:
+             method_name = method_call
+-            if current_class_qn := self._get_current_class_name(module_qn):
+-                return self._find_method_return_type(current_class_qn, method_name)
++            if (current_class_qn := self._get_current_class_name(module_qn)) and (
++                result := self._find_method_return_type(current_class_qn, method_name)
++            ):
++                return result
+         else:
+             object_part = cs.SEPARATOR_DOT.join(parts[:-1])
+             method_name = parts[-1]
+diff --git a/uv.lock b/uv.lock
+index a7e2a0a..378d8d9 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -461,7 +461,7 @@ wheels = [
+
+ [[package]]
+ name = "code-graph-rag"
+-version = "0.0.69"
++version = "0.0.71"
+ source = { editable = "." }
+ dependencies = [
+     { name = "click" },

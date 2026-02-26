@@ -1,0 +1,48 @@
+.EEEEEE                                                                  [100%]
+=================================== ERRORS ====================================
+_ ERROR at setup of TestListDirectoryBasic.test_list_root_directory[asyncio] __
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:46: in mcp_registry
+    project_root=mcp_registry.project_root,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'FixtureFunctionDefinition' object has no attribute 'project_root'
+__ ERROR at setup of TestListDirectoryBasic.test_list_subdirectory[asyncio] ___
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:46: in mcp_registry
+    project_root=mcp_registry.project_root,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'FixtureFunctionDefinition' object has no attribute 'project_root'
+_ ERROR at setup of TestListDirectoryBasic.test_list_nested_directory[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:46: in mcp_registry
+    project_root=mcp_registry.project_root,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'FixtureFunctionDefinition' object has no attribute 'project_root'
+_ ERROR at setup of TestListDirectoryEdgeCases.test_list_file_instead_of_directory[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:46: in mcp_registry
+    project_root=mcp_registry.project_root,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'FixtureFunctionDefinition' object has no attribute 'project_root'
+_ ERROR at setup of TestListDirectoryPathHandling.test_list_with_relative_path[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:46: in mcp_registry
+    project_root=mcp_registry.project_root,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'FixtureFunctionDefinition' object has no attribute 'project_root'
+_ ERROR at setup of TestListDirectoryOutput.test_output_contains_only_names_not_paths[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:46: in mcp_registry
+    project_root=mcp_registry.project_root,
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'FixtureFunctionDefinition' object has no attribute 'project_root'
+============================== warnings summary ===============================
+codebase_rag/tests/integration/mcp/test_mcp_tools_integration.py::TestMCPToolsIntegration::test_list_directory_works[asyncio]
+codebase_rag/tests/integration/mcp/test_mcp_tools_integration.py::TestMCPToolsIntegration::test_list_directory_works[asyncio]
+codebase_rag/tests/integration/mcp/test_mcp_tools_integration.py::TestMCPToolsIntegration::test_list_directory_works[asyncio]
+  D:\PROGRAMMING\code-graph-rag\codebase_rag\infrastructure\parser_loader.py:477: DeprecationWarning: int argument support is deprecated
+    language = Language(lang_obj)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+ERROR codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryBasic::test_list_root_directory[asyncio]
+ERROR codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryBasic::test_list_subdirectory[asyncio]
+ERROR codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryBasic::test_list_nested_directory[asyncio]
+ERROR codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryEdgeCases::test_list_file_instead_of_directory[asyncio]
+ERROR codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryPathHandling::test_list_with_relative_path[asyncio]
+ERROR codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryOutput::test_output_contains_only_names_not_paths[asyncio]
+1 passed, 3763 deselected, 3 warnings, 6 errors in 10.18s

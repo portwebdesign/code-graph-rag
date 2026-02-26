@@ -1,0 +1,163 @@
+FFFFFFFFFFFFFFFFFFFFFFFFFFF                                              [100%]
+================================== FAILURES ===================================
+____________________ test_sprint1_components_work_together ____________________
+codebase_rag\tests\integration\e2e\test_sprint1_integration.py:37: in test_sprint1_components_work_together
+    assert tools
+E   assert {}
+_________ TestMCPToolsIntegration.test_list_directory_works[asyncio] __________
+codebase_rag\tests\integration\mcp\test_mcp_tools_integration.py:106: in test_list_directory_works
+    assert "sample.py" in result
+E   AssertionError: assert 'sample.py' in '.env\n.env.example\n.git\n.github\n.gitignore\n.gitmodules\n.idea\n.pre-commit-config.yaml\n.pypi_cache.json\n.pytest...atch.txt\ntest_failures.txt\nTODO.md\nupstream-diff-stat.txt\nupstream-log.txt\nuv.lock\nvertex-patch.txt\n__pycache__'
+____________________ test_graph_algorithms_sets_properties ____________________
+codebase_rag\tests\unit\graph\test_graph_algorithms_smoke.py:44: in test_graph_algorithms_sets_properties
+    assert "cycles.get" in joined
+E   assert 'cycles.get' in "CALL mg.procedures() YIELD name WITH name WHERE name STARTS WITH 'pagerank' RETURN name LIMIT 1\n\n            CALL p...y_id\n            SET node.community_id = community_id\n            RETURN count(node) AS nodes_updated;\n            "
+__________________ test_windows_guard_blocks_graphql_and_vue __________________
+codebase_rag\tests\unit\handlers\utils\test_parser_loader_windows_guard.py:13: in test_windows_guard_blocks_graphql_and_vue
+    assert parser_loader._is_windows_unsupported(cs.SupportedLanguage.GRAPHQL) is True
+E   AssertionError: assert False is True
+E    +  where False = <function _is_windows_unsupported at 0x0000020F7BD523E0>(<SupportedLanguage.GRAPHQL: 'graphql'>)
+E    +    where <function _is_windows_unsupported at 0x0000020F7BD523E0> = parser_loader._is_windows_unsupported
+E    +    and   <SupportedLanguage.GRAPHQL: 'graphql'> = <enum 'SupportedLanguage'>.GRAPHQL
+E    +      where <enum 'SupportedLanguage'> = cs.SupportedLanguage
+__________ TestListDirectoryBasic.test_list_root_directory[asyncio] ___________
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:63: in test_list_root_directory
+    assert "file1.txt" in result
+E   AssertionError: assert 'file1.txt' in '.env\n.env.example\n.git\n.github\n.gitignore\n.gitmodules\n.idea\n.pre-commit-config.yaml\n.pypi_cache.json\n.pytest...atch.txt\ntest_failures.txt\nTODO.md\nupstream-diff-stat.txt\nupstream-log.txt\nuv.lock\nvertex-patch.txt\n__pycache__'
+___________ TestListDirectoryBasic.test_list_subdirectory[asyncio] ____________
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:76: in test_list_subdirectory
+    assert "nested" in result
+E   AssertionError: assert 'nested' in 'Error: Target repository path does not exist: D:\\PROGRAMMING\\code-graph-rag\\subdir1'
+_________ TestListDirectoryBasic.test_list_nested_directory[asyncio] __________
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:87: in test_list_nested_directory
+    assert "nested_file.txt" in result
+E   AssertionError: assert 'nested_file.txt' in 'Error: Target repository path does not exist: D:\\PROGRAMMING\\code-graph-rag\\subdir1\\nested'
+___ TestListDirectoryEdgeCases.test_list_file_instead_of_directory[asyncio] ___
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:120: in test_list_file_instead_of_directory
+    assert "not a valid directory" in result
+E   AssertionError: assert 'not a valid directory' in 'Error: Target repository path does not exist: D:\\PROGRAMMING\\code-graph-rag\\file1.txt'
+_ TestListDirectoryEdgeCases.test_list_directory_with_special_characters[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:133: in test_list_directory_with_special_characters
+    assert "file with spaces.txt" in result
+E   AssertionError: assert 'file with spaces.txt' in 'Error: Target repository path does not exist: D:\\PROGRAMMING\\code-graph-rag\\special-dir_123'
+__ TestListDirectoryEdgeCases.test_list_directory_with_hidden_files[asyncio] __
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:147: in test_list_directory_with_hidden_files
+    assert ".hidden_file" in result
+E   AssertionError: assert '.hidden_file' in 'Error: Target repository path does not exist: D:\\PROGRAMMING\\code-graph-rag\\hidden'
+_____ TestListDirectoryPathHandling.test_list_with_relative_path[asyncio] _____
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:160: in test_list_with_relative_path
+    assert "nested" in result
+E   AssertionError: assert 'nested' in 'Error: Target repository path does not exist: D:\\PROGRAMMING\\code-graph-rag\\subdir1'
+_ TestListDirectoryOutput.test_output_contains_only_names_not_paths[asyncio] __
+codebase_rag\tests\unit\mcp\test_mcp_list_directory.py:198: in test_output_contains_only_names_not_paths
+    assert "nested" in result
+E   AssertionError: assert 'nested' in 'Error: Target repository path does not exist: D:\\PROGRAMMING\\code-graph-rag\\subdir1'
+_________ TestIndexRepository.test_index_repository_success[asyncio] __________
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:228: in test_index_repository_success
+    result = await mcp_registry.index_repository()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+__ TestIndexRepository.test_index_repository_creates_graph_updater[asyncio] ___
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:244: in test_index_repository_creates_graph_updater
+    await mcp_registry.index_repository()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+______ TestIndexRepository.test_index_repository_handles_errors[asyncio] ______
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:262: in test_index_repository_handles_errors
+    result = await mcp_registry.index_repository()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+___ TestIndexRepository.test_index_repository_with_empty_directory[asyncio] ___
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:282: in test_index_repository_with_empty_directory
+    result = await empty_registry.index_repository()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+______ TestIndexRepository.test_index_repository_multiple_times[asyncio] ______
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:295: in test_index_repository_multiple_times
+    result1 = await mcp_registry.index_repository()
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+_ TestIndexRepository.test_index_repository_clears_project_data_first[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:312: in test_index_repository_clears_project_data_first
+    result = await mcp_registry.index_repository()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+_ TestIndexRepository.test_index_repository_deletes_project_before_updater_runs[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:337: in test_index_repository_deletes_project_before_updater_runs
+    await mcp_registry.index_repository()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+_ TestIndexRepository.test_sequential_index_only_clears_own_project_data[asyncio] _
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:368: in test_sequential_index_only_clears_own_project_data
+    await registry1.index_repository()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+________ TestQueryAndIndexIntegration.test_query_after_index[asyncio] _________
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:389: in test_query_after_index
+    index_result = await mcp_registry.index_repository()
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+_____ TestQueryAndIndexIntegration.test_index_and_query_workflow[asyncio] _____
+codebase_rag\tests\unit\mcp\test_mcp_query_and_index.py:414: in test_index_and_query_workflow
+    await mcp_registry.index_repository()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   TypeError: MCPToolsRegistry.index_repository() missing 1 required positional argument: 'repo_path'
+_____________ test_semantic_code_search_returns_formatted_results _____________
+codebase_rag\tests\unit\services\test_semantic_search.py:82: in test_semantic_code_search_returns_formatted_results
+    assert len(results) == 3
+E   assert 0 == 3
+E    +  where 0 = len([])
+_______________ test_semantic_code_search_preserves_score_order _______________
+codebase_rag\tests\unit\services\test_semantic_search.py:189: in test_semantic_code_search_preserves_score_order
+    assert results[0]["node_id"] == 3
+           ^^^^^^^^^^
+E   IndexError: list index out of range
+________________ test_get_function_source_code_returns_source _________________
+codebase_rag\tests\unit\services\test_semantic_search.py:228: in test_get_function_source_code_returns_source
+    assert result == "def func():\n    return 42"
+E   AssertionError: assert None == 'def func():\n    return 42'
+__________________ test_semantic_search_tool_formats_results __________________
+codebase_rag\tests\unit\services\test_semantic_search.py:354: in test_semantic_search_tool_formats_results
+    assert "Found 3 semantic matches" in result
+E   assert 'Found 3 semantic matches' in "No semantic matches found for query: 'find handlers'. This could mean:\n1. No functions match this description\n2. Semantic search dependencies are not installed\n3. No embeddings have been generated yet"
+________________ test_get_function_source_tool_returns_source _________________
+codebase_rag\tests\unit\services\test_semantic_search.py:419: in test_get_function_source_tool_returns_source
+    assert "Source code for node ID 123" in result
+E   AssertionError: assert 'Source code for node ID 123' in 'Could not retrieve source code for node ID 123. The node may not exist or source file may be unavailable.'
+============================== warnings summary ===============================
+codebase_rag/tests/integration/mcp/test_mcp_tools_integration.py: 3 warnings
+codebase_rag/tests/unit/mcp/test_mcp_list_directory.py: 17 warnings
+codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py: 24 warnings
+  D:\PROGRAMMING\code-graph-rag\codebase_rag\infrastructure\parser_loader.py:477: DeprecationWarning: int argument support is deprecated
+    language = Language(lang_obj)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED codebase_rag/tests/integration/e2e/test_sprint1_integration.py::test_sprint1_components_work_together
+FAILED codebase_rag/tests/integration/mcp/test_mcp_tools_integration.py::TestMCPToolsIntegration::test_list_directory_works[asyncio]
+FAILED codebase_rag/tests/unit/graph/test_graph_algorithms_smoke.py::test_graph_algorithms_sets_properties
+FAILED codebase_rag/tests/unit/handlers/utils/test_parser_loader_windows_guard.py::test_windows_guard_blocks_graphql_and_vue
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryBasic::test_list_root_directory[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryBasic::test_list_subdirectory[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryBasic::test_list_nested_directory[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryEdgeCases::test_list_file_instead_of_directory[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryEdgeCases::test_list_directory_with_special_characters[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryEdgeCases::test_list_directory_with_hidden_files[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryPathHandling::test_list_with_relative_path[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_list_directory.py::TestListDirectoryOutput::test_output_contains_only_names_not_paths[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_index_repository_success[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_index_repository_creates_graph_updater[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_index_repository_handles_errors[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_index_repository_with_empty_directory[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_index_repository_multiple_times[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_index_repository_clears_project_data_first[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_index_repository_deletes_project_before_updater_runs[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestIndexRepository::test_sequential_index_only_clears_own_project_data[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestQueryAndIndexIntegration::test_query_after_index[asyncio]
+FAILED codebase_rag/tests/unit/mcp/test_mcp_query_and_index.py::TestQueryAndIndexIntegration::test_index_and_query_workflow[asyncio]
+FAILED codebase_rag/tests/unit/services/test_semantic_search.py::test_semantic_code_search_returns_formatted_results
+FAILED codebase_rag/tests/unit/services/test_semantic_search.py::test_semantic_code_search_preserves_score_order
+FAILED codebase_rag/tests/unit/services/test_semantic_search.py::test_get_function_source_code_returns_source
+FAILED codebase_rag/tests/unit/services/test_semantic_search.py::test_semantic_search_tool_formats_results
+FAILED codebase_rag/tests/unit/services/test_semantic_search.py::test_get_function_source_tool_returns_source
+27 failed, 26 deselected, 44 warnings in 53.04s

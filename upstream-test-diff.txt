@@ -1,0 +1,182 @@
+diff --git a/codebase_rag/tests/test_github_issues_integration.py b/codebase_rag/tests/test_github_issues_integration.py
+index 2b6bc08..4239456 100644
+--- a/codebase_rag/tests/test_github_issues_integration.py
++++ b/codebase_rag/tests/test_github_issues_integration.py
+@@ -1,7 +1,10 @@
+ import os
+ from unittest.mock import patch
+
++import pytest
++
+ from codebase_rag.config import AppConfig
++from codebase_rag.constants import GoogleProviderType
+
+
+ class TestGitHubIssuesIntegration:
+@@ -142,9 +145,6 @@ class TestGitHubIssuesIntegration:
+             assert orchestrator.endpoint == "https://api.together.xyz/v1"
+
+     def test_vertex_ai_enterprise_scenario(self) -> None:
+-        """
+-        Test enterprise Vertex AI configuration scenario.
+-        """
+         env_content = {
+             "ORCHESTRATOR_PROVIDER": "google",
+             "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
+@@ -162,9 +162,63 @@ class TestGitHubIssuesIntegration:
+             assert orchestrator.model_id == "gemini-2.5-pro"
+             assert orchestrator.project_id == "my-enterprise-project"
+             assert orchestrator.region == "us-central1"
+-            assert orchestrator.provider_type == "vertex"
++            assert orchestrator.provider_type == GoogleProviderType.VERTEX
+             assert orchestrator.service_account_file == "/path/to/service-account.json"
+
++    def test_vertex_ai_skips_api_key_validation(self) -> None:
++        env_content = {
++            "ORCHESTRATOR_PROVIDER": "google",
++            "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
++            "ORCHESTRATOR_PROJECT_ID": "my-project",
++            "ORCHESTRATOR_REGION": "us-central1",
++            "ORCHESTRATOR_PROVIDER_TYPE": "vertex",
++            "ORCHESTRATOR_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
++            "CYPHER_PROVIDER": "google",
++            "CYPHER_MODEL": "gemini-2.5-flash",
++            "CYPHER_PROJECT_ID": "my-project",
++            "CYPHER_REGION": "us-central1",
++            "CYPHER_PROVIDER_TYPE": "vertex",
++            "CYPHER_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
++        }
++
++        with patch.dict(os.environ, env_content):
++            config = AppConfig()
++
++            orchestrator = config.active_orchestrator_config
++            orchestrator.validate_api_key("orchestrator")
++
++            cypher = config.active_cypher_config
++            cypher.validate_api_key("cypher")
++
++    def test_vertex_ai_with_google_api_key_env_does_not_error(self) -> None:
++        env_content = {
++            "ORCHESTRATOR_PROVIDER": "google",
++            "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
++            "ORCHESTRATOR_PROJECT_ID": "my-project",
++            "ORCHESTRATOR_PROVIDER_TYPE": "vertex",
++            "ORCHESTRATOR_SERVICE_ACCOUNT_FILE": "/path/to/sa.json",
++            "GOOGLE_API_KEY": "stray-key-from-env",
++        }
++
++        with patch.dict(os.environ, env_content):
++            config = AppConfig()
++            orchestrator = config.active_orchestrator_config
++            orchestrator.validate_api_key("orchestrator")
++
++    def test_google_gla_without_api_key_raises(self) -> None:
++        env_content = {
++            "ORCHESTRATOR_PROVIDER": "google",
++            "ORCHESTRATOR_MODEL": "gemini-2.5-pro",
++            "ORCHESTRATOR_PROVIDER_TYPE": "gla",
++            "ORCHESTRATOR_API_KEY": "",
++        }
++
++        with patch.dict(os.environ, env_content):
++            config = AppConfig()
++            orchestrator = config.active_orchestrator_config
++            with pytest.raises(ValueError, match="API Key Missing"):
++                orchestrator.validate_api_key("orchestrator")
++
+     def test_reasoning_model_thinking_budget(self) -> None:
+         """
+         Test configuration for reasoning models with thinking budget.
+diff --git a/codebase_rag/tests/test_graph_service.py b/codebase_rag/tests/test_graph_service.py
+index c31b307..2a5c8ac 100644
+--- a/codebase_rag/tests/test_graph_service.py
++++ b/codebase_rag/tests/test_graph_service.py
+@@ -45,6 +45,56 @@ class TestMemgraphIngestorInit:
+
+         assert ingestor.conn is None
+
++    def test_init_stores_auth_credentials(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username="user", password="pass"
++        )
++
++        assert ingestor._username == "user"
++        assert ingestor._password == "pass"
++
++    def test_init_defaults_auth_to_none(self) -> None:
++        ingestor = MemgraphIngestor(host="localhost", port=7687)
++
++        assert ingestor._username is None
++        assert ingestor._password is None
++
++    def test_init_raises_for_username_without_password(self) -> None:
++        with pytest.raises(ValueError, match="Both username and password"):
++            MemgraphIngestor(host="localhost", port=7687, username="user")
++
++    def test_init_raises_for_password_without_username(self) -> None:
++        with pytest.raises(ValueError, match="Both username and password"):
++            MemgraphIngestor(host="localhost", port=7687, password="pass")
++
++    def test_init_normalizes_empty_strings_to_none(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username="", password=""
++        )
++
++        assert ingestor._username is None
++        assert ingestor._password is None
++
++    def test_init_normalizes_whitespace_only_to_none(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username="  ", password="  "
++        )
++
++        assert ingestor._username is None
++        assert ingestor._password is None
++
++    def test_init_strips_whitespace_from_credentials(self) -> None:
++        ingestor = MemgraphIngestor(
++            host="localhost", port=7687, username=" user ", password=" pass "
++        )
++
++        assert ingestor._username == "user"
++        assert ingestor._password == "pass"
++
++    def test_init_raises_for_empty_password_with_valid_username(self) -> None:
++        with pytest.raises(ValueError, match="Both username and password"):
++            MemgraphIngestor(host="localhost", port=7687, username="user", password="")
++
+
+ class TestContextManager:
+     def test_enter_connects_to_memgraph(self) -> None:
+@@ -60,6 +110,30 @@ class TestContextManager:
+             assert mock_conn.autocommit is True
+             assert result is ingestor
+
++    def test_enter_passes_auth_when_provided(self) -> None:
++        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
++            mock_conn = MagicMock()
++            mock_mgclient.connect.return_value = mock_conn
++
++            ingestor = MemgraphIngestor(
++                host="testhost", port=1234, username="user", password="pass"
++            )
++            ingestor.__enter__()
++
++            mock_mgclient.connect.assert_called_once_with(
++                host="testhost", port=1234, username="user", password="pass"
++            )
++
++    def test_enter_omits_auth_when_not_provided(self) -> None:
++        with patch("codebase_rag.services.graph_service.mgclient") as mock_mgclient:
++            mock_conn = MagicMock()
++            mock_mgclient.connect.return_value = mock_conn
++
++            ingestor = MemgraphIngestor(host="testhost", port=1234)
++            ingestor.__enter__()
++
++            mock_mgclient.connect.assert_called_once_with(host="testhost", port=1234)
++
+     def test_exit_flushes_and_closes_connection(self) -> None:
+         ingestor = MemgraphIngestor(host="localhost", port=7687)
+         mock_conn = MagicMock()

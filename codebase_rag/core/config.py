@@ -159,6 +159,8 @@ class ModelConfig:
         local_providers = {cs.Provider.OLLAMA, cs.Provider.LOCAL, cs.Provider.VLLM}
         if self.provider.lower() in local_providers:
             return
+        if self.provider_type == cs.GoogleProviderType.VERTEX:
+            return
         if (
             not self.api_key
             or not self.api_key.strip()
@@ -185,6 +187,8 @@ class AppConfig(BaseSettings):
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
+    MEMGRAPH_USERNAME: str | None = None
+    MEMGRAPH_PASSWORD: str | None = None
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
 
