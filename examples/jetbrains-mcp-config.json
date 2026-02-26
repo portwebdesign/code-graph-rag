@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "code-graph-rag": {
+      "command": "python",
+      "args": [
+        "-m",
+        "codebase_rag.cli",
+        "mcp-server"
+      ],
+      "cwd": "D:/PROGRAMMING/code-graph-rag",
+      "env": {
+        "TARGET_REPO_PATH": "D:/PROGRAMMING/code-graph-rag",
+        "CYPHER_PROVIDER": "ollama",
+        "CYPHER_MODEL": "codellama",
+        "ORCHESTRATOR_PROVIDER": "ollama",
+        "ORCHESTRATOR_MODEL": "llama3.2",
+        "MEMGRAPH_HOST": "localhost",
+        "MEMGRAPH_PORT": "7687"
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "code-graph-rag": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "D:/PROGRAMMING/code-graph-rag",
+        "cgr",
+        "mcp-server"
+      ],
+      "env": {
+        "TARGET_REPO_PATH": "D:/PROGRAMMING/code-graph-rag",
+        "CYPHER_PROVIDER": "ollama",
+        "CYPHER_MODEL": "codellama",
+        "ORCHESTRATOR_PROVIDER": "ollama",
+        "ORCHESTRATOR_MODEL": "llama3.2"
+      }
+    }
+  }
+}
