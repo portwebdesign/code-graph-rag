@@ -41,6 +41,31 @@ def mcp_registry(temp_test_repo: Path) -> MCPToolsRegistry:
 
 
 class TestMCPAnalysisTools:
+    async def test_list_analysis_artifacts_returns_empty_when_missing_dir(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        result = await mcp_registry.list_analysis_artifacts()
+
+        assert result.get("count") == 0
+        assert result.get("artifacts") == []
+
+    async def test_list_analysis_artifacts_returns_metadata(
+        self, mcp_registry: MCPToolsRegistry, temp_test_repo: Path
+    ) -> None:
+        report_dir = temp_test_repo / "output" / "analysis"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "security_report.json").write_text("[]", encoding="utf-8")
+        (report_dir / "migration_plan.md").write_text("# plan", encoding="utf-8")
+
+        result = await mcp_registry.list_analysis_artifacts()
+
+        assert result.get("count") == 2
+        artifacts = cast(list[dict[str, object]], result.get("artifacts", []))
+        assert artifacts[0].get("name") == "migration_plan.md"
+        assert artifacts[1].get("name") == "security_report.json"
+        assert "size_bytes" in artifacts[0]
+        assert "modified_at" in artifacts[0]
+
     async def test_run_analysis_ok(
         self, mcp_registry: MCPToolsRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -60,6 +85,28 @@ class TestMCPAnalysisTools:
 
         assert result.get("status") == "ok"
         assert called["value"] is True
+
+    async def test_run_analysis_retries_on_transient_conflict(
+        self, mcp_registry: MCPToolsRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls = {"count": 0}
+
+        class DummyRunner:
+            def __init__(self, ingestor: object, repo_path: Path) -> None:
+                self.ingestor = ingestor
+                self.repo_path = repo_path
+
+            def run_all(self) -> None:
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise Exception("Cannot resolve conflicting transactions")
+
+        monkeypatch.setattr("codebase_rag.mcp.tools.AnalysisRunner", DummyRunner)
+
+        result = await mcp_registry.run_analysis()
+
+        assert result.get("status") == "ok"
+        assert calls["count"] == 2
 
     async def test_get_analysis_report_parses_json(
         self, mcp_registry: MCPToolsRegistry
@@ -106,3 +153,31 @@ class TestMCPAnalysisTools:
 
         assert result.get("artifact") == "dead_code_report"
         assert "items" in str(result.get("content", ""))
+
+    async def test_get_analysis_artifact_reads_markdown_file_by_base_name(
+        self, mcp_registry: MCPToolsRegistry, temp_test_repo: Path
+    ) -> None:
+        report_dir = temp_test_repo / "output" / "analysis"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_file = report_dir / "migration_plan.md"
+        report_file.write_text("# plan", encoding="utf-8")
+
+        result = await mcp_registry.get_analysis_artifact("migration_plan")
+
+        assert result.get("artifact") == "migration_plan"
+        assert result.get("filename") == "migration_plan.md"
+        assert "# plan" in str(result.get("content", ""))
+
+    async def test_get_analysis_artifact_not_found_returns_available_list(
+        self, mcp_registry: MCPToolsRegistry, temp_test_repo: Path
+    ) -> None:
+        report_dir = temp_test_repo / "output" / "analysis"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "security_report.json").write_text("[]", encoding="utf-8")
+
+        result = await mcp_registry.get_analysis_artifact("does_not_exist")
+
+        assert result.get("error") == "artifact_not_found"
+        assert "security_report.json" in cast(
+            list[str], result.get("available_artifacts", [])
+        )

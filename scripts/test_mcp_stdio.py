@@ -13,6 +13,8 @@ from pathlib import Path
 
 async def send_request(process: subprocess.Popen, request: dict) -> dict:
     """Send a JSON-RPC request and read response."""
+    if process.stdin is None or process.stdout is None:
+        raise RuntimeError("Subprocess stdio streams are not available")
     request_json = json.dumps(request) + "\n"
     process.stdin.write(request_json.encode())
     process.stdin.flush()
@@ -83,7 +85,9 @@ async def test_mcp_server():
 
     except Exception as e:
         print(f"\n❌ Error: {e}")
-        stderr = process.stderr.read().decode()
+        stderr = ""
+        if process.stderr is not None:
+            stderr = process.stderr.read().decode()
         if stderr:
             print(f"Server errors:\n{stderr}")
 

@@ -8,6 +8,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from codebase_rag.agents import MCP_SYSTEM_PROMPT
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as lg
 from codebase_rag.core.config import settings
@@ -81,6 +82,7 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         project_root=str(project_root),
         ingestor=ingestor,
         cypher_gen=cypher_generator,
+        orchestrator_prompt=MCP_SYSTEM_PROMPT,
     )
 
     logger.info(lg.MCP_SERVER_INIT_SUCCESS)
@@ -123,7 +125,15 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             result = await handler(**arguments)
 
             if returns_json and not isinstance(result, str):
-                result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
+                if isinstance(result, dict):
+                    ui_summary = str(result.get("ui_summary", "")).strip()
+                    if ui_summary:
+                        payload_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
+                        result_text = f"{ui_summary}\n\n{payload_text}"
+                    else:
+                        result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
+                else:
+                    result_text = json.dumps(result, indent=cs.MCP_JSON_INDENT)
             else:
                 result_text = str(result)
 

@@ -29,11 +29,20 @@ from codebase_rag.infrastructure.language_spec import get_language_spec
 from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.services import QueryProtocol
 from codebase_rag.services.graph_service import MemgraphIngestor
+from codebase_rag.services.graph_update_post_services import SemanticEmbeddingService
 
 
 class CodeChangeEventHandler(FileSystemEventHandler):
-    def __init__(self, updater: GraphUpdater):
+    def __init__(
+        self,
+        updater: GraphUpdater,
+        refresh_embeddings: bool = False,
+        debounce_seconds: float = 2.0,
+    ):
         self.updater = updater
+        self.refresh_embeddings = refresh_embeddings
+        self.debounce_seconds = max(0.0, min(float(debounce_seconds), 5.0))
+        self._last_processed_by_path: dict[str, float] = {}
         self.ignore_patterns = IGNORE_PATTERNS
         self.ignore_suffixes = IGNORE_SUFFIXES
         logger.info(logs.WATCHER_ACTIVE)
@@ -71,6 +80,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             return
 
         path = Path(src_path)
+        now = time.monotonic()
+        last_processed = self._last_processed_by_path.get(str(path), 0.0)
+        if (now - last_processed) < self.debounce_seconds:
+            return
+        self._last_processed_by_path[str(path)] = now
+
         relative_path_str = str(path.relative_to(self.updater.repo_path))
 
         logger.warning(
@@ -108,11 +123,30 @@ class CodeChangeEventHandler(FileSystemEventHandler):
 
         # (H) Step 5
         self.updater.ingestor.flush_all()
+
+        if self.refresh_embeddings:
+            try:
+                SemanticEmbeddingService(
+                    ingestor=self.updater.ingestor,
+                    repo_path=self.updater.repo_path,
+                    ast_cache=self.updater.ast_cache,
+                    project_name=self.updater.project_name,
+                    phase2_integration_enabled=self.updater.config.phase2_integration_enabled,
+                    phase2_embedding_strategy=self.updater.config.phase2_embedding_strategy,
+                ).generate_semantic_embeddings()
+            except Exception as exc:
+                logger.warning("Realtime embedding refresh failed: {}", exc)
+
         logger.success(logs.GRAPH_UPDATED.format(name=path.name))
 
 
 def start_watcher(
-    repo_path: str, host: str, port: int, batch_size: int | None = None
+    repo_path: str,
+    host: str,
+    port: int,
+    batch_size: int | None = None,
+    refresh_embeddings: bool = False,
+    debounce_seconds: float = settings.REALTIME_WATCHER_DEBOUNCE_SECONDS,
 ) -> None:
     repo_path_obj = Path(repo_path).resolve()
     parsers, queries = load_parsers()
@@ -126,10 +160,24 @@ def start_watcher(
         username=settings.MEMGRAPH_USERNAME,
         password=settings.MEMGRAPH_PASSWORD,
     ) as ingestor:
-        _run_watcher_loop(ingestor, repo_path_obj, parsers, queries)
+        _run_watcher_loop(
+            ingestor,
+            repo_path_obj,
+            parsers,
+            queries,
+            refresh_embeddings=refresh_embeddings,
+            debounce_seconds=debounce_seconds,
+        )
 
 
-def _run_watcher_loop(ingestor, repo_path_obj, parsers, queries):
+def _run_watcher_loop(
+    ingestor,
+    repo_path_obj,
+    parsers,
+    queries,
+    refresh_embeddings: bool = False,
+    debounce_seconds: float = settings.REALTIME_WATCHER_DEBOUNCE_SECONDS,
+):
     updater = GraphUpdater(ingestor, repo_path_obj, parsers, queries)
 
     # (H) Initial full scan builds the complete context for real-time updates
@@ -137,7 +185,11 @@ def _run_watcher_loop(ingestor, repo_path_obj, parsers, queries):
     updater.run()
     logger.success(logs.INITIAL_SCAN_DONE)
 
-    event_handler = CodeChangeEventHandler(updater)
+    event_handler = CodeChangeEventHandler(
+        updater,
+        refresh_embeddings=refresh_embeddings,
+        debounce_seconds=debounce_seconds,
+    )
     observer = Observer()
     observer.schedule(event_handler, str(repo_path_obj), recursive=True)
     observer.start()
@@ -174,11 +226,32 @@ def main(
             callback=_validate_positive_int,
         ),
     ] = None,
+    refresh_embeddings: Annotated[
+        bool,
+        typer.Option(
+            "--refresh-embeddings",
+            help="Regenerate semantic embeddings after each realtime graph update.",
+        ),
+    ] = False,
+    debounce_seconds: Annotated[
+        float,
+        typer.Option(
+            "--debounce-seconds",
+            help="Debounce delay for frequent file events (recommended 2-5 seconds).",
+        ),
+    ] = settings.REALTIME_WATCHER_DEBOUNCE_SECONDS,
 ) -> None:
     logger.remove()
     logger.add(sys.stdout, format=REALTIME_LOGGER_FORMAT, level=LOG_LEVEL_INFO)
     logger.info(logs.LOGGER_CONFIGURED)
-    start_watcher(repo_path, host, port, batch_size)
+    start_watcher(
+        repo_path,
+        host,
+        port,
+        batch_size,
+        refresh_embeddings=refresh_embeddings,
+        debounce_seconds=debounce_seconds,
+    )
 
 
 if __name__ == "__main__":

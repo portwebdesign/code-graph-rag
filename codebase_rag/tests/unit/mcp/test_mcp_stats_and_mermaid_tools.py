@@ -47,17 +47,166 @@ class TestMCPStatsAndMermaidTools:
         ingestor = cast(MagicMock, mcp_registry.ingestor)
         ingestor.fetch_all.return_value = [{"name": "n1"}]
 
-        read_result = await mcp_registry.run_cypher("MATCH (n) RETURN n", None, False)
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_read = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "RETURN m.name AS name LIMIT 10"
+        )
+
+        read_result = await mcp_registry.run_cypher(scoped_read, None, False)
 
         assert read_result.get("status") == "ok"
         assert read_result.get("results") == [{"name": "n1"}]
 
+        scoped_write = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "SET m.last_seen_at = datetime()"
+        )
+
         write_result = await mcp_registry.run_cypher(
-            "CREATE (n:Test)", '{"name": "ok"}', True
+            scoped_write,
+            None,
+            True,
+            user_requested=True,
+            reason="User explicitly requested graph write for maintenance",
         )
 
         assert write_result.get("status") == "ok"
         ingestor.execute_write.assert_called()
+
+    async def test_run_cypher_rejects_unscoped_read(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        result = await mcp_registry.run_cypher("MATCH (n) RETURN n", None, False)
+
+        assert "error" in result
+        assert result.get("results") == []
+
+    async def test_run_cypher_write_requires_user_request(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_write = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "SET m.last_seen_at = datetime()"
+        )
+
+        result = await mcp_registry.run_cypher(
+            scoped_write,
+            None,
+            True,
+            user_requested=False,
+            reason="Attempted write without explicit user request",
+        )
+
+        assert "error" in result
+        assert result.get("results") == []
+
+    async def test_run_cypher_write_requires_reason(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_write = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "SET m.last_seen_at = datetime()"
+        )
+
+        result = await mcp_registry.run_cypher(
+            scoped_write,
+            None,
+            True,
+            user_requested=True,
+            reason="   ",
+        )
+
+        assert "error" in result
+        assert result.get("results") == []
+
+    async def test_run_cypher_write_rejects_unknown_label(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"affected": 1}]
+        project_name = Path(mcp_registry.project_root).resolve().name
+        unknown_label_write = (
+            f"MATCH (x:UnknownLabel {{project_name: '{project_name}'}}) "
+            "SET x.flag = true"
+        )
+
+        result = await mcp_registry.run_cypher(
+            unknown_label_write,
+            None,
+            True,
+            user_requested=True,
+            reason="Refactor metadata update for module consistency",
+        )
+
+        assert "error" in result
+        assert result.get("results") == []
+
+    async def test_run_cypher_write_rejects_destructive_keyword(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"affected": 1}]
+        project_name = Path(mcp_registry.project_root).resolve().name
+        destructive_write = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) DETACH DELETE m"
+        )
+
+        result = await mcp_registry.run_cypher(
+            destructive_write,
+            None,
+            True,
+            user_requested=True,
+            reason="Refactor module relation cleanup safely",
+        )
+
+        assert "error" in result
+        assert result.get("results") == []
+
+    async def test_run_cypher_write_rejects_low_intent_quality(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"affected": 1}]
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_write = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "SET m.last_seen_at = datetime()"
+        )
+
+        result = await mcp_registry.run_cypher(
+            scoped_write,
+            None,
+            True,
+            user_requested=True,
+            reason="update",
+        )
+
+        assert "error" in result
+        assert result.get("results") == []
+
+    async def test_run_cypher_write_rejects_impact_exceeded(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"affected": 999}]
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_write = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) SET m.flag = true"
+        )
+
+        result = await mcp_registry.run_cypher(
+            scoped_write,
+            None,
+            True,
+            user_requested=True,
+            reason="Refactor module flags for dependency fix",
+        )
+
+        assert "error" in result
+        assert result.get("results") == []
 
     async def test_get_graph_stats(self, mcp_registry: MCPToolsRegistry) -> None:
         ingestor = cast(MagicMock, mcp_registry.ingestor)

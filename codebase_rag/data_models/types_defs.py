@@ -472,7 +472,7 @@ class MCPInputSchemaProperty(TypedDict, total=False):
 
     type: str
     description: str
-    default: str
+    default: object
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]

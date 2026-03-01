@@ -48,6 +48,8 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
     """Create an MCP tools registry with mocked dependencies."""
     mock_ingestor = MagicMock()
     mock_cypher_gen = MagicMock()
+    mock_cypher_gen.generate = AsyncMock()
+    mock_ingestor.fetch_all = MagicMock(return_value=[])
 
     registry = MCPToolsRegistry(
         project_root=str(temp_project_root),
@@ -55,29 +57,29 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
         cypher_gen=mock_cypher_gen,
     )
 
-    registry._query_tool = MagicMock()
-    registry._query_tool.function = AsyncMock()
-
     return registry
 
 
 class TestQueryCodeGraph:
     """Test query_code_graph functionality."""
 
+    @staticmethod
+    def _scoped_cypher(mcp_registry: MCPToolsRegistry) -> str:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        return (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "RETURN m.name AS name LIMIT 50"
+        )
+
     async def test_query_finds_functions(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for functions in the code graph."""
-        mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            MagicMock(
-                model_dump=lambda: {
-                    "cypher_query": "MATCH (f:Function) RETURN f.name",
-                    "results": [
-                        {"name": "add"},
-                        {"name": "multiply"},
-                    ],
-                    "summary": "Found 2 functions",
-                }
-            )
-        )
+        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+            mcp_registry
+        )  # type: ignore[attr-defined]
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {"name": "add"},
+            {"name": "multiply"},
+        ]
 
         result = await mcp_registry.query_code_graph("Find all functions")
 
@@ -85,20 +87,15 @@ class TestQueryCodeGraph:
         assert len(result["results"]) == 2
         assert result["results"][0]["name"] == "add"
         assert result["results"][1]["name"] == "multiply"
-        assert "cypher_query" in result
+        assert "query_used" in result
         assert "summary" in result
 
     async def test_query_finds_classes(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for classes in the code graph."""
-        mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            MagicMock(
-                model_dump=lambda: {
-                    "cypher_query": "MATCH (c:Class) RETURN c.name",
-                    "results": [{"name": "Calculator"}],
-                    "summary": "Found 1 class",
-                }
-            )
-        )
+        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+            mcp_registry
+        )  # type: ignore[attr-defined]
+        mcp_registry.ingestor.fetch_all.return_value = [{"name": "Calculator"}]  # type: ignore[attr-defined]
 
         result = await mcp_registry.query_code_graph("Find all classes")
 
@@ -109,72 +106,56 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test querying for function call relationships."""
-        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "cypher_query": "MATCH (f:Function)-[:CALLS]->(g:Function) RETURN f.name, g.name",
-                "results": [
-                    {"f.name": "main", "g.name": "add"},
-                    {"f.name": "main", "g.name": "multiply"},
-                ],
-                "summary": "Found 2 function call relationships",
-            }
-        )
+        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+            mcp_registry
+        )  # type: ignore[attr-defined]
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {"f.name": "main", "g.name": "add"},
+            {"f.name": "main", "g.name": "multiply"},
+        ]
 
         result = await mcp_registry.query_code_graph("What functions does main call?")
 
         assert len(result["results"]) == 2
-        assert result["summary"] == "Found 2 function call relationships"
+        assert "Returned 2 rows" in result["summary"]
 
     async def test_query_with_no_results(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query that returns no results."""
-        mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            MagicMock(
-                model_dump=lambda: {
-                    "cypher_query": "MATCH (n:NonExistent) RETURN n",
-                    "results": [],
-                    "summary": "No results found",
-                }
-            )
-        )
+        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+            mcp_registry
+        )  # type: ignore[attr-defined]
+        mcp_registry.ingestor.fetch_all.return_value = []  # type: ignore[attr-defined]
 
         result = await mcp_registry.query_code_graph("Find nonexistent nodes")
 
         assert result["results"] == []
-        assert "No results" in result["summary"]
+        assert "Returned 0 rows" in result["summary"]
 
     async def test_query_with_complex_natural_language(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test complex natural language query."""
-        mcp_registry._query_tool.function.return_value = MagicMock(  # ty: ignore[invalid-assignment]
-            model_dump=lambda: {
-                "cypher_query": "MATCH (f:Function)-[:DEFINED_IN]->(m:Module) WHERE m.name = 'calculator' RETURN f.name",
-                "results": [
-                    {"name": "add"},
-                    {"name": "multiply"},
-                ],
-                "summary": "Found 2 functions in calculator module",
-            }
-        )
+        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+            mcp_registry
+        )  # type: ignore[attr-defined]
+        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            {"name": "add"},
+            {"name": "multiply"},
+        ]
 
         result = await mcp_registry.query_code_graph(
             "What functions are defined in the calculator module?"
         )
 
         assert len(result["results"]) == 2
-        assert "cypher_query" in result
+        assert "query_used" in result
 
     async def test_query_handles_unicode(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query with unicode characters."""
-        mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-            MagicMock(
-                model_dump=lambda: {
-                    "cypher_query": "MATCH (f:Function) WHERE f.name = '你好' RETURN f",
-                    "results": [{"name": "你好"}],
-                    "summary": "Found 1 function",
-                }
-            )
-        )
+        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+            mcp_registry
+        )  # type: ignore[attr-defined]
+        mcp_registry.ingestor.fetch_all.return_value = [{"name": "你好"}]  # type: ignore[attr-defined]
 
         result = await mcp_registry.query_code_graph("Find function 你好")
 
@@ -182,7 +163,7 @@ class TestQueryCodeGraph:
 
     async def test_query_error_handling(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test error handling during query execution."""
-        mcp_registry._query_tool.function.side_effect = Exception(  # ty: ignore[invalid-assignment]
+        mcp_registry.cypher_gen.generate.side_effect = Exception(  # type: ignore[attr-defined]
             "Database error"
         )
 
@@ -197,20 +178,26 @@ class TestQueryCodeGraph:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test that query parameter is correctly passed."""
-        mock_func = mcp_registry._query_tool.function
+        mock_func = mcp_registry.cypher_gen.generate  # type: ignore[attr-defined]
         assert isinstance(mock_func, AsyncMock)
-        mock_func.return_value = MagicMock(
-            model_dump=lambda: {
-                "cypher_query": "MATCH (n) RETURN n",
-                "results": [],
-                "summary": "Query executed",
-            }
-        )
+        mock_func.return_value = self._scoped_cypher(mcp_registry)
+        mcp_registry.ingestor.fetch_all.return_value = []  # type: ignore[attr-defined]
 
         query = "Find all nodes"
         await mcp_registry.query_code_graph(query)
 
-        mock_func.assert_called_once_with(query)
+        called_prompt = mock_func.call_args.args[0]
+        assert query in called_prompt
+
+    async def test_query_rejects_unscoped_generated_cypher(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry.cypher_gen.generate.return_value = "MATCH (n) RETURN n LIMIT 50"  # type: ignore[attr-defined]
+
+        result = await mcp_registry.query_code_graph("Find all nodes")
+
+        assert "error" in result
+        assert result["results"] == []
 
 
 class TestIndexRepository:
@@ -225,7 +212,11 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            result = await mcp_registry.index_repository(str(mcp_registry.project_root))
+            result = await mcp_registry.index_repository(
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
 
             assert "Error:" not in result
             assert "Success" in result or "indexed" in result.lower()
@@ -241,7 +232,11 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            await mcp_registry.index_repository(str(mcp_registry.project_root))
+            await mcp_registry.index_repository(
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
 
             mock_updater_class.assert_called_once()
             call_kwargs = mock_updater_class.call_args.kwargs
@@ -259,7 +254,11 @@ class TestIndexRepository:
             mock_updater.run.side_effect = Exception("Indexing failed")
             mock_updater_class.return_value = mock_updater
 
-            result = await mcp_registry.index_repository(str(mcp_registry.project_root))
+            result = await mcp_registry.index_repository(
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
 
             assert "Error" in result
             assert "Indexing failed" in result
@@ -280,7 +279,9 @@ class TestIndexRepository:
             mock_updater_class.return_value = mock_updater
 
             result = await empty_registry.index_repository(
-                str(empty_registry.project_root)
+                str(empty_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
             )
 
             assert "Error:" not in result or "Success" in result
@@ -295,12 +296,16 @@ class TestIndexRepository:
             mock_updater_class.return_value = mock_updater
 
             result1 = await mcp_registry.index_repository(
-                str(mcp_registry.project_root)
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
             )
             assert "Error:" not in result1
 
             result2 = await mcp_registry.index_repository(
-                str(mcp_registry.project_root)
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
             )
             assert "Error:" not in result2
 
@@ -315,11 +320,44 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            result = await mcp_registry.index_repository(str(mcp_registry.project_root))
+            result = await mcp_registry.index_repository(
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
 
             project_name = temp_project_root.resolve().name
             mcp_registry.ingestor.delete_project.assert_called_once_with(project_name)  # type: ignore[attr-defined]
             assert "Error:" not in result
+
+    async def test_index_repository_retries_transient_delete_conflict(
+        self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
+    ) -> None:
+        call_count = {"delete": 0}
+
+        def _delete_with_conflict(project_name: str) -> None:
+            _ = project_name
+            call_count["delete"] += 1
+            if call_count["delete"] == 1:
+                raise Exception("Cannot resolve conflicting transactions")
+
+        mcp_registry.ingestor.delete_project = MagicMock(
+            side_effect=_delete_with_conflict
+        )  # type: ignore[method-assign]
+
+        with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
+            mock_updater = MagicMock()
+            mock_updater.run.return_value = None
+            mock_updater_class.return_value = mock_updater
+
+            result = await mcp_registry.index_repository(
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
+
+            assert "Error:" not in result
+            assert call_count["delete"] == 2
 
     async def test_index_repository_deletes_project_before_updater_runs(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
@@ -340,7 +378,11 @@ class TestIndexRepository:
             mock_updater.run = MagicMock(side_effect=mock_run)
             mock_updater_class.return_value = mock_updater
 
-            await mcp_registry.index_repository(str(mcp_registry.project_root))
+            await mcp_registry.index_repository(
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
 
             assert call_order == ["delete", "run"]
 
@@ -371,10 +413,18 @@ class TestIndexRepository:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            await registry1.index_repository(str(registry1.project_root))
+            await registry1.index_repository(
+                str(registry1.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
             mock_ingestor.delete_project.assert_called_with("project1")
 
-            await registry2.index_repository(str(registry2.project_root))
+            await registry2.index_repository(
+                str(registry2.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
+            )
             mock_ingestor.delete_project.assert_called_with("project2")
 
             assert mock_ingestor.delete_project.call_count == 2
@@ -393,19 +443,17 @@ class TestQueryAndIndexIntegration:
             mock_updater_class.return_value = mock_updater
 
             index_result = await mcp_registry.index_repository(
-                str(mcp_registry.project_root)
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
             )
             assert "Error:" not in index_result
 
-            mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-                MagicMock(
-                    model_dump=lambda: {
-                        "cypher_query": "MATCH (f:Function) RETURN f.name",
-                        "results": [{"name": "add"}],
-                        "summary": "Found 1 function",
-                    }
-                )
+            project_name = Path(mcp_registry.project_root).resolve().name
+            mcp_registry.cypher_gen.generate.return_value = (  # type: ignore[attr-defined]
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m.name AS name LIMIT 50"
             )
+            mcp_registry.ingestor.fetch_all.return_value = [{"name": "add"}]  # type: ignore[attr-defined]
 
             query_result = await mcp_registry.query_code_graph("Find all functions")
             assert len(query_result["results"]) >= 0
@@ -419,29 +467,24 @@ class TestQueryAndIndexIntegration:
             mock_updater.run.return_value = None
             mock_updater_class.return_value = mock_updater
 
-            await mcp_registry.index_repository(str(mcp_registry.project_root))
-
-            mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-                MagicMock(
-                    model_dump=lambda: {
-                        "cypher_query": "MATCH (f:Function) RETURN f",
-                        "results": [{"name": "add"}, {"name": "multiply"}],
-                        "summary": "Found 2 functions",
-                    }
-                )
+            await mcp_registry.index_repository(
+                str(mcp_registry.project_root),
+                user_requested=True,
+                reason="User explicitly requested indexing",
             )
+
+            project_name = Path(mcp_registry.project_root).resolve().name
+            mcp_registry.cypher_gen.generate.return_value = (  # type: ignore[attr-defined]
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m.name AS name LIMIT 50"
+            )
+            mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+                {"name": "add"},
+                {"name": "multiply"},
+            ]
             result = await mcp_registry.query_code_graph("Find all functions")
             assert len(result["results"]) == 2
 
-            mcp_registry._query_tool.function.return_value = (  # ty: ignore[invalid-assignment]
-                MagicMock(
-                    model_dump=lambda: {
-                        "cypher_query": "MATCH (c:Class) RETURN c",
-                        "results": [{"name": "Calculator"}],
-                        "summary": "Found 1 class",
-                    }
-                )
-            )
+            mcp_registry.ingestor.fetch_all.return_value = [{"name": "Calculator"}]  # type: ignore[attr-defined]
             result = await mcp_registry.query_code_graph("Find all classes")
             assert len(result["results"]) == 1
 

@@ -116,3 +116,16 @@ def test_unsupported_file_types_are_ignored(
     assert mock_updater.ingestor.execute_write.call_count == 2
     mock_updater.factory.definition_processor.process_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_called_once()
+
+
+def test_debounce_skips_burst_updates(mock_updater: MagicMock, temp_repo: Path) -> None:
+    handler = CodeChangeEventHandler(mock_updater, debounce_seconds=5.0)
+    test_file = temp_repo / "burst.py"
+    test_file.write_text(encoding="utf-8", data="x = 1")
+    event = FileModifiedEvent(str(test_file))
+
+    handler.dispatch(event)
+    handler.dispatch(event)
+
+    assert mock_updater.ingestor.execute_write.call_count == 2
+    mock_updater.ingestor.flush_all.assert_called_once()

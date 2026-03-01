@@ -2705,15 +2705,46 @@ class MCPToolName(StrEnum):
     """Enumerates the names of tools available in the MCP server."""
 
     LIST_PROJECTS = "list_projects"
+    SELECT_ACTIVE_PROJECT = "select_active_project"
+    DETECT_PROJECT_DRIFT = "detect_project_drift"
     DELETE_PROJECT = "delete_project"
     WIPE_DATABASE = "wipe_database"
     INDEX_REPOSITORY = "index_repository"
+    SYNC_GRAPH_UPDATES = "sync_graph_updates"
     QUERY_CODE_GRAPH = "query_code_graph"
+    SEMANTIC_SEARCH = "semantic_search"
+    GET_FUNCTION_SOURCE = "get_function_source"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
+    GET_GRAPH_STATS = "get_graph_stats"
+    GET_DEPENDENCY_STATS = "get_dependency_stats"
+    GET_ANALYSIS_REPORT = "get_analysis_report"
+    GET_ANALYSIS_METRIC = "get_analysis_metric"
+    IMPACT_GRAPH = "impact_graph"
+    RUN_ANALYSIS = "run_analysis"
+    RUN_ANALYSIS_SUBSET = "run_analysis_subset"
+    SECURITY_SCAN = "security_scan"
+    PERFORMANCE_HOTSPOTS = "performance_hotspots"
+    GET_ANALYSIS_ARTIFACT = "get_analysis_artifact"
+    LIST_ANALYSIS_ARTIFACTS = "list_analysis_artifacts"
+    EXPORT_MERMAID = "export_mermaid"
+    RUN_CYPHER = "run_cypher"
+    APPLY_DIFF_SAFE = "apply_diff_safe"
+    REFACTOR_BATCH = "refactor_batch"
+    PLAN_TASK = "plan_task"
+    TEST_GENERATE = "test_generate"
+    MEMORY_ADD = "memory_add"
+    MEMORY_LIST = "memory_list"
+    MEMORY_QUERY_PATTERNS = "memory_query_patterns"
+    EXECUTION_FEEDBACK = "execution_feedback"
+    TEST_QUALITY_GATE = "test_quality_gate"
+    GET_TOOL_USEFULNESS_RANKING = "get_tool_usefulness_ranking"
+    VALIDATE_DONE_DECISION = "validate_done_decision"
+    ORCHESTRATE_REALTIME_FLOW = "orchestrate_realtime_flow"
+    GET_EXECUTION_READINESS = "get_execution_readiness"
 
 
 # (H) MCP environment variables
@@ -2751,6 +2782,11 @@ class MCPParamName(StrEnum):
     """Enumerates parameter names used in MCP tool arguments."""
 
     PROJECT_NAME = "project_name"
+    USER_REQUESTED = "user_requested"
+    DRIFT_CONFIRMED = "drift_confirmed"
+    QUERY = "query"
+    TOP_K = "top_k"
+    NODE_ID = "node_id"
     CONFIRM = "confirm"
     NATURAL_LANGUAGE_QUERY = "natural_language_query"
     QUALIFIED_NAME = "qualified_name"
@@ -2762,6 +2798,33 @@ class MCPParamName(StrEnum):
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
     REPO_PATH = "repo_path"
+    METRIC_NAME = "metric_name"
+    DEPTH = "depth"
+    MODULES = "modules"
+    ARTIFACT_NAME = "artifact_name"
+    DIAGRAM = "diagram"
+    OUTPUT_PATH = "output_path"
+    CYPHER = "cypher"
+    PARAMS = "params"
+    WRITE = "write"
+    REASON = "reason"
+    CHUNKS = "chunks"
+    GOAL = "goal"
+    CONTEXT = "context"
+    ENTRY = "entry"
+    TAGS = "tags"
+    FILTER_TAGS = "filter_tags"
+    SUCCESS_ONLY = "success_only"
+    ACTION = "action"
+    RESULT = "result"
+    ISSUES = "issues"
+    COVERAGE = "coverage"
+    EDGE_CASES = "edge_cases"
+    NEGATIVE_TESTS = "negative_tests"
+    SYNC_REASON = "sync_reason"
+    AUTO_EXECUTE_NEXT = "auto_execute_next"
+    VERIFY_DRIFT = "verify_drift"
+    DEBOUNCE_SECONDS = "debounce_seconds"
 
 
 # (H) MCP server constants
@@ -2777,6 +2840,51 @@ MCP_PAGINATION_HEADER = "# Lines {start}-{end} of {total}\n"
 MCP_INDEX_SUCCESS = "Successfully indexed repository at {path}. Knowledge graph has been updated (previous data cleared)."
 MCP_INDEX_SUCCESS_PROJECT = "Successfully indexed repository at {path}. Project '{project_name}' has been updated."
 MCP_INDEX_ERROR = "Error indexing repository: {error}"
+MCP_INDEX_REQUIRES_USER_REQUEST = "Index cancelled. index_repository requires explicit user intent. Set user_requested=true only when the user clearly asked to re-index."
+MCP_INDEX_REASON_REQUIRED = (
+    "Index cancelled. Provide a non-empty reason for index_repository."
+)
+MCP_INDEX_DRIFT_CONFIRMATION_REQUIRED = "Index cancelled. Project already indexed. Set drift_confirmed=true only after proving FS↔Graph drift."
+MCP_INDEX_DRIFT_NOT_PROVEN = (
+    "Index cancelled. Drift is not proven for project '{project_name}'."
+)
+MCP_SYNC_GRAPH_REQUIRES_USER_REQUEST = "Graph sync cancelled. sync_graph_updates requires explicit user intent. Set user_requested=true only when the user clearly asked for graph refresh."
+MCP_SYNC_GRAPH_REASON_REQUIRED = (
+    "Graph sync cancelled. Provide a non-empty reason for sync_graph_updates."
+)
+MCP_QUERY_SCOPE_ERROR = "Generated Cypher is not explicitly scoped to active project '{project_name}'. Query cancelled to prevent cross-project access."
+MCP_RUN_CYPHER_SCOPE_ERROR = "run_cypher rejected. Query must be explicitly scoped to active project '{project_name}'."
+MCP_RUN_CYPHER_WRITE_REQUIRES_USER_REQUEST = "run_cypher write rejected. Set user_requested=true only when user explicitly requested write operation."
+MCP_RUN_CYPHER_REASON_REQUIRED = "run_cypher write rejected. Provide a non-empty reason describing why write is necessary."
+MCP_RUN_CYPHER_PROJECT_PARAM_MISMATCH = "run_cypher rejected. Provided $project_name parameter does not match active project '{project_name}'."
+MCP_RUN_CYPHER_WRITE_FORBIDDEN_KEYWORD = (
+    "run_cypher write rejected. Destructive keyword detected ('{keyword}')."
+)
+MCP_RUN_CYPHER_WRITE_NO_MUTATION = (
+    "run_cypher write rejected. Write mode requires one of CREATE/MERGE/SET clauses."
+)
+MCP_RUN_CYPHER_WRITE_UNKNOWN_LABELS = (
+    "run_cypher write rejected. Unknown labels detected: {labels}."
+)
+MCP_RUN_CYPHER_WRITE_UNKNOWN_REL_TYPES = (
+    "run_cypher write rejected. Unknown relationship types detected: {rel_types}."
+)
+MCP_RUN_CYPHER_LOW_INTENT_QUALITY = "run_cypher write rejected. Reason quality is too low; provide specific intent such as fix/refactor/add test/update dependency."
+MCP_RUN_CYPHER_DRY_RUN_UNAVAILABLE = "run_cypher write rejected. Safe dry-run impact analysis is unavailable for this query shape."
+MCP_RUN_CYPHER_WRITE_IMPACT_EXCEEDED = "run_cypher write rejected. Estimated impact {impact} exceeds maximum allowed {max_impact}."
+MCP_CONFIDENCE_GATE_BLOCKED = "Change blocked by confidence gate. score={score}/3 is below required threshold {required}."
+MCP_PATTERN_REUSE_BLOCKED = "Change blocked by pattern reuse gate. score={score} is below required threshold {required}."
+MCP_PLAN_GATE_BLOCKED = (
+    "Change blocked by completion gate. plan_task must run before batch refactor."
+)
+MCP_COMPLETION_GATE_BLOCKED = (
+    "Change blocked by completion gate. Missing required evidence: {missing}."
+)
+MCP_IMPACT_GATE_BLOCKED = (
+    "Change blocked by impact gate. Run impact_graph before batch refactor."
+)
+MCP_TEST_QUALITY_GATE_BLOCKED = "Change blocked by test quality gate. score={score} is below required threshold {required}."
+MCP_REPLAN_REQUIRED = "Replan required due to execution feedback: {reasons}."
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"

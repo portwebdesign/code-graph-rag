@@ -327,6 +327,9 @@ make watch REPO_PATH=/path/to/your/repo
 # Python
 python realtime_updater.py /path/to/your/repo --host localhost --port 7687 --batch-size 1000
 
+# Python + realtime embedding refresh
+python realtime_updater.py /path/to/your/repo --refresh-embeddings
+
 # Makefile
 make watch REPO_PATH=/path/to/your/repo HOST=localhost PORT=7687 BATCH_SIZE=1000
 ```
@@ -347,6 +350,7 @@ cgr start --repo-path ~/my-project
 - `--host`: Memgraph host (default: `localhost`)
 - `--port`: Memgraph port (default: `7687`)
 - `--batch-size`: Number of buffered nodes/relationships before flushing to Memgraph
+- `--refresh-embeddings`: Regenerate semantic embeddings after each realtime update (optional, heavier)
 
 **Specify Custom Models:**
 ```bash
@@ -541,15 +545,46 @@ claude mcp add --transport stdio code-graph-rag \
 | Tool | Description |
 |----|-----------|
 | `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. |
+| `select_active_project` | Preflight tool to set/confirm the active repository context and return project-scoped readiness info. Optionally accepts repo_path to switch active root, then reports active project, indexed status, project-scoped graph counts, latest analysis timestamp, and enforced safety policies. |
+| `detect_project_drift` | Detect FS↔Graph drift for a repository/project before re-index decisions. Reports filesystem file counts, graph module/file counts, and drift signals. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
-| `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. Note: This preserves other projects - only the current project is re-indexed. |
+| `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. Note: This preserves other projects - only the current project is re-indexed. This tool MUST be called only when the user explicitly asks for re-indexing and requires user_requested=true. A non-empty reason is required; for already indexed projects, drift confirmation is required. |
+| `sync_graph_updates` | Refresh graph state for the active repository without deleting project data first. Uses GraphUpdater and respects incremental/git-delta configuration for faster updates. |
 | `query_code_graph` | Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. |
+| `semantic_search` | Perform semantic (vector-based) code search using embeddings. Use this for intent-based discovery such as 'auth flow' or 'error handling'. |
+| `get_function_source` | Retrieve source code for a function or method by graph node ID. Typically used after semantic_search returns candidate node IDs. |
 | `get_code_snippet` | Retrieve source code for a function, class, or method by its qualified name. Returns the source code, file path, line numbers, and docstring. |
 | `surgical_replace_code` | Surgically replace an exact code block in a file using diff-match-patch. Only modifies the exact target block, leaving the rest unchanged. |
 | `read_file` | Read the contents of a file from the project. Supports pagination for large files. |
 | `write_file` | Write content to a file, creating it if it doesn't exist. |
 | `list_directory` | List contents of a directory in the project. |
+| `get_graph_stats` | Get overall statistics about the knowledge graph, including node counts, relationship counts, and label distributions. Useful for understanding project scale. |
+| `get_dependency_stats` | Get statistics about module dependencies and imports in the project, including top importers and top dependents. |
+| `get_analysis_report` | Retrieve the latest full analysis report for the project, containing comprehensive code quality and security metrics. |
+| `get_analysis_metric` | Retrieve a specific latest analysis metric by name (e.g., 'security_score', 'complexity'). |
+| `impact_graph` | Analyze the blast radius of a potential change. Given a qualified name or file path, shows which other modules and functions depend on it up to a specified depth. |
+| `run_analysis` | Run the full suite of static analysis tools on the entire codebase. This can take significant time for large projects. Consider using run_analysis_subset or specific tools like security_scan for faster results. |
+| `run_analysis_subset` | Run the full analysis suite but only on a specific subset of modules. Faster than run_analysis when you only care about changes in certain components. |
+| `security_scan` | Run only the security, secret scanning, and taint tracking analysis modules on the codebase. Returns a summary report of any security vulnerabilities found. |
+| `performance_hotspots` | Run only the performance hotspots analysis module to find inefficient code patterns. |
+| `get_analysis_artifact` | Retrieve a generated analysis artifact from output/analysis. Supports .json, .md and .log outputs by base name or filename. Use this for detailed raw findings and plans (e.g., dead_code_report, migration_plan.md). |
+| `list_analysis_artifacts` | List files currently available under output/analysis with metadata (filename, extension, size_bytes, modified_at). Use this to discover which artifacts can be fetched with get_analysis_artifact. |
+| `export_mermaid` | Export a Mermaid diagram generated from current graph data to disk. Provide a diagram type/name supported by MermaidExporter and optionally an output path. |
+| `run_cypher` | Execute a raw Cypher query against the Memgraph database. Use this for advanced ad-hoc querying not covered by standard tools. Query MUST be scoped to active project to avoid cross-project access. Set write=True ONLY IF you intend to modify the graph (nodes/edges). For write operations, user_requested=true and a non-empty high-quality reason are required. Write operations run safe dry-run impact analysis and are blocked when impact is too high. WARNING: Modifying the graph directly can cause inconsistencies with the actual source code. |
+| `apply_diff_safe` | Apply one or more surgical replacements in a single file. Requires 'file_path' and 'chunks', where chunks is a JSON string list of objects with 'target_code' and 'replacement_code'. |
+| `refactor_batch` | Apply multiple diff modifications across several files in a single operation. Requires 'chunks' which is a JSON formatted string containing multiple diffs. |
+| `plan_task` | Ask an agent planner to create a multi-step execution plan for a specified goal. Provide the 'goal' and optional 'context' the planner might need. Helpful for breaking down complex refactoring or feature additions. |
+| `test_generate` | Ask a specialized test-generation agent to create test cases for a specific function or class. Provide the 'goal' (e.g. 'Generate tests for codebase_rag.core.constants'). |
+| `memory_add` | Add a memory entry (context, decision, or fact) to the persistent memory store. Tags are optional but help categorize memories (e.g. 'architecture', 'auth'). |
+| `memory_list` | List recently added memory entries from the persistent memory store. |
+| `memory_query_patterns` | Query memory for similar successful patterns before planning or refactoring. Supports free-text query, optional tag filters, and success-only filtering. |
+| `execution_feedback` | Record execution outcome feedback after a tool run. If feedback indicates test failure or low coverage, the session can require replanning. |
+| `test_quality_gate` | Evaluate test quality score from coverage, edge-case, and negative-test dimensions (0..1 each). Blocks completion when total score is below threshold. |
+| `get_tool_usefulness_ranking` | Return tool usefulness telemetry ranking for the current session. Ranks tools by average usefulness score, success rate, and call count. |
+| `validate_done_decision` | Run done decision protocol using readiness gates, feedback signals, and optional validator-agent rationale. Returns done/not_done decision, blockers, and protocol checks. |
+| `orchestrate_realtime_flow` | Execute realtime GraphRAG workflow after code edits: execution_feedback -> sync_graph_updates -> validate_done_decision. Optionally verifies drift and auto-executes validate_done_decision.next_best_action. |
+| `get_execution_readiness` | Return confidence gate (graph/code/semantic), semantic pattern-reuse score, and evidence-based completion-gate status for the current session. |
 <!-- /SECTION:mcp_tools -->
 
 ### Example Usage
