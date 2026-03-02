@@ -141,7 +141,8 @@ MCP_SURGICAL_REPLACE_CODE = (
 )
 
 MCP_READ_FILE = (
-    "Read the contents of a file from the project. Supports pagination for large files."
+    "Read the contents of a file from the project. Supports pagination for large files. "
+    "Use this for implementation-level source verification, not as first step for relationship/hop analysis."
 )
 
 MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
@@ -247,7 +248,7 @@ MCP_EXPORT_MERMAID = (
 
 MCP_RUN_CYPHER = (
     "Execute a raw Cypher query against the Memgraph database. "
-    "Use this for advanced ad-hoc querying not covered by standard tools. "
+    "Use this for advanced ad-hoc querying not covered by standard tools and for explicit single-hop/multi-hop traversal control. "
     "Query MUST be scoped to active project to avoid cross-project access. "
     "Set write=True ONLY IF you intend to modify the graph (nodes/edges). "
     "For write operations, user_requested=true and a non-empty high-quality reason are required. "

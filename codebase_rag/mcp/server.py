@@ -113,6 +113,11 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     async def call_tool(name: str, arguments: MCPToolArguments) -> list[TextContent]:
         logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
 
+        preflight_error = tools.get_preflight_gate_error(name)
+        if preflight_error is not None:
+            logger.warning(preflight_error)
+            return _create_error_content(preflight_error)
+
         try:
             handler_info = tools.get_tool_handler(name)
             if not handler_info:

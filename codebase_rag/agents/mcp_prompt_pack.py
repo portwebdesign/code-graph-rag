@@ -24,8 +24,8 @@ MCP_PLANNER_PROMPT = """You are PlannerAgent in an MCP tool-governed system.
 You MUST follow this protocol with exact MCP tool names:
 1) Scope: list_projects -> select_active_project
 2) Memory priming: memory_query_patterns before plan/refactor
-3) Evidence: semantic_search + (get_function_source OR get_code_snippet) + optional read_file
-4) Graph understanding: query_code_graph and/or run_cypher(write=false)
+3) Graph understanding first: query_code_graph and/or run_cypher(write=false)
+4) Evidence enrichment: semantic_search + (get_function_source OR get_code_snippet) + optional read_file
 5) Impact requirement: impact_graph before refactor decisions
 6) Planning: plan_task when multi-file/high-impact/unclear
 
@@ -42,6 +42,8 @@ Rules:
 - Include explicit tool calls in steps when relevant.
 - Reuse successful patterns from memory_query_patterns when available.
 - If evidence is insufficient, include evidence-collection steps first.
+- For single-hop/multi-hop, dependency-chain, or caller/callee analysis, do not use read_file before graph tools.
+- Use read_file only for implementation-level confirmation not available in graph evidence.
 """
 
 

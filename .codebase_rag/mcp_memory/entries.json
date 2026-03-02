@@ -1,0 +1,699 @@
+[
+  {
+    "text": "{\"action\": \"task54_parser_multihop_report\", \"result\": \"partial_success\", \"issues\": [\"planner timeout intermittent\"], \"replan_required\": true, \"reasons\": [\"result=partial_success\"], \"timestamp\": 1772416388}",
+    "tags": [
+      "feedback",
+      "task54_parser_multihop_report",
+      "partial_success"
+    ],
+    "timestamp": 1772416388
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"code-graph-rag\", \"query\": \"List parser core modules and key classes connected to graph updater and protobuf ingestor\", \"rows\": 3, \"digest\": \"Class:code-graph-rag.codebase_rag.graph_db.graph_updater.GraphUpdater; Class:code-graph-rag.codebase_rag.services.graph_update_context.GraphUpdaterContext; Class:code-graph-rag.codebase_rag.services.protobuf_service.ProtobufFileIngestor\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1772416059
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416027}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416027
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416026}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416026
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416026}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416026
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416026}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416026
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416016}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416016
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416016}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416016
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416016}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416016
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416016}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416016
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416008}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416008
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772416008}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772416008
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415997}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415997
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415997}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415997
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415997}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415997
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415997}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415997
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415986}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415986
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415985}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415985
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415985}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415985
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415985}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415985
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415974}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415974
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415969}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415969
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415969}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415969
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415969}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415969
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415969}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415969
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772415960}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772415960
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772415960}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772415960
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772415960}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772415960
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415960}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415960
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415952}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415952
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415952}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415952
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415952}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415952
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415952}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415952
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415810}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415810
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415810}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415810
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415810}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415810
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415800}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415800
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415800}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415800
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772415800}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772415800
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415800}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415800
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"code-graph-rag\", \"query\": \"Find constants related to parser, graph ingestion, memgraph, mcp tool names, and repository scope used in the pipeline.\", \"rows\": 1, \"digest\": \"File:memgraph-patch.txt\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1772415770
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"code-graph-rag\", \"query\": \"In project code-graph-rag, map the parser pipeline from CLI commands to parsing functions and to graph persistence layers (Memgraph or MAGE integration points). Return key modules, classes, and functions and their call relationships.\", \"rows\": 1, \"digest\": \":unknown\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1772415753
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772415688}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772415688
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772415688}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772415688
+  },
+  {
+    "text": "{\"kind\": \"preflight_schema_context\", \"project\": \"code-graph-rag\", \"rows\": 32, \"context\": \"Active project: code-graph-rag. Observed schema relationships: Class-[DEFINES_METHOD]->Method; Class-[INHERITS]->Class; File-[CONTAINS_MODULE]->Module; Folder-[CONTAINS_MODULE]->Module; Function-[CALLS]->Class; Function-[CALLS]->Function; Function-[CALLS]->Method; Function-[CONTAINS]->Function; Function-[CONTAINS]->Method; Function-[DECORATES]->Function\"}",
+    "tags": [
+      "preflight",
+      "schema",
+      "context",
+      "success"
+    ],
+    "timestamp": 1772415373
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772415326}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772415326
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772410429}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772410429
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772410418}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772410418
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772410345}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772410345
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772410043}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772410043
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772409406}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772409406
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772406350}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772406350
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772406342}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772406342
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772406333}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772406333
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772406324}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772406324
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772406297}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772406297
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772406281}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772406281
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772406262}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772406262
+  },
+  {
+    "text": "{\"action\": \"detect_project_drift\", \"decision\": \"allow\", \"reason\": \"drift_scan_completed\", \"details\": {\"project\": \"code-graph-rag\", \"drift_detected\": true, \"delta_count\": 40296}, \"timestamp\": 1772406168}",
+    "tags": [
+      "policy",
+      "detect_project_drift",
+      "allow"
+    ],
+    "timestamp": 1772406168
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772403321}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772403321
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772403254}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772403254
+  },
+  {
+    "text": "{\"action\": \"detect_project_drift\", \"decision\": \"allow\", \"reason\": \"drift_scan_completed\", \"details\": {\"project\": \"code-graph-rag\", \"drift_detected\": true, \"delta_count\": 40296}, \"timestamp\": 1772403247}",
+    "tags": [
+      "policy",
+      "detect_project_drift",
+      "allow"
+    ],
+    "timestamp": 1772403247
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403232}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403232
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403225}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403225
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403220}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403220
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772403213}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772403213
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403205}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403205
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772403199}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772403199
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403194}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403194
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403188}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403188
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772403183}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772403183
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403179}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403179
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772403174}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772403174
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772403014}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772403014
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772403001}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772403001
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1772402992}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1772402992
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must be explicitly scoped to active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1772402984}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1772402984
+  }
+]

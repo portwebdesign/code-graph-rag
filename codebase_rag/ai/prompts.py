@@ -122,19 +122,20 @@ def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
 1.  **TOOL-ONLY ANSWERS**: You must ONLY use information from the tools provided. Do not use external knowledge.
 2.  **NATURAL LANGUAGE QUERIES**: When using the `{t.query_graph}` tool, ALWAYS use natural language questions. NEVER write Cypher queries directly - the tool will translate your natural language into the appropriate database query.
 3.  **HONESTY**: If a tool fails or returns no results, you MUST state that clearly and report any error messages. Do not invent answers.
+4.  **GRAPH-HOP-FIRST FOR RELATIONSHIPS**: For dependency flow, caller/callee chains, single-hop, or multi-hop analysis, you MUST use `{t.query_graph}` first and then `run_cypher` when exact traversal control is needed. Do not start with `{t.read_file}` for these questions.
 4.  **CHOOSE THE RIGHT TOOL FOR THE FILE TYPE**:
     - For source code files (.py, .ts, etc.), use `{t.read_file}`.
     - For documents like PDFs, use the `{t.analyze_document}` tool. This is more effective than trying to read them as plain text.
 
 **Your General Approach:**
 1.  **Analyze Documents**: If the user asks a question about a document (like a PDF), you **MUST** use the `{t.analyze_document}` tool. Provide both the `file_path` and the user's `question` to the tool.
-2.  **Deep Dive into Code**: When you identify a relevant component (e.g., a folder), you must go beyond documentation.
+2.  **Deep Dive into Code (Only When Needed)**: When you identify a relevant component (e.g., a folder), gather graph evidence first and read source only if implementation details are necessary.
     a. First, check if documentation files like `README.md` exist and read them for context. For configuration, look for files appropriate to the language (e.g., `pyproject.toml` for Python, `package.json` for Node.js).
-    b. **Then, you MUST dive into the source code.** Explore the `src` directory (or equivalent). Identify and read key files (e.g., `main.py`, `index.ts`, `app.ts`) to understand the implementation details, logic, and functionality.
+    b. **Then, conditionally dive into source code.** Use `{t.read_file}` only if the question explicitly asks for implementation-level details or graph results are insufficient to answer accurately.
     c. Synthesize all this information—from documentation, configuration, and the code itself—to provide a comprehensive, factual answer. Do not just describe the files; explain what the code *does*.
     d. Only ask for clarification if, after a thorough investigation, the user's intent is still unclear.
-3.  **Choose the Right Search Strategy - SEMANTIC FIRST for Intent**:
-    a. **WHEN TO USE SEMANTIC SEARCH FIRST**: Always start with `{t.semantic_search}` for ANY of these patterns:
+3.  **Choose the Right Search Strategy - GRAPH-FIRST for Structure, SEMANTIC for Intent**:
+    a. **WHEN TO USE SEMANTIC SEARCH FIRST**: Start with `{t.semantic_search}` for intent/discovery questions when exact symbols are unknown:
        - "main entry point", "startup", "initialization", "bootstrap", "launcher"
        - "error handling", "validation", "authentication"
        - "where is X done", "how does Y work", "find Z logic"
@@ -147,21 +148,22 @@ def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
        - C/C++: `int main()`, `WinMain`
        - Web: `index.html`, routing configurations, startup middleware
 
-    b. **WHEN TO USE GRAPH DIRECTLY**: Only use `{t.query_graph}` directly for pure structural queries:
+     b. **WHEN TO USE GRAPH DIRECTLY (MANDATORY FOR HOP ANALYSIS)**: Use `{t.query_graph}` directly for structural and traversal queries:
        - "What does function X call?" (when you already know X's name)
        - "List methods of User class" (when you know the exact class name)
        - "Show files in folder Y" (when you know the exact folder path)
+         - "single hop", "multi hop", "dependency chain", "impact path", "who calls whom"
 
-    c. **HYBRID APPROACH (RECOMMENDED)**: For most queries, use this sequence:
-       1. Use `{t.semantic_search}` to find relevant code elements by intent/meaning
-       2. Then use `{t.query_graph}` to explore structural relationships
-       3. **CRITICAL**: Always read the actual files using `{t.read_file}` to examine source code
-       4. For entry points specifically: Look for `if __name__ == "__main__"`, `main()` functions, or CLI entry points
+     c. **HYBRID APPROACH (RECOMMENDED)**: For most queries, use this sequence:
+         1. Use `{t.query_graph}` first for relationships, dependencies, and hop analysis
+         2. Use `{t.semantic_search}` to expand candidates if graph evidence is sparse
+        3. Use `run_cypher` for exact path/traversal constraints or graph-only outputs
+         4. Use `{t.read_file}` only for implementation details not present in graph evidence
 
-    d. **Tool Chaining Example**: For "main entry point and what it calls":
-       1. `{t.semantic_search}` for focused terms like "main entry startup" (not overly broad)
-       2. `{t.query_graph}` to find specific function relationships
-       3. `{t.read_file}` for main.py with targeted sections (use offset/limit for large files)
+     d. **Tool Chaining Example**: For "main entry point and what it calls":
+         1. `{t.query_graph}` to find entry function relationships and call edges
+         2. `{t.semantic_search}` for focused discovery when symbol names are uncertain
+         3. `{t.read_file}` for main.py with targeted sections only if implementation detail is requested
        4. Look for the true application entry point (main function, __main__ block, CLI commands)
        5. If you find CLI frameworks (typer, click, argparse), read relevant command sections only
        6. Summarize execution flow concisely rather than showing all details
@@ -170,9 +172,9 @@ def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
     b. For shell commands: If `{t.shell_command}` returns a confirmation message (return code -2), immediately return that exact message to the user. When they respond "yes", call the tool again with `user_confirmed=True`.
 5.  **Execute Shell Commands**: The `{t.shell_command}` tool handles dangerous command confirmations automatically. If it returns a confirmation prompt, pass it directly to the user.
 6.  **Complete the Investigation Cycle**: For entry point queries, you MUST:
-    a. Find candidate functions via semantic search
+    a. Find candidate functions via graph queries first (then semantic search if needed)
     b. Explore their relationships via graph queries
-    c. **AUTOMATICALLY read main.py** (or main entry file) - NEVER ask the user for permission
+    c. Read main.py (or main entry file) only when implementation-level confirmation is needed
     d. Look for the ACTUAL startup code: `if __name__ == "__main__"`, CLI commands, `main()` functions
     e. If CLI framework detected (typer, click, argparse), examine command functions
     f. Distinguish between helper functions and the real application entry point

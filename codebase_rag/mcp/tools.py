@@ -33,6 +33,7 @@ from codebase_rag.data_models.types_defs import (
     MCPInputSchemaProperty,
     MCPToolSchema,
     QueryResultDict,
+    ResultRow,
 )
 from codebase_rag.exporters.mermaid_exporter import MermaidExporter
 from codebase_rag.graph_db.cypher_queries import (
@@ -1135,7 +1136,12 @@ class MCPToolsRegistry:
         )
         self._session_state: dict[str, object] = {
             "orchestrator_prompt": self._orchestrator_prompt,
+            "preflight_project_selected": False,
+            "preflight_schema_summary_loaded": False,
+            "preflight_schema_summary_rows": 0,
+            "preflight_schema_context": "",
             "plan_task_completed": False,
+            "auto_plan_attempted": False,
             "test_generate_completed": False,
             "test_quality_total": 0.0,
             "test_quality_pass": False,
@@ -1146,6 +1152,8 @@ class MCPToolsRegistry:
             "impact_graph_count": 0,
             "manual_memory_add_count": 0,
             "query_success_count": 0,
+            "query_result_chunks": [],
+            "last_graph_result_digest": "",
             "semantic_success_count": 0,
             "semantic_similarity_mean": 0.0,
             "edit_success_count": 0,
@@ -1173,6 +1181,303 @@ class MCPToolsRegistry:
         self._tools = _build_tool_metadata(self)
         for tool_name in self._tools.keys():
             self._ensure_tool_telemetry_bucket(tool_name)
+
+    @staticmethod
+    def _is_preflight_exempt_tool(tool_name: str) -> bool:
+        exempt_tools = {
+            cs.MCPToolName.LIST_PROJECTS,
+            cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+        }
+        return tool_name in exempt_tools
+
+    def get_preflight_gate_error(self, tool_name: str) -> str | None:
+        if not bool(settings.MCP_REQUIRE_SESSION_PREFLIGHT):
+            return None
+        if self._is_preflight_exempt_tool(tool_name):
+            return None
+
+        project_selected = bool(
+            self._session_state.get("preflight_project_selected", False)
+        )
+        if not project_selected:
+            return (
+                "session_preflight_required: call select_active_project first. "
+                "Project scope and schema preflight must be initialized before analysis tools."
+            )
+
+        schema_loaded = bool(
+            self._session_state.get("preflight_schema_summary_loaded", False)
+        )
+        if not schema_loaded:
+            return (
+                "session_preflight_required: schema summary preflight is missing. "
+                "Re-run select_active_project to initialize project-scoped schema context."
+            )
+        return None
+
+    @staticmethod
+    def _project_scoped_schema_summary_query(project_name: str, limit: int) -> str:
+        safe_project_name = project_name.replace("'", "\\'")
+        bounded_limit = max(20, min(int(limit), 2000))
+        return (
+            "MATCH (m:Module {project_name: '" + safe_project_name + "'}) "
+            "WITH collect(DISTINCT m) AS modules "
+            "UNWIND modules AS module "
+            "OPTIONAL MATCH (module)-[:DEFINES]->(def) "
+            "OPTIONAL MATCH (def)-[:DEFINES_METHOD]->(meth) "
+            "WITH modules + collect(DISTINCT def) + collect(DISTINCT meth) AS seed_nodes "
+            "UNWIND seed_nodes AS n "
+            "WITH DISTINCT n WHERE n IS NOT NULL "
+            "OPTIONAL MATCH (n)-[out_r]->(out_b) "
+            "WITH DISTINCT "
+            "  n, "
+            "  head(labels(n)) AS n_type, "
+            "  type(out_r) AS out_rel, "
+            "  head(labels(out_b)) AS out_to "
+            "OPTIONAL MATCH (in_a)-[in_r]->(n) "
+            "WITH DISTINCT "
+            "  [n_type, out_rel, out_to] AS out_triplet, "
+            "  [head(labels(in_a)), type(in_r), head(labels(n))] AS in_triplet "
+            "UNWIND [out_triplet, in_triplet] AS triplet "
+            "WITH DISTINCT triplet WHERE triplet[1] IS NOT NULL "
+            "RETURN "
+            "  triplet[0] AS from_node_type, "
+            "  triplet[1] AS relationship_type, "
+            "  triplet[2] AS to_node_type "
+            "ORDER BY from_node_type, relationship_type, to_node_type "
+            "LIMIT " + str(bounded_limit)
+        )
+
+    @staticmethod
+    def _schema_summary_markdown(rows: list[dict[str, object]]) -> str:
+        header = [
+            "| from_node_type | relationship_type | to_node_type |",
+            "|----------------|-------------------|--------------|",
+        ]
+        if not rows:
+            return "\n".join(header)
+
+        lines = header.copy()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            from_node_type = str(row.get("from_node_type", ""))
+            relationship_type = str(row.get("relationship_type", ""))
+            to_node_type = str(row.get("to_node_type", ""))
+            lines.append(f"| {from_node_type} | {relationship_type} | {to_node_type} |")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _schema_summary_preview_text(
+        rows: list[dict[str, object]],
+        max_items: int = 5,
+    ) -> str:
+        if not rows:
+            return "schema preview empty"
+        bounded_max = max(1, min(int(max_items), 10))
+        snippets: list[str] = []
+        for row in rows[:bounded_max]:
+            from_node_type = str(row.get("from_node_type", "?"))
+            relationship_type = str(row.get("relationship_type", "?"))
+            to_node_type = str(row.get("to_node_type", "?"))
+            snippets.append(f"{from_node_type}-[{relationship_type}]->{to_node_type}")
+        return "; ".join(snippets)
+
+    def _build_schema_context(self, rows: list[dict[str, object]]) -> str:
+        if not rows:
+            return ""
+        max_relations = max(1, int(settings.MCP_SCHEMA_CONTEXT_MAX_RELATIONS))
+        bounded_rows = rows[:max_relations]
+        snippets = self._schema_summary_preview_text(
+            bounded_rows, max_items=max_relations
+        )
+        project_name = self._active_project_name()
+        return (
+            f"Active project: {project_name}. Observed schema relationships: {snippets}"
+        )
+
+    def _persist_preflight_context(self, preflight: dict[str, object]) -> None:
+        summary_rows_raw = preflight.get("results", [])
+        summary_rows: list[dict[str, object]] = []
+        if isinstance(summary_rows_raw, list):
+            for row in summary_rows_raw:
+                if isinstance(row, dict):
+                    summary_rows.append(cast(dict[str, object], row))
+        schema_context = self._build_schema_context(summary_rows)
+        self._session_state["preflight_schema_context"] = schema_context
+        if schema_context:
+            self._memory_store.add_entry(
+                text=json.dumps(
+                    {
+                        "kind": "preflight_schema_context",
+                        "project": self._active_project_name(),
+                        "rows": self._coerce_int(preflight.get("rows", 0)),
+                        "context": schema_context,
+                    },
+                    ensure_ascii=False,
+                ),
+                tags=["preflight", "schema", "context", "success"],
+            )
+
+    async def _auto_plan_if_needed(self, user_query: str) -> None:
+        if not bool(settings.MCP_AUTO_PLAN_ON_FIRST_QUERY):
+            return
+        if bool(self._session_state.get("plan_task_completed", False)):
+            return
+        if bool(self._session_state.get("auto_plan_attempted", False)):
+            return
+
+        self._session_state["auto_plan_attempted"] = True
+        schema_context = str(
+            self._session_state.get("preflight_schema_context", "")
+        ).strip()
+        plan_context_parts = [
+            "Mandatory flow: query_code_graph -> run_cypher(read-only scoped) -> read_file(last resort)",
+            "Use list_directory for atomic discovery before broad semantic fallback.",
+        ]
+        if schema_context:
+            plan_context_parts.append(f"Schema context: {schema_context}")
+        await self.plan_task(
+            goal=f"Create graph-first retrieval plan for: {user_query[:240]}",
+            context="\n".join(plan_context_parts),
+        )
+
+    @staticmethod
+    def _split_rows_into_chunks(
+        rows: list[dict[str, object]],
+        chunk_size: int = 25,
+    ) -> list[list[dict[str, object]]]:
+        bounded_chunk_size = max(1, int(chunk_size))
+        return [
+            rows[idx : idx + bounded_chunk_size]
+            for idx in range(0, len(rows), bounded_chunk_size)
+        ]
+
+    def _cap_query_results(
+        self,
+        rows: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], bool, int]:
+        max_rows = max(1, int(settings.MCP_QUERY_RESULT_MAX_ROWS))
+        max_chars = max(2000, int(settings.MCP_QUERY_RESULT_MAX_CHARS))
+        capped_by_rows = rows[:max_rows]
+        capped_serialized = json.dumps(capped_by_rows, ensure_ascii=False)
+        if len(capped_serialized) <= max_chars:
+            return capped_by_rows, len(rows) > len(capped_by_rows), len(rows)
+
+        trimmed_rows: list[dict[str, object]] = []
+        current_chars = 2
+        for row in capped_by_rows:
+            row_chars = len(json.dumps(row, ensure_ascii=False))
+            projected = current_chars + row_chars + (1 if trimmed_rows else 0)
+            if projected > max_chars:
+                break
+            trimmed_rows.append(row)
+            current_chars = projected
+        return trimmed_rows, len(rows) > len(trimmed_rows), len(rows)
+
+    @staticmethod
+    def _build_graph_result_digest(
+        rows: list[dict[str, object]], max_items: int = 10
+    ) -> str:
+        if not rows:
+            return ""
+        snippets: list[str] = []
+        for row in rows[: max(1, min(int(max_items), 20))]:
+            name = str(row.get("qualified_name") or row.get("name") or "unknown")
+            label_values = row.get("type", [])
+            if isinstance(label_values, list):
+                label_text = "/".join(
+                    str(item) for item in label_values if str(item).strip()
+                )
+            else:
+                label_text = str(label_values)
+            snippets.append(f"{label_text}:{name}")
+        return "; ".join(snippets)
+
+    async def _run_session_schema_preflight(
+        self, project_name: str
+    ) -> dict[str, object]:
+        schema_query = self._project_scoped_schema_summary_query(
+            project_name=project_name,
+            limit=int(settings.MCP_PREFLIGHT_SCHEMA_SUMMARY_LIMIT),
+        )
+        cypher_result = await self.run_cypher(
+            cypher=schema_query,
+            params="{}",
+            write=False,
+            user_requested=False,
+            reason="session_preflight_schema_summary",
+        )
+        if not isinstance(cypher_result, dict):
+            self._session_state["preflight_schema_summary_loaded"] = False
+            self._session_state["preflight_schema_summary_rows"] = 0
+            return {
+                "status": "error",
+                "error": "schema_preflight_failed",
+                "rows": 0,
+                "preview_row_count": 0,
+                "schema_summary_preview": [],
+                "schema_summary_json": {"schema_summary": []},
+                "schema_summary_markdown": self._schema_summary_markdown([]),
+            }
+
+        if "error" in cypher_result:
+            self._session_state["preflight_schema_summary_loaded"] = False
+            self._session_state["preflight_schema_summary_rows"] = 0
+            return {
+                "status": "error",
+                "error": str(cypher_result.get("error", "schema_preflight_failed")),
+                "rows": 0,
+                "preview_row_count": 0,
+                "schema_summary_preview": [],
+                "schema_summary_json": {"schema_summary": []},
+                "schema_summary_markdown": self._schema_summary_markdown([]),
+            }
+
+        raw_results = cypher_result.get("results", [])
+        summary_rows: list[dict[str, object]] = []
+        if isinstance(raw_results, list):
+            for row in raw_results:
+                if isinstance(row, dict):
+                    summary_rows.append(cast(dict[str, object], row))
+        rows = len(summary_rows)
+        if rows <= 0:
+            self._session_state["preflight_schema_summary_loaded"] = False
+            self._session_state["preflight_schema_summary_rows"] = 0
+            return {
+                "status": "error",
+                "error": "schema_preflight_empty",
+                "rows": 0,
+                "preview_row_count": 0,
+                "schema_summary_preview": [],
+                "query": schema_query,
+                "results": [],
+                "schema_summary_json": {"schema_summary": []},
+                "schema_summary_markdown": self._schema_summary_markdown([]),
+            }
+
+        self._session_state["preflight_schema_summary_loaded"] = True
+        self._session_state["preflight_schema_summary_rows"] = rows
+        preview_limit = max(
+            1, min(int(settings.MCP_PREFLIGHT_SCHEMA_PREVIEW_ROWS), 200)
+        )
+        preview_rows = summary_rows[:preview_limit]
+        schema_summary_json: dict[str, object] = {
+            "schema_summary": preview_rows,
+            "total_rows": rows,
+            "truncated": rows > len(preview_rows),
+        }
+        schema_summary_markdown = self._schema_summary_markdown(preview_rows)
+        return {
+            "status": "ok",
+            "rows": rows,
+            "preview_row_count": len(preview_rows),
+            "schema_summary_preview": preview_rows,
+            "query": schema_query,
+            "results": summary_rows,
+            "schema_summary_json": schema_summary_json,
+            "schema_summary_markdown": schema_summary_markdown,
+        }
 
     def _ensure_tool_telemetry_bucket(self, tool_name: str) -> dict[str, object]:
         telemetry = self._session_state.get("tool_telemetry")
@@ -1308,6 +1613,14 @@ class MCPToolsRegistry:
             directory_lister=self.directory_lister
         )
         self._memory_store = MCPMemoryStore(project_root=resolved_repo_str)
+        self._session_state["preflight_project_selected"] = False
+        self._session_state["preflight_schema_summary_loaded"] = False
+        self._session_state["preflight_schema_summary_rows"] = 0
+        self._session_state["preflight_schema_context"] = ""
+        self._session_state["plan_task_completed"] = False
+        self._session_state["auto_plan_attempted"] = False
+        self._session_state["query_result_chunks"] = []
+        self._session_state["last_graph_result_digest"] = ""
         self._refresh_internal_agents()
         return resolved_repo
 
@@ -1390,8 +1703,27 @@ class MCPToolsRegistry:
                 latest_report[0].get("analysis_timestamp") if latest_report else None
             )
 
+            self._session_state["preflight_project_selected"] = True
+            preflight = await self._run_session_schema_preflight(project_name)
+            self._persist_preflight_context(preflight)
+            preflight_rows = self._coerce_int(preflight.get("rows", 0))
+            preflight_status = str(preflight.get("status", "unknown"))
+            preview_rows_raw = preflight.get("schema_summary_preview", [])
+            preview_rows: list[dict[str, object]] = []
+            if isinstance(preview_rows_raw, list):
+                for item in preview_rows_raw:
+                    if isinstance(item, dict):
+                        preview_rows.append(cast(dict[str, object], item))
+            preview_text = self._schema_summary_preview_text(preview_rows, max_items=5)
+            ui_summary = (
+                f"Active project: {project_name} | indexed={active_indexed} | "
+                f"preflight={preflight_status} | schema_rows={preflight_rows}\n"
+                f"Schema preview: {preview_text}"
+            )
+
             return {
                 "status": "ok",
+                "ui_summary": ui_summary,
                 "active_project": {
                     "name": project_name,
                     "root": project_root,
@@ -1415,6 +1747,7 @@ class MCPToolsRegistry:
                     ),
                 },
                 "latest_analysis_timestamp": latest_analysis_timestamp,
+                "session_preflight": preflight,
                 "policy": {
                     "query_code_graph_scope_enforced": True,
                     "run_cypher_scope_enforced": True,
@@ -2173,6 +2506,8 @@ class MCPToolsRegistry:
         natural_language_query: str,
         project_name: str,
         previous_cypher: str | None = None,
+        previous_error: str | None = None,
+        schema_context: str | None = None,
     ) -> str:
         prompt = (
             f"{natural_language_query}\n\n"
@@ -2183,6 +2518,9 @@ class MCPToolsRegistry:
             f"  1) MATCH (p:Project {{name: '{project_name}'}}) ...\n"
             f"  2) MATCH (m:Module {{project_name: '{project_name}'}}) ...\n"
             "- Never generate a cross-project query.\n"
+            "- Generate a SINGLE read-only query block with one final RETURN clause.\n"
+            "- Never place MATCH/OPTIONAL MATCH after RETURN.\n"
+            "- Prefer path-safe filters with replace(coalesce(x.path, ''), '\\\\', '/').\n"
             "- Return only Cypher query text."
         )
         if previous_cypher:
@@ -2191,17 +2529,32 @@ class MCPToolsRegistry:
                 f"{previous_cypher}\n"
                 "Regenerate with explicit project scope."
             )
+        if previous_error:
+            prompt += (
+                "\n\nPREVIOUS EXECUTION ERROR:\n"
+                f"{previous_error}\n"
+                "Regenerate a corrected Cypher query that fixes this error while keeping strict project scope."
+            )
+        if schema_context and schema_context.strip():
+            prompt += (
+                "\n\nSESSION SCHEMA CONTEXT (use this as guidance):\n"
+                f"{schema_context.strip()}"
+            )
         return prompt
 
     async def _generate_project_scoped_cypher(
         self, natural_language_query: str, project_name: str
     ) -> str:
         last_query = ""
+        schema_context = str(
+            self._session_state.get("preflight_schema_context", "")
+        ).strip()
         for _ in range(3):
             scoped_prompt = self._build_scoped_query_prompt(
                 natural_language_query=natural_language_query,
                 project_name=project_name,
                 previous_cypher=last_query if last_query else None,
+                schema_context=schema_context if schema_context else None,
             )
             generated_query = await self.cypher_gen.generate(scoped_prompt)
             last_query = generated_query
@@ -2210,11 +2563,68 @@ class MCPToolsRegistry:
                 return generated_query
         raise ValueError(cs.MCP_QUERY_SCOPE_ERROR.format(project_name=project_name))
 
+    async def _regenerate_project_scoped_cypher(
+        self,
+        natural_language_query: str,
+        project_name: str,
+        previous_cypher: str,
+        previous_error: str,
+    ) -> str:
+        schema_context = str(
+            self._session_state.get("preflight_schema_context", "")
+        ).strip()
+        scoped_prompt = self._build_scoped_query_prompt(
+            natural_language_query=natural_language_query,
+            project_name=project_name,
+            previous_cypher=previous_cypher,
+            previous_error=previous_error,
+            schema_context=schema_context if schema_context else None,
+        )
+        generated_query = await self.cypher_gen.generate(scoped_prompt)
+        scope_error = self._validate_project_scope_policy(generated_query, {})
+        if scope_error is not None:
+            raise ValueError(cs.MCP_QUERY_SCOPE_ERROR.format(project_name=project_name))
+        return generated_query
+
+    @staticmethod
+    def _is_parser_focused_query(natural_language_query: str) -> bool:
+        lowered = natural_language_query.lower()
+        parser_cues = (
+            "parser",
+            "parsers",
+            "codebase_rag.parsers",
+            "codebase_rag/parsers",
+            "tree-sitter",
+        )
+        return any(cue in lowered for cue in parser_cues)
+
+    @staticmethod
+    def _build_parser_scope_fallback_query(project_name: str) -> str:
+        safe_project_name = project_name.replace("'", "\\'")
+        return (
+            "MATCH (m:Module {project_name: '" + safe_project_name + "'}) "
+            "WHERE replace(coalesce(m.path, ''), '\\\\', '/') CONTAINS '/codebase_rag/parsers' "
+            "OPTIONAL MATCH (m)-[:DEFINES]->(d) "
+            "OPTIONAL MATCH (d)-[:DEFINES_METHOD]->(meth) "
+            "WITH m, d, meth "
+            "UNWIND [m, d, meth] AS n "
+            "WITH DISTINCT n WHERE n IS NOT NULL "
+            "AND (n:Module OR n:Class OR n:Function OR n:Method) "
+            "RETURN "
+            "  n.name AS name, "
+            "  n.qualified_name AS qualified_name, "
+            "  labels(n) AS type, "
+            "  n.path AS path "
+            "ORDER BY coalesce(n.path, ''), coalesce(n.qualified_name, n.name, '') "
+            "LIMIT 200"
+        )
+
     async def query_code_graph(
         self, natural_language_query: str, output_format: str = "json"
     ) -> QueryResultDict | str:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
+            await self._auto_plan_if_needed(natural_language_query)
             project_name = self._active_project_name()
             cypher_query = await self._generate_project_scoped_cypher(
                 natural_language_query=natural_language_query,
@@ -2227,23 +2637,84 @@ class MCPToolsRegistry:
                     timeout=60.0,
                 )
 
-            results = await self._run_with_retries(
-                _read_once,
-                attempts=3,
-                base_delay_seconds=0.5,
-            )
+            results: list[dict[str, Any]] = []
+            repaired_attempts = 0
+            max_repaired_attempts = 2
+            parser_fallback_attempted = False
+            while True:
+                try:
+                    results = await self._run_with_retries(
+                        _read_once,
+                        attempts=3,
+                        base_delay_seconds=0.5,
+                    )
+                except Exception as exec_error:
+                    if repaired_attempts >= max_repaired_attempts:
+                        raise
+                    repaired_attempts += 1
+                    cypher_query = await self._regenerate_project_scoped_cypher(
+                        natural_language_query=natural_language_query,
+                        project_name=project_name,
+                        previous_cypher=cypher_query,
+                        previous_error=str(exec_error),
+                    )
+                    continue
+
+                if results:
+                    break
+
+                if not parser_fallback_attempted and self._is_parser_focused_query(
+                    natural_language_query
+                ):
+                    parser_fallback_attempted = True
+                    cypher_query = self._build_parser_scope_fallback_query(project_name)
+                    continue
+
+                if repaired_attempts >= max_repaired_attempts:
+                    break
+                repaired_attempts += 1
+                cypher_query = await self._regenerate_project_scoped_cypher(
+                    natural_language_query=natural_language_query,
+                    project_name=project_name,
+                    previous_cypher=cypher_query,
+                    previous_error="query_returned_zero_rows",
+                )
+
             self._session_bump("query_success_count")
             self._session_bump("graph_evidence_count")
-            usefulness_score = 1.0 if len(results) > 0 else 0.5
+            capped_results, truncated, total_rows = self._cap_query_results(results)
+            chunks = self._split_rows_into_chunks(results)
+            self._session_state["query_result_chunks"] = chunks
+            graph_digest = self._build_graph_result_digest(results)
+            self._session_state["last_graph_result_digest"] = graph_digest
+            if graph_digest:
+                self._memory_store.add_entry(
+                    text=json.dumps(
+                        {
+                            "kind": "graph_query_digest",
+                            "project": project_name,
+                            "query": natural_language_query,
+                            "rows": total_rows,
+                            "digest": graph_digest,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    tags=["graph", "query", "evidence", "success"],
+                )
+
+            usefulness_score = 1.0 if total_rows > 0 else 0.5
             self._record_tool_usefulness(
                 cs.MCPToolName.QUERY_CODE_GRAPH,
                 success=True,
                 usefulness_score=usefulness_score,
             )
+            summary = f"Query executed successfully. Returned {total_rows} rows."
+            if truncated:
+                summary += f" Response truncated to {len(capped_results)} rows for context safety."
             result_dict: QueryResultDict = QueryResultDict(
                 query_used=cypher_query,
-                results=results,
-                summary=f"Query executed successfully. Returned {len(results)} rows.",
+                results=cast(list[ResultRow], capped_results),
+                summary=summary,
             )
             logger.info(
                 lg.MCP_QUERY_RESULTS.format(
@@ -2435,6 +2906,25 @@ class MCPToolsRegistry:
     ) -> str:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         try:
+            graph_evidence_count = self._coerce_int(
+                self._session_state.get("graph_evidence_count", 0)
+            )
+            if (
+                bool(settings.MCP_ENFORCE_GRAPH_FIRST_READS)
+                and graph_evidence_count <= 0
+            ):
+                self._record_tool_usefulness(
+                    cs.MCPToolName.READ_FILE,
+                    success=False,
+                    usefulness_score=0.0,
+                )
+                return te.ERROR_WRAPPER.format(
+                    message=(
+                        "graph_first_enforced: call query_code_graph or run_cypher "
+                        "before read_file"
+                    )
+                )
+
             if offset is not None or limit is not None:
                 full_path = Path(self.project_root) / file_path
                 start = offset if offset is not None else 0
@@ -2572,6 +3062,8 @@ class MCPToolsRegistry:
     ) -> dict[str, object]:
         if not cypher:
             return {"error": te.MCP_INVALID_RESPONSE, "results": []}
+        if not write:
+            await self._auto_plan_if_needed("run_cypher read-only query")
         parsed_params: dict[str, object] = {}
         if params:
             try:
@@ -3771,13 +4263,6 @@ class MCPToolsRegistry:
                 "why": "Completion gate is missing semantic evidence.",
                 "params_hint": {"query": "target function behavior", "top_k": 5},
             }
-        if "code_source" in missing:
-            return {
-                "action": "collect_code_evidence",
-                "tool": "read_file",
-                "why": "Completion gate is missing code source evidence.",
-                "params_hint": {"file_path": "path/to/file.py"},
-            }
         if "graph_read" in missing:
             return {
                 "action": "collect_graph_evidence",
@@ -3786,6 +4271,13 @@ class MCPToolsRegistry:
                 "params_hint": {
                     "natural_language_query": "dependencies of target module"
                 },
+            }
+        if "code_source" in missing:
+            return {
+                "action": "collect_code_evidence",
+                "tool": "read_file",
+                "why": "Completion gate is missing code source evidence after graph evidence.",
+                "params_hint": {"file_path": "path/to/file.py"},
             }
         if "impact_graph" in missing:
             return {

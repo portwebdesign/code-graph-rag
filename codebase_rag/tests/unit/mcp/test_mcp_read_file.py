@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from codebase_rag.core.config import settings
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
 pytestmark = [pytest.mark.anyio]
@@ -72,6 +73,18 @@ class TestReadFileWithoutPagination:
 
         assert result == expected_content
         mock_func.assert_called_once_with(file_path="test_file.txt")
+
+    async def test_read_file_blocks_when_graph_first_enforced(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        previous = settings.MCP_ENFORCE_GRAPH_FIRST_READS
+        settings.MCP_ENFORCE_GRAPH_FIRST_READS = True
+        try:
+            mcp_registry._session_state["graph_evidence_count"] = 0
+            result = await mcp_registry.read_file("test_file.txt")
+            assert "graph_first_enforced" in result
+        finally:
+            settings.MCP_ENFORCE_GRAPH_FIRST_READS = previous
 
 
 class TestReadFileWithPagination:

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from codebase_rag.agents import MCP_SYSTEM_PROMPT
+from codebase_rag.core.config import settings
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
 pytestmark = [pytest.mark.anyio]
@@ -74,6 +75,13 @@ class TestMCPNewTools:
             [{"count": 2}],
             [{"count": 5}],
             [{"analysis_timestamp": "2026-03-01T10:00:00Z"}],
+            [
+                {
+                    "from_node_type": "Module",
+                    "relationship_type": "DEFINES",
+                    "to_node_type": "Class",
+                }
+            ],
         ]
 
         result = await mcp_registry.select_active_project()
@@ -84,6 +92,35 @@ class TestMCPNewTools:
         assert active.get("indexed") is True
         policy = cast(dict[str, object], result.get("policy", {}))
         assert policy.get("run_cypher_write_allowlist_enforced") is True
+        preflight = cast(dict[str, object], result.get("session_preflight", {}))
+        assert preflight.get("status") == "ok"
+        rows = preflight.get("rows", 0)
+        assert isinstance(rows, int)
+        assert rows >= 1
+        schema_json = cast(dict[str, object], preflight.get("schema_summary_json", {}))
+        summary_rows = schema_json.get("schema_summary", [])
+        assert isinstance(summary_rows, list)
+        preview_rows = preflight.get("schema_summary_preview", [])
+        assert isinstance(preview_rows, list)
+        preview_row_count = preflight.get("preview_row_count", 0)
+        assert isinstance(preview_row_count, int)
+        assert preview_row_count >= 1
+        schema_md = preflight.get("schema_summary_markdown", "")
+        assert isinstance(schema_md, str)
+        assert "| from_node_type | relationship_type | to_node_type |" in schema_md
+
+    def test_preflight_gate_blocks_non_exempt_tools_before_selection(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        error = mcp_registry.get_preflight_gate_error("query_code_graph")
+        assert isinstance(error, str)
+        assert "session_preflight_required" in error
+
+    def test_preflight_gate_allows_exempt_tools(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        assert mcp_registry.get_preflight_gate_error("list_projects") is None
+        assert mcp_registry.get_preflight_gate_error("select_active_project") is None
 
     async def test_detect_project_drift_returns_payload(
         self, mcp_registry: MCPToolsRegistry
@@ -106,6 +143,21 @@ class TestMCPNewTools:
         assert "pattern_reuse_gate" in result
         assert "completion_gate" in result
 
+    def test_next_best_action_prefers_graph_before_read_file(self) -> None:
+        readiness = {
+            "completion_gate": {
+                "missing": ["code_source", "graph_read"],
+            }
+        }
+
+        action = MCPToolsRegistry._build_next_best_action(
+            blockers=["completion_gate_blocked"],
+            readiness=readiness,
+        )
+
+        assert action.get("tool") == "query_code_graph"
+        assert action.get("action") == "collect_graph_evidence"
+
     async def test_semantic_search_returns_results(
         self, mcp_registry: MCPToolsRegistry, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -122,6 +174,182 @@ class TestMCPNewTools:
 
         assert result.get("count") == 1
         assert isinstance(result.get("results"), list)
+
+    async def test_query_code_graph_repairs_invalid_generated_query(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        bad_query = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m "
+            "MATCH (x) RETURN x"
+        )
+        good_query = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m LIMIT 1"
+        )
+
+        call_count = {"count": 0}
+
+        async def fake_generate(_: str) -> str:
+            call_count["count"] += 1
+            return bad_query if call_count["count"] == 1 else good_query
+
+        mcp_registry.cypher_gen.generate = fake_generate
+
+        def fake_fetch_all(
+            query: str, params: dict[str, object] | None = None
+        ) -> list[dict[str, object]]:
+            _ = params
+            if "RETURN m MATCH" in query:
+                raise RuntimeError(
+                    "MATCH can't be put after RETURN clause or after an update."
+                )
+            return [{"name": "ParserModule"}]
+
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.side_effect = fake_fetch_all
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query="show parser modules",
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        assert result.get("error") is None
+        assert result.get("query_used") == good_query
+        rows = result.get("results", [])
+        assert isinstance(rows, list)
+        assert len(rows) == 1
+
+    async def test_query_code_graph_uses_parser_fallback_on_empty_results(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m LIMIT 25"
+            )
+
+        mcp_registry.cypher_gen.generate = fake_generate
+
+        def fake_fetch_all(
+            query: str, params: dict[str, object] | None = None
+        ) -> list[dict[str, object]]:
+            _ = params
+            if "CONTAINS '/codebase_rag/parsers'" in query:
+                return [
+                    {
+                        "name": "BaseParser",
+                        "qualified_name": "codebase_rag.parsers.base.BaseParser",
+                        "type": ["Class"],
+                        "path": "codebase_rag/parsers/base.py",
+                    }
+                ]
+            return []
+
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.side_effect = fake_fetch_all
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query=(
+                "Show me parser-related modules and classes in codebase_rag.parsers"
+            ),
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        rows = result.get("results", [])
+        assert isinstance(rows, list)
+        assert len(rows) == 1
+        query_used = str(result.get("query_used", ""))
+        assert "CONTAINS '/codebase_rag/parsers'" in query_used
+
+    async def test_query_code_graph_auto_plans_on_first_query(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        previous_auto_plan = settings.MCP_AUTO_PLAN_ON_FIRST_QUERY
+        settings.MCP_AUTO_PLAN_ON_FIRST_QUERY = True
+        try:
+            planner_called = {"count": 0}
+
+            async def fake_plan(goal: str, context: str | None = None) -> object:
+                planner_called["count"] += 1
+                _ = goal, context
+                return SimpleNamespace(
+                    status="ok",
+                    content={
+                        "summary": "plan ok",
+                        "steps": ["step-1"],
+                        "risks": [],
+                        "tests": [],
+                    },
+                )
+
+            async def fake_generate(_: str) -> str:
+                return (
+                    f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                    "RETURN m.name AS name LIMIT 5"
+                )
+
+            mcp_registry._planner_agent.plan = fake_plan
+            mcp_registry.cypher_gen.generate = fake_generate
+            mcp_registry._session_state["plan_task_completed"] = False
+            mcp_registry._session_state["auto_plan_attempted"] = False
+
+            ingestor = cast(MagicMock, mcp_registry.ingestor)
+            ingestor.fetch_all.return_value = [{"name": "mod1"}]
+
+            result = await mcp_registry.query_code_graph(
+                natural_language_query="list parser modules",
+                output_format="json",
+            )
+
+            assert isinstance(result, dict)
+            assert result.get("error") is None
+            assert planner_called["count"] == 1
+            assert mcp_registry._session_state.get("plan_task_completed") is True
+        finally:
+            settings.MCP_AUTO_PLAN_ON_FIRST_QUERY = previous_auto_plan
+
+    async def test_query_code_graph_caps_large_results_for_context_safety(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        previous_max_rows = settings.MCP_QUERY_RESULT_MAX_ROWS
+        settings.MCP_QUERY_RESULT_MAX_ROWS = 3
+        try:
+
+            async def fake_generate(_: str) -> str:
+                return (
+                    f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                    "RETURN m.name AS name LIMIT 50"
+                )
+
+            mcp_registry.cypher_gen.generate = fake_generate
+
+            ingestor = cast(MagicMock, mcp_registry.ingestor)
+            ingestor.fetch_all.return_value = [
+                {"name": f"module_{idx}", "qualified_name": f"pkg.module_{idx}"}
+                for idx in range(10)
+            ]
+
+            result = await mcp_registry.query_code_graph(
+                natural_language_query="show all modules",
+                output_format="json",
+            )
+
+            assert isinstance(result, dict)
+            rows = result.get("results", [])
+            assert isinstance(rows, list)
+            assert len(rows) == 3
+            summary = str(result.get("summary", ""))
+            assert "truncated" in summary.lower()
+            chunk_state = mcp_registry._session_state.get("query_result_chunks", [])
+            assert isinstance(chunk_state, list)
+            assert len(chunk_state) >= 1
+        finally:
+            settings.MCP_QUERY_RESULT_MAX_ROWS = previous_max_rows
 
     async def test_get_function_source_returns_source(
         self, mcp_registry: MCPToolsRegistry, monkeypatch: pytest.MonkeyPatch
