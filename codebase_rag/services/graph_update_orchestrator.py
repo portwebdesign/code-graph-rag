@@ -95,5 +95,16 @@ class GraphUpdateOrchestrator:
 
         ctx.factory.definition_processor.process_all_method_overrides()
 
+        logger.info("Running SQL structural relation pass (columns, FK, indexes)")
+        ctx.resolver_service.process_sql_relations(ctx.ast_cache)
+
+        logger.info("Running ORM bridge pass (MAPS_TO_TABLE)")
+        ctx.resolver_service.process_orm_bridge(ctx.ast_cache, ctx.simple_name_lookup)
+
+        logger.info(
+            "Running Cypher schema pass (GraphNodeLabel, constraints, SYNCS_TO)"
+        )
+        ctx.resolver_service.process_cypher_schema(ctx.ast_cache)
+
         logger.info("Running Context7 semantic bridging")
         ctx.resolver_service.process_context7_bridging()

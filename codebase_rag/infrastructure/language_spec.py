@@ -79,6 +79,28 @@ def _generic_file_to_module(file_path: Path, repo_root: Path) -> list[str]:
         return []
 
 
+def _sql_get_name(node: Node) -> str | None:
+    """Extract name from SQL DDL statements.
+
+    SQL AST places names in different locations depending on statement type:
+    - CREATE TABLE / VIEW / SEQUENCE / TYPE: name is inside object_reference > identifier[0]
+    - CREATE INDEX: name is in the 'column' field (a direct identifier child)
+    Falls back to _generic_get_name for any other node types.
+    """
+    # CREATE INDEX: index name is stored in the 'column' named field
+    col = node.child_by_field_name("column")
+    if col and col.text:
+        return col.text.decode(cs.ENCODING_UTF8)
+    # CREATE TABLE / VIEW / SEQUENCE / TYPE: name is inside object_reference child
+    for child in node.children:
+        if child.type == "object_reference" and child.children:
+            ident = child.children[0]
+            if ident.text:
+                return ident.text.decode(cs.ENCODING_UTF8)
+    # Fallback
+    return _generic_get_name(node)
+
+
 def _rust_get_name(node: Node) -> str | None:
     """Extracts the name from a Rust name-bearing node."""
     if node.type in cs.RS_TYPE_NODE_TYPES:
@@ -264,6 +286,13 @@ DOCKERFILE_FQN_SPEC = FQNSpec(
 SQL_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.SPEC_SQL_MODULE_TYPES),
     function_node_types=frozenset(cs.SPEC_SQL_FUNCTION_TYPES),
+    get_name=_sql_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
+CYPHER_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.SPEC_CYPHER_MODULE_TYPES),
+    function_node_types=frozenset(cs.SPEC_CYPHER_FUNCTION_TYPES),
     get_name=_generic_get_name,
     file_to_module_parts=_generic_file_to_module,
 )
@@ -304,6 +333,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.GRAPHQL: GRAPHQL_FQN_SPEC,
     cs.SupportedLanguage.DOCKERFILE: DOCKERFILE_FQN_SPEC,
     cs.SupportedLanguage.SQL: SQL_FQN_SPEC,
+    cs.SupportedLanguage.CYPHER: CYPHER_FQN_SPEC,
     cs.SupportedLanguage.VUE: VUE_FQN_SPEC,
     cs.SupportedLanguage.SVELTE: SVELTE_FQN_SPEC,
 }
@@ -613,6 +643,16 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_node_types=cs.SPEC_SQL_CALL_TYPES,
         import_node_types=cs.SPEC_SQL_IMPORT_TYPES,
         import_from_node_types=cs.SPEC_SQL_IMPORT_TYPES,
+    ),
+    cs.SupportedLanguage.CYPHER: LanguageSpec(
+        language=cs.SupportedLanguage.CYPHER,
+        file_extensions=cs.CYPHER_EXTENSIONS,
+        function_node_types=cs.SPEC_CYPHER_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_CYPHER_CLASS_TYPES,
+        module_node_types=cs.SPEC_CYPHER_MODULE_TYPES,
+        call_node_types=cs.SPEC_CYPHER_CALL_TYPES,
+        import_node_types=cs.SPEC_CYPHER_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_CYPHER_IMPORT_TYPES,
     ),
     cs.SupportedLanguage.VUE: LanguageSpec(
         language=cs.SupportedLanguage.VUE,

@@ -30,7 +30,7 @@
 (constraint) @check_constraint_edge
 
 ; @query: create_index
-(create_index) @index_definition
+(create_index) @create_index
 
 ; @query: index_column
 (index_fields) @index_column_edge

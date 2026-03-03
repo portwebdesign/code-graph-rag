@@ -196,6 +196,62 @@ class ResolverPassService:
         except Exception as exc:
             logger.warning("Context7 bridging failed: {}", exc)
 
+    def process_sql_relations(self, ast_cache: AstCacheProtocol) -> None:
+        """Runs the SQL structural relationship pass (columns, FK edges, index-table edges)."""
+        try:
+            from codebase_rag.parsers.pipeline.sql_relation_pass import SqlRelationPass
+
+            SqlRelationPass(
+                ingestor=self.ingestor,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                function_registry=self.function_registry,
+            ).process_ast_cache(ast_cache.items())
+        except Exception as exc:
+            logger.warning("SQL relation pass failed: {}", exc)
+
+    def process_orm_bridge(
+        self,
+        ast_cache: AstCacheProtocol,
+        simple_name_lookup: dict,
+    ) -> None:
+        """Runs the ORM bridge pass (MAPS_TO_TABLE from ORM classes to SQL tables)."""
+        try:
+            from codebase_rag.parsers.pipeline.orm_bridge_pass import OrmBridgePass
+
+            OrmBridgePass(
+                ingestor=self.ingestor,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                simple_name_lookup=simple_name_lookup,
+            ).process_ast_cache(ast_cache.items())
+        except Exception as exc:
+            logger.warning("ORM bridge pass failed: {}", exc)
+
+    def process_cypher_schema(self, ast_cache: AstCacheProtocol) -> None:
+        """
+        Runs the Cypher schema pass.
+
+        Extracts Memgraph/Neo4j node labels, constraints, and performance
+        indexes from ``.cypher`` DDL files and emits:
+
+          * ``GraphNodeLabel`` nodes (one per unique Cypher label)
+          * ``GraphConstraint`` nodes + ``HAS_GRAPH_CONSTRAINT`` edges
+          * ``SYNCS_TO`` edges  (SQL ``Class`` table → ``GraphNodeLabel``)
+        """
+        try:
+            from codebase_rag.parsers.pipeline.cypher_schema_pass import (
+                CypherSchemaPass,
+            )
+
+            CypherSchemaPass(
+                ingestor=self.ingestor,
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+            ).process_ast_cache(ast_cache.items())
+        except Exception as exc:
+            logger.warning("Cypher schema pass failed: {}", exc)
+
 
 class SemanticEmbeddingService:
     """

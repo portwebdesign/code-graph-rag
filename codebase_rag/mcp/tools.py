@@ -1675,36 +1675,96 @@ class MCPToolsRegistry:
             project_root = str(Path(self.project_root).resolve())
 
             try:
-                indexed_projects = self.ingestor.list_projects()
+                indexed_projects = await asyncio.wait_for(
+                    asyncio.to_thread(self.ingestor.list_projects),
+                    timeout=10.0,
+                )
             except Exception:
                 indexed_projects = []
 
             active_indexed = project_name in indexed_projects
 
-            module_count_result = self.ingestor.fetch_all(
-                "MATCH (m:Module {project_name: $project_name}) RETURN count(m) AS count",
-                {cs.KEY_PROJECT_NAME: project_name},
-            )
-            class_count_result = self.ingestor.fetch_all(
-                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Class) RETURN count(c) AS count",
-                {cs.KEY_PROJECT_NAME: project_name},
-            )
-            function_count_result = self.ingestor.fetch_all(
-                "MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(f) "
-                "WHERE f:Function OR f:Method RETURN count(DISTINCT f) AS count",
-                {cs.KEY_PROJECT_NAME: project_name},
-            )
+            # Warn early if no repo_path was supplied and the current root is not indexed
+            if (
+                not (repo_path and repo_path.strip())
+                and not active_indexed
+                and indexed_projects
+            ):
+                return {
+                    "status": "no_active_project",
+                    "ui_summary": (
+                        f"No active project set (current root '{project_name}' is not indexed). "
+                        f"Call select_active_project(repo_path=<path>) with one of the indexed projects: "
+                        f"{indexed_projects}"
+                    ),
+                    "indexed_projects": {
+                        "count": len(indexed_projects),
+                        "names": indexed_projects,
+                    },
+                    "hint": "Pass repo_path to select an indexed project.",
+                }
 
-            latest_report = self.ingestor.fetch_all(
-                CYPHER_GET_LATEST_ANALYSIS_REPORT,
-                {cs.KEY_PROJECT_NAME: project_name},
-            )
+            try:
+                module_count_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.ingestor.fetch_all,
+                        "MATCH (m:Module {project_name: $project_name}) RETURN count(m) AS count",
+                        {cs.KEY_PROJECT_NAME: project_name},
+                    ),
+                    timeout=10.0,
+                )
+            except Exception:
+                module_count_result = []
+
+            try:
+                class_count_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.ingestor.fetch_all,
+                        "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Class) RETURN count(c) AS count",
+                        {cs.KEY_PROJECT_NAME: project_name},
+                    ),
+                    timeout=10.0,
+                )
+            except Exception:
+                class_count_result = []
+
+            try:
+                function_count_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.ingestor.fetch_all,
+                        "MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(f) "
+                        "WHERE f:Function OR f:Method RETURN count(DISTINCT f) AS count",
+                        {cs.KEY_PROJECT_NAME: project_name},
+                    ),
+                    timeout=10.0,
+                )
+            except Exception:
+                function_count_result = []
+
+            try:
+                latest_report = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.ingestor.fetch_all,
+                        CYPHER_GET_LATEST_ANALYSIS_REPORT,
+                        {cs.KEY_PROJECT_NAME: project_name},
+                    ),
+                    timeout=10.0,
+                )
+            except Exception:
+                latest_report = []
+
             latest_analysis_timestamp = (
                 latest_report[0].get("analysis_timestamp") if latest_report else None
             )
 
             self._session_state["preflight_project_selected"] = True
-            preflight = await self._run_session_schema_preflight(project_name)
+            try:
+                preflight = await asyncio.wait_for(
+                    self._run_session_schema_preflight(project_name),
+                    timeout=35.0,
+                )
+            except TimeoutError:
+                preflight = {"status": "timeout", "rows": 0}
             self._persist_preflight_context(preflight)
             preflight_rows = self._coerce_int(preflight.get("rows", 0))
             preflight_status = str(preflight.get("status", "unknown"))

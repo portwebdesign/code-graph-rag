@@ -1,3 +1,5 @@
+import time
+
 from loguru import logger
 
 from codebase_rag.core import logs as ls
@@ -49,25 +51,40 @@ if has_qdrant_client():
             qualified_name (str): The fully qualified name of the code element, stored
                                   in the payload for identification.
         """
-        try:
-            client = get_qdrant_client()
-            client.upsert(
-                collection_name=settings.QDRANT_COLLECTION_NAME,
-                points=[
-                    PointStruct(
-                        id=node_id,
-                        vector=embedding,
-                        payload={
-                            PAYLOAD_NODE_ID: node_id,
-                            PAYLOAD_QUALIFIED_NAME: qualified_name,
-                        },
+        _QDRANT_LOCK_MSG = "already accessed"
+        _QDRANT_MAX_RETRIES = 3
+        _QDRANT_RETRY_DELAY = 0.5  # seconds
+
+        for attempt in range(_QDRANT_MAX_RETRIES):
+            try:
+                client = get_qdrant_client()
+                client.upsert(
+                    collection_name=settings.QDRANT_COLLECTION_NAME,
+                    points=[
+                        PointStruct(
+                            id=node_id,
+                            vector=embedding,
+                            payload={
+                                PAYLOAD_NODE_ID: node_id,
+                                PAYLOAD_QUALIFIED_NAME: qualified_name,
+                            },
+                        )
+                    ],
+                )
+                return
+            except Exception as e:
+                if _QDRANT_LOCK_MSG in str(e) and attempt < _QDRANT_MAX_RETRIES - 1:
+                    logger.debug(
+                        f"Qdrant lock contention for '{qualified_name}', "
+                        f"retrying in {_QDRANT_RETRY_DELAY}s "
+                        f"(attempt {attempt + 1}/{_QDRANT_MAX_RETRIES})"
                     )
-                ],
-            )
-        except Exception as e:
-            logger.warning(
-                ls.EMBEDDING_STORE_FAILED.format(name=qualified_name, error=e)
-            )
+                    time.sleep(_QDRANT_RETRY_DELAY)
+                    continue
+                logger.warning(
+                    ls.EMBEDDING_STORE_FAILED.format(name=qualified_name, error=e)
+                )
+                return
 
     def search_embeddings(
         query_embedding: list[float], top_k: int | None = None

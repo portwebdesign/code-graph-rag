@@ -123,6 +123,7 @@ EXT_SCSS = ".scss"
 EXT_GRAPHQL = ".graphql"
 EXT_GQL = ".gql"
 EXT_SQL = ".sql"
+EXT_CYPHER = ".cypher"
 EXT_VUE = ".vue"
 EXT_SVELTE = ".svelte"
 EXT_DOCKERFILE = ".dockerfile"
@@ -159,6 +160,7 @@ CSS_EXTENSIONS = (EXT_CSS,)
 SCSS_EXTENSIONS = (EXT_SCSS,)
 GRAPHQL_EXTENSIONS = (EXT_GRAPHQL, EXT_GQL)
 SQL_EXTENSIONS = (EXT_SQL,)
+CYPHER_EXTENSIONS = (EXT_CYPHER,)
 VUE_EXTENSIONS = (EXT_VUE,)
 SVELTE_EXTENSIONS = (EXT_SVELTE,)
 DOCKERFILE_EXTENSIONS = (EXT_DOCKERFILE,)
@@ -469,6 +471,11 @@ class NodeLabel(StrEnum):
     VIRTUAL_FUNCTION = "VirtualFunction"
     ENTRY_POINT = "EntryPoint"
     EVENT_FLOW = "EventFlow"
+    COLUMN = "Column"
+    # Cypher / Memgraph schema entities
+    GRAPH_NODE_LABEL = "GraphNodeLabel"
+    GRAPH_CONSTRAINT = "GraphConstraint"
+    GRAPH_REL_TYPE = "GraphRelType"
 
 
 _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
@@ -507,6 +514,10 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.VIRTUAL_FUNCTION: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.ENTRY_POINT: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.EVENT_FLOW: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.COLUMN: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.GRAPH_NODE_LABEL: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.GRAPH_CONSTRAINT: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.GRAPH_REL_TYPE: UniqueKeyType.QUALIFIED_NAME,
 }
 
 SYNTHETIC_PATH_LABELS = frozenset(
@@ -594,6 +605,20 @@ class RelationshipType(StrEnum):
     DOCUMENTS_EXTERNAL = "DOCUMENTS_EXTERNAL"
     IS_ENTRY_POINT = "IS_ENTRY_POINT"
     TRIGGERS_FLOW = "TRIGGERS_FLOW"
+    # SQL structural relationships
+    HAS_COLUMN = "HAS_COLUMN"
+    FOREIGN_KEY = "FOREIGN_KEY"
+    HAS_CONSTRAINT = "HAS_CONSTRAINT"
+    INDEXES_TABLE = "INDEXES_TABLE"
+    # Cross-language binding
+    MAPS_TO_TABLE = "MAPS_TO_TABLE"
+    QUERIES_TABLE = "QUERIES_TABLE"
+    # Cypher / Memgraph schema relationships
+    SYNCS_TO = "SYNCS_TO"
+    HAS_GRAPH_CONSTRAINT = "HAS_GRAPH_CONSTRAINT"
+    QUERIES_LABEL = "QUERIES_LABEL"
+    DEFINES_RELATIONSHIP = "DEFINES_RELATIONSHIP"
+    CONNECTS = "CONNECTS"
 
 
 NODE_PROJECT = NodeLabel.PROJECT
@@ -693,6 +718,7 @@ class SupportedLanguage(StrEnum):
     GRAPHQL = "graphql"
     DOCKERFILE = "dockerfile"
     SQL = "sql"
+    CYPHER = "cypher"
     VUE = "vue"
     SVELTE = "svelte"
 
@@ -817,6 +843,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         LanguageStatus.FULL,
         "Tables, views, statements",
         "SQL",
+    ),
+    SupportedLanguage.CYPHER: LanguageMetadata(
+        LanguageStatus.FULL,
+        "CREATE CONSTRAINT, CREATE INDEX, MERGE, MATCH graph patterns",
+        "Cypher",
     ),
     SupportedLanguage.VUE: LanguageMetadata(
         LanguageStatus.FULL,
@@ -1075,6 +1106,7 @@ class TreeSitterModule(StrEnum):
     GRAPHQL = "tree_sitter_graphql"
     DOCKERFILE = "tree_sitter_dockerfile"
     SQL = "tree_sitter_sql"
+    CYPHER = "tree_sitter_sql"  # No dedicated Cypher grammar; SQL grammar is used as fallback
     VUE = "tree_sitter_vue"
     SVELTE = "tree_sitter_svelte"
 
@@ -3291,11 +3323,33 @@ SPEC_DOCKERFILE_CALL_TYPES: tuple[str, ...] = ()
 SPEC_DOCKERFILE_IMPORT_TYPES: tuple[str, ...] = ()
 
 # (H) LANGUAGE_SPECS node type tuples for SQL
-SPEC_SQL_FUNCTION_TYPES: tuple[str, ...] = ()
-SPEC_SQL_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_SQL_FUNCTION_TYPES: tuple[str, ...] = (
+    "create_view",
+    "create_function",
+    "create_trigger",
+)
+SPEC_SQL_CLASS_TYPES: tuple[str, ...] = (
+    "create_table",
+    "create_type",
+    "create_sequence",
+    "create_index",
+)
 SPEC_SQL_MODULE_TYPES = ("source_file", "program")
-SPEC_SQL_CALL_TYPES: tuple[str, ...] = ()
+SPEC_SQL_CALL_TYPES: tuple[str, ...] = (
+    "insert",
+    "select",
+    "delete",
+    "update",
+    "alter_table",
+)
 SPEC_SQL_IMPORT_TYPES: tuple[str, ...] = ()
+
+# (H) LANGUAGE_SPECS node type tuples for Cypher (.cypher files; SQL grammar used as fallback)
+SPEC_CYPHER_FUNCTION_TYPES: tuple[str, ...] = ()
+SPEC_CYPHER_CLASS_TYPES: tuple[str, ...] = ()
+SPEC_CYPHER_MODULE_TYPES = ("program",)
+SPEC_CYPHER_CALL_TYPES: tuple[str, ...] = ()
+SPEC_CYPHER_IMPORT_TYPES: tuple[str, ...] = ()
 
 # (H) LANGUAGE_SPECS node type tuples for Vue
 SPEC_VUE_FUNCTION_TYPES: tuple[str, ...] = ()

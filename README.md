@@ -46,6 +46,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | C# | Fully Supported | .cs | ✓ | ✓ | ✓ | - | Classes, interfaces, generics, records |
 | C++ | Fully Supported | .cpp, .h, .hpp, .cc, .cxx, .hxx, .hh, .ixx, .cppm, .ccm | ✓ | ✓ | ✓ | ✓ | Constructors, destructors, operator overloading, templates, lambdas, C++20 modules, namespaces |
 | CSS | Fully Supported | .css | - | - | ✓ | - | Selectors, imports, stylesheets |
+| Cypher | Fully Supported | .cypher | - | - | ✓ | - | CREATE CONSTRAINT, CREATE INDEX, MERGE, MATCH graph patterns |
 | Dockerfile | Fully Supported | .dockerfile | - | - | ✓ | - | Images, stages, build instructions |
 | Go | Fully Supported | .go | ✓ | ✓ | ✓ | - | Methods, type declarations, interfaces |
 | GraphQL | Fully Supported | .graphql, .gql | - | - | ✓ | - | Schemas, types, queries |
@@ -61,7 +62,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | Rust | Fully Supported | .rs | ✓ | ✓ | ✓ | ✓ | impl blocks, associated functions |
 | Scala | Fully Supported | .scala, .sc | ✓ | ✓ | ✓ | - | Case classes, objects, traits |
 | SCSS | Fully Supported | .scss | - | - | ✓ | - | Variables, mixins, nested rules |
-| SQL | Fully Supported | .sql | - | - | ✓ | - | Tables, views, statements |
+| SQL | Fully Supported | .sql | ✓ | ✓ | ✓ | - | Tables, views, statements |
 | Svelte | Fully Supported | .svelte | - | - | ✓ | - | Single-file components, markup |
 | TypeScript | Fully Supported | .ts, .tsx | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | Vue | Fully Supported | .vue | - | - | ✓ | - | Single-file components, templates |
@@ -676,6 +677,7 @@ The knowledge graph uses the following node types and relationships:
 - **Ruby**: `class`, `method`, `module`, `singleton_method`
 - **Rust**: `closure_expression`, `enum_item`, `function_item`, `function_signature_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
+- **SQL**: `create_function`, `create_index`, `create_sequence`, `create_table`, `create_trigger`, `create_type`, `create_view`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
 <!-- /SECTION:language_mappings -->
 

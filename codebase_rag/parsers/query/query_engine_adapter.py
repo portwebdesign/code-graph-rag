@@ -219,11 +219,16 @@ _QUERY_NAME_MAP: dict[cs.SupportedLanguage, dict[str, str | list[str]]] = {
         ],
     },
     cs.SupportedLanguage.SQL: {
-        "functions": ["function_definition", "procedure_definition"],
+        "functions": [
+            "function_definition",
+            "procedure_definition",
+            "trigger_definition",
+        ],
         "classes": [
             "table_definition",
             "view_definition",
             "materialized_view_definition",
+            "create_index",
         ],
         "calls": [
             "select_statement",
@@ -232,6 +237,12 @@ _QUERY_NAME_MAP: dict[cs.SupportedLanguage, dict[str, str | list[str]]] = {
             "delete_statement",
         ],
         "imports": ["from_clause", "join_clause"],
+    },
+    cs.SupportedLanguage.CYPHER: {
+        "functions": [],
+        "classes": [],
+        "calls": [],
+        "imports": [],
     },
     cs.SupportedLanguage.VUE: {
         "functions": "script_root",

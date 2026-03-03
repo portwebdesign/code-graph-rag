@@ -273,6 +273,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.SupportedLanguage.SQL,
         ),
         LanguageImport(
+            cs.SupportedLanguage.CYPHER,
+            cs.TreeSitterModule.CYPHER,  # Reuses tree_sitter_sql grammar as fallback
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.SQL,  # Submodule fallback also uses SQL
+        ),
+        LanguageImport(
             cs.SupportedLanguage.VUE,
             cs.TreeSitterModule.VUE,
             cs.QUERY_LANGUAGE,
