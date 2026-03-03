@@ -58,6 +58,7 @@ class GraphUpdater:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
         unignore_paths: frozenset[str] | None = None,
         exclude_paths: frozenset[str] | None = None,
+        force_full_reparse: bool = False,
         progress_logger: Callable[[str, dict[str, Any]], None] | None = None,
     ):
         self.ingestor = ingestor
@@ -74,6 +75,7 @@ class GraphUpdater:
 
         config = GraphUpdateConfigService().load()
         self.config = config
+        self.force_full_reparse = force_full_reparse
 
         self.simple_name_lookup: SimpleNameLookup = defaultdict(set)
         self.function_registry = FunctionRegistryTrie(
@@ -83,17 +85,25 @@ class GraphUpdater:
         self.unignore_paths = unignore_paths
         self.exclude_paths = exclude_paths
 
-        self.selective_update_enabled = config.selective_update_enabled
-        self.edge_only_update_enabled = config.edge_only_update_enabled
+        self.selective_update_enabled = (
+            False if force_full_reparse else config.selective_update_enabled
+        )
+        self.edge_only_update_enabled = (
+            False if force_full_reparse else config.edge_only_update_enabled
+        )
 
-        self.incremental_cache_enabled = config.incremental_cache_enabled
+        self.incremental_cache_enabled = (
+            False if force_full_reparse else config.incremental_cache_enabled
+        )
         self.incremental_cache = (
             IncrementalParsingCache(ttl_seconds=config.parse_cache_ttl)
             if self.incremental_cache_enabled
             else None
         )
 
-        self.git_delta_enabled = config.git_delta_enabled
+        self.git_delta_enabled = (
+            False if force_full_reparse else config.git_delta_enabled
+        )
         self.git_delta_cache = GitDeltaCache() if self.git_delta_enabled else None
         self.git_delta_changed: set[Path] | None = None
         self.git_delta_deleted: set[Path] | None = None
@@ -154,9 +164,17 @@ class GraphUpdater:
 
         self.dependency_file_checker = is_dependency_file
 
+        if self.force_full_reparse:
+            logger.info(
+                "Full reparse mode enabled: git delta, incremental cache, and selective updates are disabled"
+            )
+
     def run(self) -> None:
         self._progress("ingest_stage", {"stage": "project_init"})
-        project_props = {cs.KEY_NAME: self.project_name}
+        project_props = {
+            cs.KEY_NAME: self.project_name,
+            cs.KEY_PATH: str(self.repo_path.resolve()),
+        }
         registry = FrameworkDetectorRegistry(self.repo_path)
         result = registry.detect_repo()
         if result.framework_type:

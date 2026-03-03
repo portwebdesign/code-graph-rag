@@ -11,6 +11,7 @@ all buffered data is flushed upon completion.
 
 from __future__ import annotations
 
+import socket
 import types
 from collections import defaultdict
 from collections.abc import Generator, Sequence
@@ -114,21 +115,29 @@ class MemgraphIngestor:
 
     def __enter__(self) -> MemgraphIngestor:
         """
-        Connects to the Memgraph database when entering a `with` block.
+        Connects to the Memgraph database when entering a ``with`` block.
 
         Returns:
-            The connected `MemgraphIngestor` instance.
+            The connected ``MemgraphIngestor`` instance.
         """
         logger.info(ls.MG_CONNECTING.format(host=self._host, port=self._port))
-        if self._username is not None:
-            self.conn = mgclient.connect(
-                host=self._host,
-                port=self._port,
-                username=self._username,
-                password=self._password,
-            )
-        else:
-            self.conn = mgclient.connect(host=self._host, port=self._port)
+        # Apply a 15-second socket-level connect timeout so that a missing or
+        # unresponsive Memgraph instance does not block the caller indefinitely
+        # (mgclient.connect has no built-in connect_timeout parameter).
+        _prev_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(15.0)
+        try:
+            if self._username is not None:
+                self.conn = mgclient.connect(
+                    host=self._host,
+                    port=self._port,
+                    username=self._username,
+                    password=self._password,
+                )
+            else:
+                self.conn = mgclient.connect(host=self._host, port=self._port)
+        finally:
+            socket.setdefaulttimeout(_prev_timeout)
         self.conn.autocommit = True
         logger.info(ls.MG_CONNECTED)
         return self

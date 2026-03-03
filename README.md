@@ -273,10 +273,27 @@ The Code-Graph-RAG system offers four main modes of operation:
 
 Parse and ingest a multi-language repository into the knowledge graph:
 
-**For the first repository (clean start):**
+**For the first repository (clean start, default full cleanup):**
 ```bash
 cgr start --repo-path /path/to/repo1 --update-graph --clean
 ```
+
+**Choose cleanup scope explicitly with `--clean-scope`:**
+```bash
+# Clean only current project data (Memgraph project + project parser cache + project embeddings)
+cgr start --repo-path /path/to/repo1 --update-graph --clean --clean-scope project
+
+# Clean only Memgraph database
+cgr start --repo-path /path/to/repo1 --update-graph --clean --clean-scope db
+
+# Clean everything (default): Memgraph + parser/git-delta state + embeddings
+cgr start --repo-path /path/to/repo1 --update-graph --clean --clean-scope all
+```
+
+Cleanup scopes:
+- `project`: Deletes only the target project's graph data and related local parser/embedding state.
+- `db`: Wipes only Memgraph graph data.
+- `all`: Wipes Memgraph, parser/incremental/git-delta state, and Qdrant embeddings.
 
 **For additional repositories (preserve existing data):**
 ```bash
@@ -523,6 +540,8 @@ The agent will incorporate the guidance from your reference documents when sugge
 - `--cypher`: Specify provider:model for graph queries (e.g., `google:gemini-2.5-flash-lite-preview-06-17`, `ollama:codellama`)
 - `--repo-path`: Path to repository (defaults to current directory)
 - `--batch-size`: Override Memgraph flush batch size (defaults to `MEMGRAPH_BATCH_SIZE` in settings)
+- `--clean`: Run cleanup before parsing (pair with `--clean-scope`)
+- `--clean-scope`: Cleanup scope for `--clean` (`project|db|all`, default: `all`)
 - `--reference-document`: Path to reference documentation (optimization only)
 
 ## 🔌 MCP Server (VS Code, GitHub Copilot, Claude Code, Cline)

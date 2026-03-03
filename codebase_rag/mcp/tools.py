@@ -44,6 +44,7 @@ from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure import tool_errors as te
 from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.policy.engine import MCPPolicyEngine
+from codebase_rag.services.cleanup_service import CleanupService
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.tools import tool_descriptions as td
@@ -1401,13 +1402,34 @@ class MCPToolsRegistry:
             project_name=project_name,
             limit=int(settings.MCP_PREFLIGHT_SCHEMA_SUMMARY_LIMIT),
         )
-        cypher_result = await self.run_cypher(
-            cypher=schema_query,
-            params="{}",
-            write=False,
-            user_requested=False,
-            reason="session_preflight_schema_summary",
+        # ── Block _auto_plan_if_needed during preflight ─────────────────────
+        # _auto_plan_if_needed triggers plan_task → LLM API call (up to
+        # MCP_AGENT_TIMEOUT_SECONDS = 300 s by default).  That inner timeout
+        # cannot be reliably interrupted by the outer wait_for(35 s) wrapper
+        # because pydantic-ai's agent.run() may not propagate CancelledError.
+        # Temporarily mark the flag so the guard in _auto_plan_if_needed fires
+        # and the LLM call is skipped entirely during preflight execution.
+        # The flag is restored to False afterwards so the first real user query
+        # still triggers auto-planning as intended.
+        _auto_plan_was_attempted = bool(
+            self._session_state.get("auto_plan_attempted", False)
         )
+        self._session_state["auto_plan_attempted"] = True
+        try:
+            cypher_result = await self.run_cypher(
+                cypher=schema_query,
+                params="{}",
+                write=False,
+                user_requested=False,
+                reason="session_preflight_schema_summary",
+            )
+        finally:
+            # Restore the original value — if it was already True (e.g. from a
+            # prior plan call) keep it; otherwise reset so auto-plan still fires
+            # on the first genuine query after select_active_project returns.
+            if not _auto_plan_was_attempted:
+                self._session_state["auto_plan_attempted"] = False
+        # ── End auto-plan guard ──────────────────────────────────────────────
         if not isinstance(cypher_result, dict):
             self._session_state["preflight_schema_summary_loaded"] = False
             self._session_state["preflight_schema_summary_rows"] = 0
@@ -1914,7 +1936,45 @@ class MCPToolsRegistry:
                         project_name=project_name, projects=projects
                     ),
                 )
+
+            embedding_rows = self.ingestor.fetch_all(
+                """
+                MATCH (n {project_name: $project_name})
+                WHERE n:Function OR n:Method
+                RETURN id(n) AS node_id
+                """,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+            embedding_node_ids: list[int] = []
+            for row in embedding_rows:
+                node_id = row.get("node_id")
+                if isinstance(node_id, int):
+                    embedding_node_ids.append(node_id)
+
+            project_root_rows = self.ingestor.fetch_all(
+                "MATCH (p:Project {name: $project_name}) RETURN p.path AS repo_path LIMIT 1",
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+            repo_path_value = None
+            if project_root_rows:
+                candidate = project_root_rows[0].get("repo_path")
+                if isinstance(candidate, str) and candidate.strip():
+                    repo_path_value = candidate
+
             self.ingestor.delete_project(project_name)
+
+            cleanup_service = CleanupService()
+            cleanup_service.delete_project_embeddings(embedding_node_ids)
+            if isinstance(repo_path_value, str) and repo_path_value.strip():
+                cleanup_service.clear_repo_parser_state(Path(repo_path_value))
+            else:
+                try:
+                    active_root = Path(self.project_root).resolve()
+                    if active_root.name == project_name:
+                        cleanup_service.clear_repo_parser_state(active_root)
+                except Exception:
+                    pass
+
             return DeleteProjectSuccessResult(
                 success=True,
                 project=project_name,
@@ -1930,6 +1990,9 @@ class MCPToolsRegistry:
         logger.warning(lg.MCP_WIPING_DATABASE)
         try:
             self.ingestor.clean_database()
+            cleanup_service = CleanupService()
+            cleanup_service.clear_all_parser_state()
+            cleanup_service.wipe_embeddings()
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
@@ -1986,6 +2049,20 @@ class MCPToolsRegistry:
 
             logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
 
+            embedding_rows = self.ingestor.fetch_all(
+                """
+                MATCH (n {project_name: $project_name})
+                WHERE n:Function OR n:Method
+                RETURN id(n) AS node_id
+                """,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
+            embedding_node_ids: list[int] = []
+            for row in embedding_rows:
+                node_id = row.get("node_id")
+                if isinstance(node_id, int):
+                    embedding_node_ids.append(node_id)
+
             async def _delete_project() -> None:
                 await asyncio.to_thread(self.ingestor.delete_project, project_name)
 
@@ -1995,11 +2072,16 @@ class MCPToolsRegistry:
                 base_delay_seconds=0.5,
             )
 
+            cleanup_service = CleanupService()
+            cleanup_service.delete_project_embeddings(embedding_node_ids)
+            cleanup_service.clear_repo_parser_state(resolved_repo)
+
             updater = GraphUpdater(
                 ingestor=self.ingestor,
                 repo_path=resolved_repo,
                 parsers=self.parsers,
                 queries=self.queries,
+                force_full_reparse=True,
             )
 
             async def _run_updater() -> None:

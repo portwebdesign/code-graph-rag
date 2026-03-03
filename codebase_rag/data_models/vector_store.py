@@ -1,4 +1,5 @@
 import time
+from uuid import UUID
 
 from loguru import logger
 
@@ -11,7 +12,7 @@ _CLIENT = None
 
 if has_qdrant_client():
     from qdrant_client import QdrantClient
-    from qdrant_client.models import Distance, PointStruct, VectorParams
+    from qdrant_client.models import Distance, PointIdsList, PointStruct, VectorParams
 
     _CLIENT: QdrantClient | None = None
 
@@ -119,6 +120,41 @@ if has_qdrant_client():
             logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
             return []
 
+    def delete_embeddings_by_node_ids(node_ids: list[int]) -> int:
+        """Delete embedding points by their graph node IDs."""
+        if not node_ids:
+            return 0
+        try:
+            client = get_qdrant_client()
+            point_ids: list[int | str | UUID] = list(node_ids)
+            client.delete(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                points_selector=PointIdsList(points=point_ids),
+                wait=True,
+            )
+            return len(node_ids)
+        except Exception as e:
+            logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
+            return 0
+
+    def wipe_embeddings_collection() -> bool:
+        """Delete and recreate the embedding collection."""
+        try:
+            client = get_qdrant_client()
+            if client.collection_exists(settings.QDRANT_COLLECTION_NAME):
+                client.delete_collection(settings.QDRANT_COLLECTION_NAME)
+            client.create_collection(
+                collection_name=settings.QDRANT_COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=settings.QDRANT_VECTOR_DIM,
+                    distance=Distance.COSINE,
+                ),
+            )
+            return True
+        except Exception as e:
+            logger.warning(ls.EMBEDDING_SEARCH_FAILED.format(error=e))
+            return False
+
 else:
 
     def store_embedding(
@@ -137,3 +173,11 @@ else:
         is not installed.
         """
         return []
+
+    def delete_embeddings_by_node_ids(node_ids: list[int]) -> int:
+        """Mock function when qdrant-client is unavailable."""
+        return 0
+
+    def wipe_embeddings_collection() -> bool:
+        """Mock function when qdrant-client is unavailable."""
+        return False

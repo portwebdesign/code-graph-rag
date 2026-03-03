@@ -436,6 +436,32 @@ class IncrementalParsingCache:
         self.hash_cache.clear()
         self.result_cache.clear()
 
+    def clear_for_repo(self, repo_path: Path) -> dict[str, int]:
+        """Clear cached data for files under a specific repository path."""
+        repo_root = str(Path(repo_path).resolve())
+        removed_hashes = 0
+        removed_results = 0
+
+        hash_keys = [k for k in self.hash_cache.hashes if k.startswith(repo_root)]
+        if hash_keys:
+            for key in hash_keys:
+                self.hash_cache.hashes.pop(key, None)
+            self.hash_cache._save_hashes()
+            removed_hashes = len(hash_keys)
+
+        metadata_keys = [
+            k for k in self.result_cache.metadata if k.startswith(repo_root)
+        ]
+        if metadata_keys:
+            for key in metadata_keys:
+                self.result_cache.invalidate(Path(key))
+            removed_results = len(metadata_keys)
+
+        return {
+            "removed_hash_entries": removed_hashes,
+            "removed_result_entries": removed_results,
+        }
+
     def get_statistics(self) -> dict[str, Any]:
         """
         Get comprehensive cache statistics.
@@ -487,6 +513,22 @@ class GitDeltaCache:
         key = str(Path(repo_path).resolve())
         self._data[key] = head
         self._save()
+
+    def remove_repo(self, repo_path: Path) -> bool:
+        """Remove cached git HEAD entry for a specific repository."""
+        key = str(Path(repo_path).resolve())
+        if key not in self._data:
+            return False
+        del self._data[key]
+        self._save()
+        return True
+
+    def clear_all(self) -> int:
+        """Clear all cached git HEAD entries."""
+        count = len(self._data)
+        self._data.clear()
+        self._save()
+        return count
 
     def _load(self) -> dict[str, str]:
         if self.cache_file.exists():

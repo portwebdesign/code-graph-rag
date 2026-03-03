@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Literal
 
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -20,6 +21,7 @@ from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as ls
 from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure.parser_loader import load_parsers
+from codebase_rag.services.cleanup_service import CleanupService
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
 from codebase_rag.tools.health_checker import HealthChecker
 from codebase_rag.tools.language import cli as language_cli
@@ -121,6 +123,13 @@ def start(
         "--clean",
         help=ch.HELP_CLEAN_DB,
     ),
+    clean_scope: Literal["project", "db", "all"] = typer.Option(
+        "all",
+        "--clean-scope",
+        help=ch.HELP_CLEAN_SCOPE,
+        show_default=True,
+        case_sensitive=False,
+    ),
     output: str | None = typer.Option(
         None,
         "-o",
@@ -168,6 +177,8 @@ def start(
         repo_path (str | None): Path to the repository (defaults to current target).
         update_graph (bool): Whether to parse and update the graph database.
         clean (bool): Whether to clean the database before updating.
+        clean_scope (Literal["project", "db", "all"]): Scope of cleanup when
+            ``--clean`` is enabled.
         output (str | None): Optional path to export the graph after update.
         orchestrator (str | None): Override orchestrator model provider.
         cypher (str | None): Override cypher generation model provider.
@@ -210,7 +221,36 @@ def start(
         with connect_memgraph(effective_batch_size) as ingestor:
             if clean:
                 _info(style(cs.CLI_MSG_CLEANING_DB, cs.Color.YELLOW))
-                ingestor.clean_database()
+                cleanup_service = CleanupService()
+
+                if clean_scope == "project":
+                    project_name = repo_to_update.resolve().name
+                    embedding_rows = ingestor.fetch_all(
+                        """
+                        MATCH (n {project_name: $project_name})
+                        WHERE n:Function OR n:Method
+                        RETURN id(n) AS node_id
+                        """,
+                        {cs.KEY_PROJECT_NAME: project_name},
+                    )
+                    embedding_node_ids: list[int] = []
+                    for row in embedding_rows:
+                        node_id = row.get("node_id")
+                        if isinstance(node_id, int):
+                            embedding_node_ids.append(node_id)
+                    projects = ingestor.list_projects()
+                    if project_name in projects:
+                        ingestor.delete_project(project_name)
+                    cleanup_service.delete_project_embeddings(embedding_node_ids)
+                    cleanup_service.clear_repo_parser_state(repo_to_update)
+
+                elif clean_scope == "db":
+                    ingestor.clean_database()
+
+                else:
+                    ingestor.clean_database()
+                    cleanup_service.clear_all_parser_state()
+                    cleanup_service.wipe_embeddings()
             ingestor.ensure_constraints()
 
             parsers, queries = load_parsers()
@@ -222,6 +262,7 @@ def start(
                 queries,
                 unignore_paths,
                 exclude_paths,
+                force_full_reparse=clean,
             )
             updater.run()
 

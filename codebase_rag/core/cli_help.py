@@ -73,6 +73,10 @@ HELP_REPO_PATH_WATCH = "Path to the repository to watch."
 
 HELP_UPDATE_GRAPH = "Update the knowledge graph by parsing the repository"
 HELP_CLEAN_DB = "Clean the database before updating (use when adding first repo)"
+HELP_CLEAN_SCOPE = (
+    "Clean scope when --clean is set: 'project' deletes only current project data, "
+    "'db' wipes only Memgraph graph, 'all' wipes Memgraph + parser state + embeddings"
+)
 HELP_OUTPUT_GRAPH = "Export graph to JSON file after updating (requires --update-graph)"
 HELP_OUTPUT_PATH = "Output file path for the exported graph"
 HELP_OUTPUT_PROTO_DIR = (
