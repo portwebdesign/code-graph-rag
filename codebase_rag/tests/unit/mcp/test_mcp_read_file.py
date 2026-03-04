@@ -54,6 +54,8 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
 
     registry._file_reader_tool = MagicMock()
     registry._file_reader_tool.function = AsyncMock()
+    registry._session_state["graph_evidence_count"] = 1
+    registry._session_state["last_graph_query_digest_id"] = "qd_fixture"
 
     return registry
 
@@ -81,8 +83,22 @@ class TestReadFileWithoutPagination:
         settings.MCP_ENFORCE_GRAPH_FIRST_READS = True
         try:
             mcp_registry._session_state["graph_evidence_count"] = 0
+            mcp_registry._session_state["last_graph_query_digest_id"] = ""
             result = await mcp_registry.read_file("test_file.txt")
             assert "graph_first_enforced" in result
+        finally:
+            settings.MCP_ENFORCE_GRAPH_FIRST_READS = previous
+
+    async def test_read_file_requires_graph_digest_id(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        previous = settings.MCP_ENFORCE_GRAPH_FIRST_READS
+        settings.MCP_ENFORCE_GRAPH_FIRST_READS = True
+        try:
+            mcp_registry._session_state["graph_evidence_count"] = 2
+            mcp_registry._session_state["last_graph_query_digest_id"] = ""
+            result = await mcp_registry.read_file("test_file.txt")
+            assert "graph_digest_required" in result
         finally:
             settings.MCP_ENFORCE_GRAPH_FIRST_READS = previous
 

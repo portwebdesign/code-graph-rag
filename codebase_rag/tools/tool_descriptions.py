@@ -318,6 +318,10 @@ MCP_ORCHESTRATE_REALTIME_FLOW = (
 MCP_PARAM_CYPHER = "The Cypher query string to execute"
 MCP_PARAM_PARAMS = "JSON string of parameters for the Cypher query (optional)"
 MCP_PARAM_WRITE = "Boolean indicating if the query modifies the graph (default: False)"
+MCP_PARAM_ADVANCED_MODE = (
+    "When true, allows direct run_cypher usage for expert traversal/debug workflows. "
+    "Default false: requires query_code_graph evidence first."
+)
 MCP_PARAM_REASON = "Required for write operations: brief human-readable reason for why the write is necessary"
 MCP_PARAM_CHUNKS = (
     "The content describing the changes (diff format or JSON array of diffs)"

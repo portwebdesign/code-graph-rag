@@ -108,6 +108,65 @@ class TestMCPNewTools:
         schema_md = preflight.get("schema_summary_markdown", "")
         assert isinstance(schema_md, str)
         assert "| from_node_type | relationship_type | to_node_type |" in schema_md
+        session_contract = cast(dict[str, object], result.get("session_contract", {}))
+        assert session_contract.get("active_project") == project_name
+        assert "default_flow" in session_contract
+        scope_rules = cast(dict[str, object], session_contract.get("scope_rules", {}))
+        assert "preferred" in scope_rules
+        orchestrator_policy = cast(
+            dict[str, object], session_contract.get("orchestrator_policy", {})
+        )
+        assert (
+            orchestrator_policy.get("published_on_first_call")
+            == "select_active_project"
+        )
+        tool_tiering = cast(
+            dict[str, object], orchestrator_policy.get("tool_tiering", {})
+        )
+        visible_tiers = tool_tiering.get("visible_tiers", [])
+        assert isinstance(visible_tiers, list)
+        assert "tier1" in visible_tiers
+        assert "meta" in visible_tiers
+        registry_domains = cast(
+            dict[str, object], orchestrator_policy.get("registry_domains", {})
+        )
+        assert "graph" in registry_domains
+        assert "workflow" in registry_domains
+        guard = cast(dict[str, object], orchestrator_policy.get("tool_chain_guard", {}))
+        assert guard.get("max_steps") == 8
+        exploration_policy = cast(
+            dict[str, object], orchestrator_policy.get("exploration_policy", {})
+        )
+        assert exploration_policy.get("strategy") == "epsilon_greedy"
+        assert "allowed_failure_types" in exploration_policy
+        guard_model = cast(
+            dict[str, object], orchestrator_policy.get("guard_model", {})
+        )
+        hard_guards = cast(list[str], guard_model.get("hard_guards", []))
+        soft_guards = cast(list[str], guard_model.get("soft_guards", []))
+        assert "preflight_gate" in hard_guards
+        assert "context_confidence_gate" in soft_guards
+        confidence_model = cast(
+            dict[str, object], guard_model.get("context_confidence_model", {})
+        )
+        assert confidence_model.get("name") == "context_confidence_v1"
+        initial_broadcast = cast(
+            dict[str, object], result.get("initial_llm_policy_broadcast", {})
+        )
+        assert (
+            initial_broadcast.get("published_on_first_call") == "select_active_project"
+        )
+        policy = cast(dict[str, object], result.get("policy", {}))
+        assert policy.get("context_confidence_gate_enabled") is True
+        assert policy.get("soft_hard_guard_partition_enabled") is True
+        assert policy.get("epsilon_exploration_enabled") is True
+        assert policy.get("adaptive_epsilon_enabled") is True
+        execution_state = cast(dict[str, object], result.get("execution_state", {}))
+        assert execution_state.get("phase") == "retrieval"
+        policy_execution_state = cast(
+            dict[str, object], orchestrator_policy.get("execution_state", {})
+        )
+        assert policy_execution_state.get("phase") == "retrieval"
 
     def test_preflight_gate_blocks_non_exempt_tools_before_selection(
         self, mcp_registry: MCPToolsRegistry
@@ -121,6 +180,26 @@ class TestMCPNewTools:
     ) -> None:
         assert mcp_registry.get_preflight_gate_error("list_projects") is None
         assert mcp_registry.get_preflight_gate_error("select_active_project") is None
+
+    def test_phase_gate_blocks_mutation_during_retrieval(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["execution_phase"] = "retrieval"
+
+        error = mcp_registry.get_phase_gate_error("write_file")
+
+        assert isinstance(error, str)
+        assert "phase_guard_blocked" in error
+        assert "retrieval" in error
+
+    def test_phase_gate_allows_mutation_during_execution(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["execution_phase"] = "execution"
+
+        error = mcp_registry.get_phase_gate_error("write_file")
+
+        assert error is None
 
     async def test_detect_project_drift_returns_payload(
         self, mcp_registry: MCPToolsRegistry
@@ -140,8 +219,44 @@ class TestMCPNewTools:
         result = await mcp_registry.get_execution_readiness()
 
         assert "confidence_gate" in result
+        assert "context_confidence_gate" in result
         assert "pattern_reuse_gate" in result
         assert "completion_gate" in result
+        guard_partition = cast(dict[str, object], result.get("guard_partition", {}))
+        assert "hard" in guard_partition
+        assert "soft" in guard_partition
+        signals = cast(dict[str, object], result.get("signals", {}))
+        fallback_exploration = cast(
+            dict[str, object], signals.get("fallback_exploration", {})
+        )
+        assert "calls" in fallback_exploration
+        assert "explore_ratio" in fallback_exploration
+        assert "execution_state" in result
+
+    async def test_get_execution_readiness_exposes_context_confidence_components(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["graph_evidence_count"] = 2
+        mcp_registry._session_state["code_evidence_count"] = 2
+        mcp_registry._session_state["semantic_similarity_mean"] = 0.85
+        mcp_registry._session_state["manual_memory_add_count"] = 1
+        mcp_registry._session_state["memory_pattern_query_count"] = 1
+
+        result = await mcp_registry.get_execution_readiness()
+
+        context_gate = cast(
+            dict[str, object], result.get("context_confidence_gate", {})
+        )
+        assert context_gate.get("name") == "context_confidence_v1"
+        assert isinstance(context_gate.get("score"), float)
+        components = cast(dict[str, object], context_gate.get("components", {}))
+        assert "graph_density" in components
+        assert "semantic_overlap" in components
+        assert "file_depth" in components
+        assert "memory_match" in components
+        assert "exploration_calibration" in components
+        signals = cast(dict[str, object], context_gate.get("signals", {}))
+        assert "confidence_calibration" in signals
 
     def test_next_best_action_prefers_graph_before_read_file(self) -> None:
         readiness = {
@@ -264,6 +379,478 @@ class TestMCPNewTools:
         query_used = str(result.get("query_used", ""))
         assert "CONTAINS '/codebase_rag/parsers'" in query_used
 
+    async def test_query_code_graph_standardized_fallback_uses_run_cypher(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                "RETURN m.name AS name LIMIT 5"
+            )
+
+        mcp_registry.cypher_gen.generate = fake_generate
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = []
+
+        async def fake_run_cypher(
+            cypher: str,
+            params: str | None = None,
+            write: bool = False,
+            user_requested: bool = False,
+            reason: str | None = None,
+            advanced_mode: bool = False,
+        ) -> dict[str, object]:
+            _ = cypher, params, write, user_requested, reason, advanced_mode
+            return {"status": "ok", "results": [{"name": "from_run_cypher"}]}
+
+        mcp_registry.run_cypher = fake_run_cypher
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query="show modules",
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        rows = cast(list[dict[str, object]], result.get("results", []))
+        assert len(rows) == 1
+        assert rows[0].get("name") == "from_run_cypher"
+        fallback_chain = cast(list[dict[str, object]], result.get("fallback_chain", []))
+        assert len(fallback_chain) >= 1
+        assert fallback_chain[0].get("tool") == "run_cypher"
+        assert fallback_chain[0].get("success") is True
+
+    async def test_query_code_graph_standardized_fallback_uses_semantic_search(
+        self,
+        mcp_registry: MCPToolsRegistry,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                "RETURN m.name AS name LIMIT 5"
+            )
+
+        def fake_semantic_search(query: str, top_k: int = 5) -> list[dict[str, object]]:
+            _ = query
+            _ = top_k
+            return [
+                {
+                    "qualified_name": "pkg.mod.func",
+                    "file_path": "src/mod.py",
+                    "score": 0.92,
+                }
+            ]
+
+        mcp_registry.cypher_gen.generate = fake_generate
+        monkeypatch.setattr(
+            "codebase_rag.mcp.tools.semantic_code_search", fake_semantic_search
+        )
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = []
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query="show semantic fallback",
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        rows = cast(list[dict[str, object]], result.get("results", []))
+        assert len(rows) == 1
+        assert rows[0].get("source") == "semantic_search"
+        fallback_chain = cast(list[dict[str, object]], result.get("fallback_chain", []))
+        assert len(fallback_chain) >= 2
+        assert fallback_chain[0].get("tool") == "run_cypher"
+        assert fallback_chain[1].get("tool") == "semantic_search"
+
+    async def test_query_code_graph_adaptive_fallback_prefers_semantic_first(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                "RETURN m.name AS name LIMIT 5"
+            )
+
+        call_order: list[str] = []
+
+        async def fake_run_cypher(
+            cypher: str,
+            params: str | None = None,
+            write: bool = False,
+            user_requested: bool = False,
+            reason: str | None = None,
+            advanced_mode: bool = False,
+        ) -> dict[str, object]:
+            _ = cypher, params, write, user_requested, reason, advanced_mode
+            call_order.append("run_cypher")
+            return {"status": "ok", "results": []}
+
+        async def fake_semantic(
+            query: str,
+            top_k: int = 5,
+        ) -> dict[str, object]:
+            _ = query, top_k
+            call_order.append("semantic_search")
+            return {
+                "count": 1,
+                "results": [
+                    {
+                        "qualified_name": "pkg.grep.hit",
+                        "file_path": "src/hit.py",
+                        "score": 0.8,
+                    }
+                ],
+            }
+
+        mcp_registry.cypher_gen.generate = fake_generate
+        mcp_registry.run_cypher = fake_run_cypher
+        mcp_registry.semantic_search = fake_semantic
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = []
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query="grep text keyword matches",
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        assert len(call_order) >= 1
+        assert call_order[0] == "semantic_search"
+        diagnostics = cast(dict[str, object], result.get("fallback_diagnostics", {}))
+        assert diagnostics.get("failure_type") == "no_data"
+
+    async def test_query_code_graph_fallback_forced_explore_reverses_order(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                "RETURN m.name AS name LIMIT 5"
+            )
+
+        call_order: list[str] = []
+
+        async def fake_run_cypher(
+            cypher: str,
+            params: str | None = None,
+            write: bool = False,
+            user_requested: bool = False,
+            reason: str | None = None,
+            advanced_mode: bool = False,
+        ) -> dict[str, object]:
+            _ = cypher, params, write, user_requested, reason, advanced_mode
+            call_order.append("run_cypher")
+            return {"status": "ok", "results": [{"name": "from_run"}]}
+
+        async def fake_semantic(
+            query: str,
+            top_k: int = 5,
+        ) -> dict[str, object]:
+            _ = query, top_k
+            call_order.append("semantic_search")
+            return {
+                "count": 0,
+                "results": [],
+            }
+
+        mcp_registry._session_state["exploration_force_mode"] = "explore"
+        mcp_registry.cypher_gen.generate = fake_generate
+        mcp_registry.run_cypher = fake_run_cypher
+        mcp_registry.semantic_search = fake_semantic
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = []
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query="show modules",
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        assert len(call_order) >= 1
+        assert call_order[0] == "semantic_search"
+        diagnostics = cast(dict[str, object], result.get("fallback_diagnostics", {}))
+        exploration = cast(dict[str, object], diagnostics.get("exploration", {}))
+        assert exploration.get("mode") == "explore"
+        assert isinstance(exploration.get("policy_scores"), list)
+
+    async def test_query_code_graph_fallback_safety_blocks_explore_on_policy_failure(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        call_order: list[str] = []
+
+        async def fake_run_cypher(
+            cypher: str,
+            params: str | None = None,
+            write: bool = False,
+            user_requested: bool = False,
+            reason: str | None = None,
+            advanced_mode: bool = False,
+        ) -> dict[str, object]:
+            _ = cypher, params, write, user_requested, reason, advanced_mode
+            call_order.append("run_cypher")
+            return {"status": "ok", "results": [{"name": "fallback_hit"}]}
+
+        async def fake_semantic(
+            query: str,
+            top_k: int = 5,
+        ) -> dict[str, object]:
+            _ = query, top_k
+            call_order.append("semantic_search")
+            return {"count": 0, "results": []}
+
+        mcp_registry._session_state["exploration_force_mode"] = "explore"
+        mcp_registry.run_cypher = fake_run_cypher
+        mcp_registry.semantic_search = fake_semantic
+
+        result = await mcp_registry._run_standardized_query_fallback_chain(
+            natural_language_query="show modules",
+            cypher_query="MATCH (m:Module) RETURN m LIMIT 5",
+            failure_hint="query_execution_exception",
+            error_text="scope policy violation",
+            result_rows=0,
+        )
+
+        assert result.get("status") == "ok"
+        assert len(call_order) >= 1
+        assert call_order[0] == "run_cypher"
+        diagnostics = cast(dict[str, object], result.get("fallback_diagnostics", {}))
+        exploration = cast(dict[str, object], diagnostics.get("exploration", {}))
+        assert exploration.get("reason") == "safety_constraint"
+
+    async def test_query_code_graph_fallback_updates_exploration_telemetry(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                "RETURN m.name AS name LIMIT 5"
+            )
+
+        async def fake_run_cypher(
+            cypher: str,
+            params: str | None = None,
+            write: bool = False,
+            user_requested: bool = False,
+            reason: str | None = None,
+            advanced_mode: bool = False,
+        ) -> dict[str, object]:
+            _ = cypher, params, write, user_requested, reason, advanced_mode
+            return {"status": "ok", "results": [{"name": "fallback_hit"}]}
+
+        async def fake_semantic(
+            query: str,
+            top_k: int = 5,
+        ) -> dict[str, object]:
+            _ = query, top_k
+            return {"count": 0, "results": []}
+
+        mcp_registry._session_state["exploration_force_mode"] = "explore"
+        mcp_registry.cypher_gen.generate = fake_generate
+        mcp_registry.run_cypher = fake_run_cypher
+        mcp_registry.semantic_search = fake_semantic
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = []
+
+        _ = await mcp_registry.query_code_graph(
+            natural_language_query="show modules",
+            output_format="json",
+        )
+
+        readiness = await mcp_registry.get_execution_readiness()
+        signals = cast(dict[str, object], readiness.get("signals", {}))
+        fallback_exploration = cast(
+            dict[str, object], signals.get("fallback_exploration", {})
+        )
+        assert int(fallback_exploration.get("calls", 0)) >= 1
+        assert "avg_reward" in fallback_exploration
+        assert "avg_latency_ms" in fallback_exploration
+
+    async def test_query_code_graph_policy_level_optimization_prefers_best_chain(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                "RETURN m.name AS name LIMIT 5"
+            )
+
+        call_order: list[str] = []
+
+        async def fake_run_cypher(
+            cypher: str,
+            params: str | None = None,
+            write: bool = False,
+            user_requested: bool = False,
+            reason: str | None = None,
+            advanced_mode: bool = False,
+        ) -> dict[str, object]:
+            _ = cypher, params, write, user_requested, reason, advanced_mode
+            call_order.append("run_cypher")
+            return {"status": "ok", "results": [{"name": "from_run"}]}
+
+        async def fake_semantic(
+            query: str,
+            top_k: int = 5,
+        ) -> dict[str, object]:
+            _ = query, top_k
+            call_order.append("semantic_search")
+            return {
+                "count": 1,
+                "results": [
+                    {
+                        "qualified_name": "pkg.optimal.hit",
+                        "file_path": "src/hit.py",
+                        "score": 0.95,
+                    }
+                ],
+            }
+
+        mcp_registry._session_state["exploration_force_mode"] = "exploit"
+        mcp_registry._session_state["fallback_exploration"] = {
+            "calls": 16,
+            "explore": 2,
+            "exploit": 14,
+            "success": 8,
+            "failure": 8,
+            "consecutive_failures": 1,
+            "reward_total": 8.1,
+            "latency_ms_total": 7600.0,
+            "last_mode": "exploit",
+            "last_epsilon": 0.1,
+            "last_draw": 0.7,
+            "chains": {
+                "run_cypher->semantic_search": {
+                    "calls": 10,
+                    "success": 2,
+                    "failure": 8,
+                    "rows_total": 3,
+                    "latency_ms_total": 8200.0,
+                    "reward_total": 2.2,
+                    "explore": 1,
+                    "exploit": 9,
+                },
+                "semantic_search->run_cypher": {
+                    "calls": 6,
+                    "success": 6,
+                    "failure": 0,
+                    "rows_total": 18,
+                    "latency_ms_total": 1600.0,
+                    "reward_total": 5.9,
+                    "explore": 1,
+                    "exploit": 5,
+                },
+            },
+            "recent": [],
+        }
+        mcp_registry.cypher_gen.generate = fake_generate
+        mcp_registry.run_cypher = fake_run_cypher
+        mcp_registry.semantic_search = fake_semantic
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = []
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query="show modules",
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        assert len(call_order) >= 1
+        assert call_order[0] == "semantic_search"
+        diagnostics = cast(dict[str, object], result.get("fallback_diagnostics", {}))
+        exploration = cast(dict[str, object], diagnostics.get("exploration", {}))
+        assert exploration.get("reason") == "forced_exploit"
+        assert exploration.get("policy_best_chain") == "semantic_search->run_cypher"
+
+    def test_adaptive_epsilon_increases_with_failure_history(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["fallback_exploration"] = {
+            "calls": 20,
+            "explore": 1,
+            "exploit": 19,
+            "success": 5,
+            "failure": 15,
+            "consecutive_failures": 4,
+            "reward_total": 4.0,
+            "latency_ms_total": 28000.0,
+            "last_mode": "exploit",
+            "last_epsilon": 0.1,
+            "last_draw": 0.9,
+            "chains": {
+                "run_cypher->semantic_search": {
+                    "calls": 18,
+                    "success": 4,
+                    "failure": 14,
+                    "rows_total": 5,
+                    "latency_ms_total": 25000.0,
+                    "reward_total": 3.0,
+                    "explore": 1,
+                    "exploit": 17,
+                }
+            },
+            "recent": [
+                {"reward": 0.1},
+                {"reward": 0.15},
+                {"reward": 0.12},
+                {"reward": 0.14},
+            ],
+        }
+
+        epsilon = mcp_registry._compute_exploration_epsilon("no_data")
+
+        assert epsilon > mcp_registry._EXPLORATION_BASE_EPSILON
+        assert epsilon <= mcp_registry._EXPLORATION_MAX_EPSILON
+
+    async def test_query_code_graph_exception_fallback_reports_failure_type(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+
+        async def fake_generate(_: str) -> str:
+            return (
+                f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+                "RETURN m.name AS name LIMIT 5"
+            )
+
+        async def fake_run_cypher(
+            cypher: str,
+            params: str | None = None,
+            write: bool = False,
+            user_requested: bool = False,
+            reason: str | None = None,
+            advanced_mode: bool = False,
+        ) -> dict[str, object]:
+            _ = cypher, params, write, user_requested, reason, advanced_mode
+            return {"status": "ok", "results": [{"name": "fallback_hit"}]}
+
+        mcp_registry.cypher_gen.generate = fake_generate
+        mcp_registry.run_cypher = fake_run_cypher
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.side_effect = RuntimeError("invalid query syntax")
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query="show modules",
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        rows = cast(list[dict[str, object]], result.get("results", []))
+        assert len(rows) == 1
+        diagnostics = cast(dict[str, object], result.get("fallback_diagnostics", {}))
+        assert diagnostics.get("failure_type") in {"bad_query", "policy_block"}
+
     async def test_query_code_graph_auto_plans_on_first_query(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
@@ -309,6 +896,8 @@ class TestMCPNewTools:
             assert result.get("error") is None
             assert planner_called["count"] == 1
             assert mcp_registry._session_state.get("plan_task_completed") is True
+            usage_rate = float(result.get("planner_usage_rate", 0.0))
+            assert usage_rate > 0.0
         finally:
             settings.MCP_AUTO_PLAN_ON_FIRST_QUERY = previous_auto_plan
 
@@ -370,7 +959,11 @@ class TestMCPNewTools:
     async def test_plan_task_returns_payload(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
+        captured_context: dict[str, str] = {"value": ""}
+
         async def fake_plan(goal: str, context: str | None = None) -> object:
+            _ = goal
+            captured_context["value"] = context or ""
             return SimpleNamespace(
                 status="ok",
                 content={
@@ -387,6 +980,9 @@ class TestMCPNewTools:
 
         assert result.get("status") == "ok"
         assert result.get("summary") == "do it"
+        assert result.get("memory_injection_mandatory") is True
+        assert "Memory pattern injection (mandatory):" in captured_context["value"]
+        assert "Chain success-rate candidates:" in captured_context["value"]
         readiness = await mcp_registry.get_execution_readiness()
         signals = cast(dict[str, object], readiness.get("signals", {}))
         assert int(signals.get("memory_pattern_query_count", 0)) >= 1
@@ -532,6 +1128,68 @@ class TestMCPNewTools:
 
         assert result.get("count") == 1
 
+    async def test_memory_query_patterns_returns_vector_scores(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        await mcp_registry.memory_add(
+            json.dumps(
+                {
+                    "kind": "successful_tool_chain",
+                    "tool_history": ["query_code_graph", "run_cypher"],
+                    "note": "graph retrieval success",
+                }
+            ),
+            tags="pattern,success",
+        )
+
+        result = await mcp_registry.memory_query_patterns(
+            query="graph retrieval chain",
+            success_only=True,
+            limit=5,
+        )
+
+        assert result.get("count", 0) >= 1
+        entries = cast(list[dict[str, object]], result.get("entries", []))
+        assert "vector_similarity" in entries[0]
+        assert "score" in entries[0]
+
+    async def test_memory_query_patterns_returns_chain_success_rates(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        await mcp_registry.memory_add(
+            json.dumps(
+                {
+                    "kind": "successful_tool_chain",
+                    "tool_history": ["query_code_graph", "run_cypher"],
+                    "status": "ok",
+                }
+            ),
+            tags="pattern,chain,success",
+        )
+        await mcp_registry.memory_add(
+            json.dumps(
+                {
+                    "kind": "successful_tool_chain",
+                    "tool_history": ["query_code_graph", "run_cypher"],
+                    "status": "failed",
+                }
+            ),
+            tags="pattern,chain",
+        )
+
+        result = await mcp_registry.memory_query_patterns(
+            query="query graph and cypher",
+            success_only=False,
+            limit=10,
+        )
+
+        rates = cast(list[dict[str, object]], result.get("chain_success_rates", []))
+        assert len(rates) >= 1
+        top = rates[0]
+        assert "chain_signature" in top
+        assert "success_rate" in top
+        assert "total_count" in top
+
     async def test_execution_feedback_sets_replan_required(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
@@ -575,6 +1233,9 @@ class TestMCPNewTools:
         assert result.get("decision") == "not_done"
         blockers = cast(list[str], result.get("blockers", []))
         assert len(blockers) > 0
+        guard_partition = cast(dict[str, object], result.get("guard_partition", {}))
+        assert "hard" in guard_partition
+        assert "soft" in guard_partition
         assert "confidence_summary" in result
         assert "next_best_action" in result
         assert "ui_summary" in result
@@ -895,6 +1556,204 @@ class TestMCPNewTools:
 
         assert blocked_result.get("status") == "error"
         assert blocked_result.get("stage") == "circuit_breaker_open"
+
+    async def test_orchestrate_realtime_flow_prefers_exact_next_calls_chain(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        async def fake_sync_graph_updates(
+            user_requested: bool,
+            reason: str,
+        ) -> dict[str, object]:
+            _ = user_requested
+            _ = reason
+            return {"status": "ok"}
+
+        async def fake_validate_done_decision(
+            goal: str | None = None,
+            context: str | None = None,
+        ) -> dict[str, object]:
+            _ = goal
+            _ = context
+            return {
+                "status": "ok",
+                "decision": "not_done",
+                "exact_next_calls": [
+                    {
+                        "tool": "memory_add",
+                        "args": {"entry": "from_exact_chain", "tags": "exact"},
+                        "priority": 1,
+                        "when": "always",
+                    },
+                    {
+                        "tool": "test_quality_gate",
+                        "args": {
+                            "coverage": "1",
+                            "edge_cases": "1",
+                            "negative_tests": "1",
+                        },
+                        "priority": 2,
+                        "when": "fallback",
+                    },
+                ],
+                "next_best_action": {
+                    "tool": "test_quality_gate",
+                    "params_hint": {"coverage": "0"},
+                },
+            }
+
+        async def fake_memory_add(
+            entry: str,
+            tags: str | None = None,
+        ) -> dict[str, object]:
+            return {"status": "ok", "entry": entry, "tags": tags}
+
+        mcp_registry.sync_graph_updates = fake_sync_graph_updates
+        mcp_registry.validate_done_decision = fake_validate_done_decision
+        mcp_registry.memory_add = fake_memory_add
+
+        result = await mcp_registry.orchestrate_realtime_flow(
+            action="write_file",
+            result="partial_success",
+            user_requested=True,
+            sync_reason="refresh graph",
+            auto_execute_next=True,
+            verify_drift=False,
+            debounce_seconds=0,
+        )
+
+        assert result.get("status") == "ok"
+        auto_next = cast(dict[str, object], result.get("auto_next", {}))
+        assert auto_next.get("executed") is True
+        assert auto_next.get("mode") == "exact_next_calls"
+        selected = cast(dict[str, object], auto_next.get("selected", {}))
+        assert selected.get("tool") == "memory_add"
+        assert selected.get("priority") == 1
+
+    async def test_auto_execute_next_best_action_supports_run_cypher(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"name": "mod"}]
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_read = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "RETURN m.name AS name LIMIT 1"
+        )
+
+        result = await mcp_registry._auto_execute_next_best_action(
+            {
+                "tool": "run_cypher",
+                "params_hint": {
+                    "cypher": scoped_read,
+                    "params": {},
+                    "write": False,
+                    "advanced_mode": True,
+                },
+            }
+        )
+
+        assert result.get("executed") is True
+        payload = cast(dict[str, object], result.get("result", {}))
+        assert payload.get("status") == "ok"
+
+    async def test_auto_execute_exact_next_calls_enforces_tier_visibility(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        async def fake_memory_add(
+            entry: str,
+            tags: str | None = None,
+        ) -> dict[str, object]:
+            return {"status": "ok", "entry": entry, "tags": tags}
+
+        mcp_registry.memory_add = fake_memory_add
+
+        result = await mcp_registry._auto_execute_exact_next_calls(
+            [
+                {
+                    "tool": "read_file",
+                    "args": {
+                        "file_path": "sample.py",
+                        "query_digest_id": "qd_1",
+                    },
+                    "priority": 1,
+                    "when": "first",
+                },
+                {
+                    "tool": "memory_add",
+                    "args": {
+                        "entry": "from_tiered_chain",
+                        "tags": "tiering",
+                    },
+                    "priority": 2,
+                    "when": "fallback",
+                },
+            ],
+            max_candidates=3,
+        )
+
+        assert result.get("executed") is True
+        selected = cast(dict[str, object], result.get("selected", {}))
+        assert selected.get("tool") == "memory_add"
+        attempts = cast(list[dict[str, object]], result.get("attempts", []))
+        assert len(attempts) >= 2
+        assert attempts[0].get("tool") == "read_file"
+        assert attempts[0].get("reason") == "tool_not_visible_in_orchestrator_tiering"
+
+    async def test_orchestrate_realtime_flow_applies_max_tool_chain_guard(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        async def fake_sync_graph_updates(
+            user_requested: bool,
+            reason: str,
+        ) -> dict[str, object]:
+            _ = user_requested
+            _ = reason
+            return {"status": "ok"}
+
+        async def fake_validate_done_decision(
+            goal: str | None = None,
+            context: str | None = None,
+        ) -> dict[str, object]:
+            _ = goal
+            _ = context
+            return {
+                "status": "ok",
+                "decision": "not_done",
+                "exact_next_calls": [
+                    {
+                        "tool": "read_file",
+                        "args": {"file_path": "sample.py"},
+                        "priority": index,
+                        "when": "loop",
+                    }
+                    for index in range(1, 11)
+                ],
+            }
+
+        mcp_registry.sync_graph_updates = fake_sync_graph_updates
+        mcp_registry.validate_done_decision = fake_validate_done_decision
+
+        result = await mcp_registry.orchestrate_realtime_flow(
+            action="write_file",
+            result="partial_success",
+            user_requested=True,
+            sync_reason="refresh graph",
+            auto_execute_next=True,
+            verify_drift=False,
+            debounce_seconds=0,
+        )
+
+        assert result.get("status") == "ok"
+        guard = cast(dict[str, object], result.get("tool_chain_guard", {}))
+        assert guard.get("max_steps") == 8
+        assert guard.get("remaining_for_auto_next") == 5
+        auto_next = cast(dict[str, object], result.get("auto_next", {}))
+        assert auto_next.get("executed") is False
+        assert auto_next.get("candidate_limit") == 5
+        assert auto_next.get("total_candidates") == 10
+        assert auto_next.get("truncated") is True
+        attempts = cast(list[dict[str, object]], auto_next.get("attempts", []))
+        assert len(attempts) == 5
 
     async def test_refactor_batch_ok(
         self, mcp_registry: MCPToolsRegistry, monkeypatch: pytest.MonkeyPatch

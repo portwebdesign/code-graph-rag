@@ -1,6 +1,8 @@
 import asyncio
 import itertools
 import json
+import random
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,10 +76,13 @@ class MCPMemoryStore:
         self._entries = self._load_entries()
 
     def add_entry(self, text: str, tags: list[str]) -> dict[str, object]:
+        chain_signature = self._extract_chain_signature(text)
         record = {
             "text": text,
             "tags": tags,
             "timestamp": int(time.time()),
+            "vector": self._build_sparse_vector(text),
+            "chain_signature": chain_signature,
         }
         self._entries.insert(0, record)
         self._entries = self._entries[: self._max_entries]
@@ -94,6 +99,15 @@ class MCPMemoryStore:
         success_only: bool = False,
         limit: int = 20,
     ) -> list[dict[str, object]]:
+        chain_rates = self.get_chain_success_rates(query=query, limit=50)
+        chain_rate_map: dict[str, float] = {
+            str(item.get("chain_signature", "")): self._to_float(
+                item.get("success_rate", 0.0)
+            )
+            for item in chain_rates
+            if isinstance(item, dict)
+        }
+        query_vector = self._build_sparse_vector(query)
         normalized_terms = [
             token.strip().lower()
             for token in query.replace("_", " ").split()
@@ -123,11 +137,37 @@ class MCPMemoryStore:
                     score += 3
                 if term in entry_tags:
                     score += 2
+            if normalized_terms and score == 0 and not query_vector:
+                continue
+
+            entry_vector_raw = entry.get("vector", {})
+            entry_vector = (
+                cast(dict[str, float], entry_vector_raw)
+                if isinstance(entry_vector_raw, dict)
+                else {}
+            )
+            vector_similarity = self._cosine_similarity(query_vector, entry_vector)
+            score += int(round(vector_similarity * 10))
+
+            chain_signature = str(entry.get("chain_signature", "")).strip().lower()
+            if chain_signature and any(
+                term in chain_signature for term in normalized_terms
+            ):
+                score += 2
+
             if normalized_terms and score == 0:
                 continue
 
             recency_bonus = max(0, len(self._entries) - idx)
-            ranked.append((score, recency_bonus, entry))
+            entry_with_score = dict(entry)
+            entry_with_score["score"] = score
+            entry_with_score["vector_similarity"] = round(vector_similarity, 4)
+            if chain_signature:
+                entry_with_score["chain_success_rate"] = round(
+                    chain_rate_map.get(chain_signature, 0.0),
+                    4,
+                )
+            ranked.append((score, recency_bonus, entry_with_score))
 
         ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [item[2] for item in ranked[: max(0, limit)]]
@@ -183,6 +223,190 @@ class MCPMemoryStore:
             json.dumps(self._entries, ensure_ascii=False, indent=2),
             encoding=cs.ENCODING_UTF8,
         )
+
+    def get_chain_success_rates(
+        self,
+        query: str,
+        limit: int = 10,
+    ) -> list[dict[str, object]]:
+        query_vector = self._build_sparse_vector(query)
+        normalized_terms = {
+            token.strip().lower()
+            for token in query.replace("_", " ").split()
+            if token.strip()
+        }
+        aggregates: dict[str, dict[str, object]] = {}
+
+        for entry in self._entries:
+            chain_signature = str(entry.get("chain_signature", "")).strip().lower()
+            if not chain_signature:
+                continue
+
+            text = str(entry.get("text", ""))
+            entry_vector_raw = entry.get("vector", {})
+            entry_vector = (
+                cast(dict[str, float], entry_vector_raw)
+                if isinstance(entry_vector_raw, dict)
+                else {}
+            )
+            vector_similarity = self._cosine_similarity(query_vector, entry_vector)
+            term_match = any(
+                term in chain_signature or term in text.lower()
+                for term in normalized_terms
+            )
+            if normalized_terms and not term_match and vector_similarity <= 0.0:
+                continue
+
+            bucket = aggregates.get(chain_signature)
+            if bucket is None:
+                bucket = {
+                    "chain_signature": chain_signature,
+                    "success_count": 0,
+                    "total_count": 0,
+                    "last_seen": 0,
+                    "query_relevance": 0.0,
+                }
+                aggregates[chain_signature] = bucket
+
+            bucket["total_count"] = self._to_int(bucket.get("total_count", 0)) + 1
+            if self._is_success_record(entry):
+                bucket["success_count"] = (
+                    self._to_int(bucket.get("success_count", 0)) + 1
+                )
+            bucket["last_seen"] = max(
+                self._to_int(bucket.get("last_seen", 0)),
+                self._to_int(entry.get("timestamp", 0)),
+            )
+            bucket["query_relevance"] = max(
+                self._to_float(bucket.get("query_relevance", 0.0)),
+                self._to_float(vector_similarity),
+            )
+
+        rows: list[dict[str, object]] = []
+        for chain_signature, bucket in aggregates.items():
+            total_count = self._to_int(bucket.get("total_count", 0))
+            success_count = self._to_int(bucket.get("success_count", 0))
+            success_rate = (success_count / total_count) if total_count > 0 else 0.0
+            rows.append(
+                {
+                    "chain_signature": chain_signature,
+                    "success_count": success_count,
+                    "total_count": total_count,
+                    "success_rate": round(success_rate, 4),
+                    "last_seen": self._to_int(bucket.get("last_seen", 0)),
+                    "query_relevance": round(
+                        self._to_float(bucket.get("query_relevance", 0.0)), 4
+                    ),
+                }
+            )
+
+        rows.sort(
+            key=lambda item: (
+                self._to_float(item.get("success_rate", 0.0)),
+                self._to_int(item.get("total_count", 0)),
+                self._to_float(item.get("query_relevance", 0.0)),
+                self._to_int(item.get("last_seen", 0)),
+            ),
+            reverse=True,
+        )
+        bounded_limit = max(1, min(self._to_int(limit, 10), 100))
+        return rows[:bounded_limit]
+
+    @staticmethod
+    def _to_int(value: object, default: int = 0) -> int:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return default
+            try:
+                return int(float(candidate))
+            except ValueError:
+                return default
+        return default
+
+    @staticmethod
+    def _to_float(value: object, default: float = 0.0) -> float:
+        if isinstance(value, bool):
+            return float(int(value))
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return default
+            try:
+                return float(candidate)
+            except ValueError:
+                return default
+        return default
+
+    @staticmethod
+    def _tokenize_text(value: str) -> list[str]:
+        return [
+            token
+            for token in re.split(r"[^a-zA-Z0-9_]+", value.lower())
+            if token and len(token) >= 2
+        ]
+
+    @classmethod
+    def _build_sparse_vector(cls, value: str) -> dict[str, float]:
+        if not value.strip():
+            return {}
+        tokens = cls._tokenize_text(value)
+        if not tokens:
+            return {}
+        counts: dict[str, int] = {}
+        for token in tokens:
+            counts[token] = counts.get(token, 0) + 1
+        max_count = max(counts.values()) if counts else 1
+        return {token: round(count / max_count, 6) for token, count in counts.items()}
+
+    @staticmethod
+    def _cosine_similarity(
+        left: dict[str, float],
+        right: dict[str, float],
+    ) -> float:
+        if not left or not right:
+            return 0.0
+        overlap = set(left.keys()) & set(right.keys())
+        if not overlap:
+            return 0.0
+        dot = sum(left[token] * right[token] for token in overlap)
+        left_norm = sum(value * value for value in left.values()) ** 0.5
+        right_norm = sum(value * value for value in right.values()) ** 0.5
+        if left_norm <= 0 or right_norm <= 0:
+            return 0.0
+        return max(0.0, min(1.0, dot / (left_norm * right_norm)))
+
+    @staticmethod
+    def _extract_chain_signature(text: str) -> str:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+
+        candidate_lists = [
+            payload.get("tool_history"),
+            payload.get("chain"),
+            payload.get("flow"),
+            payload.get("tools"),
+        ]
+        for candidate in candidate_lists:
+            if isinstance(candidate, list):
+                normalized = [
+                    str(item).strip().lower() for item in candidate if str(item).strip()
+                ]
+                if normalized:
+                    return " -> ".join(normalized)
+        return ""
 
 
 class MCPImpactGraphService:
@@ -241,7 +465,9 @@ LIMIT $limit
         }
 
 
-def _build_tool_metadata(registry: "MCPToolsRegistry") -> dict[str, ToolMetadata]:
+def _build_tool_metadata_catalog(
+    registry: "MCPToolsRegistry",
+) -> dict[str, ToolMetadata]:
     return {
         cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
             name=cs.MCPToolName.LIST_PROJECTS,
@@ -735,6 +961,11 @@ def _build_tool_metadata(registry: "MCPToolsRegistry") -> dict[str, ToolMetadata
                         description=td.MCP_PARAM_WRITE,
                         default=False,
                     ),
+                    cs.MCPParamName.ADVANCED_MODE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.BOOLEAN,
+                        description=td.MCP_PARAM_ADVANCED_MODE,
+                        default=False,
+                    ),
                     cs.MCPParamName.USER_REQUESTED: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.BOOLEAN,
                         description=td.MCP_PARAM_USER_REQUESTED,
@@ -1056,6 +1287,86 @@ def _build_tool_metadata(registry: "MCPToolsRegistry") -> dict[str, ToolMetadata
     }
 
 
+_TOOL_DOMAIN_GROUPS: dict[str, tuple[str, ...]] = {
+    "project": (
+        cs.MCPToolName.LIST_PROJECTS,
+        cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+        cs.MCPToolName.DETECT_PROJECT_DRIFT,
+        cs.MCPToolName.DELETE_PROJECT,
+        cs.MCPToolName.WIPE_DATABASE,
+        cs.MCPToolName.INDEX_REPOSITORY,
+        cs.MCPToolName.SYNC_GRAPH_UPDATES,
+    ),
+    "graph": (
+        cs.MCPToolName.QUERY_CODE_GRAPH,
+        cs.MCPToolName.RUN_CYPHER,
+        cs.MCPToolName.IMPACT_GRAPH,
+        cs.MCPToolName.GET_GRAPH_STATS,
+        cs.MCPToolName.GET_DEPENDENCY_STATS,
+    ),
+    "retrieval": (
+        cs.MCPToolName.SEMANTIC_SEARCH,
+        cs.MCPToolName.GET_FUNCTION_SOURCE,
+        cs.MCPToolName.GET_CODE_SNIPPET,
+        cs.MCPToolName.READ_FILE,
+        cs.MCPToolName.LIST_DIRECTORY,
+    ),
+    "mutation": (
+        cs.MCPToolName.WRITE_FILE,
+        cs.MCPToolName.SURGICAL_REPLACE_CODE,
+        cs.MCPToolName.APPLY_DIFF_SAFE,
+        cs.MCPToolName.REFACTOR_BATCH,
+    ),
+    "analysis": (
+        cs.MCPToolName.RUN_ANALYSIS,
+        cs.MCPToolName.RUN_ANALYSIS_SUBSET,
+        cs.MCPToolName.SECURITY_SCAN,
+        cs.MCPToolName.PERFORMANCE_HOTSPOTS,
+        cs.MCPToolName.GET_ANALYSIS_REPORT,
+        cs.MCPToolName.GET_ANALYSIS_METRIC,
+        cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
+        cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+        cs.MCPToolName.EXPORT_MERMAID,
+    ),
+    "workflow": (
+        cs.MCPToolName.PLAN_TASK,
+        cs.MCPToolName.TEST_GENERATE,
+        cs.MCPToolName.TEST_QUALITY_GATE,
+        cs.MCPToolName.EXECUTION_FEEDBACK,
+        cs.MCPToolName.MEMORY_ADD,
+        cs.MCPToolName.MEMORY_LIST,
+        cs.MCPToolName.MEMORY_QUERY_PATTERNS,
+        cs.MCPToolName.GET_TOOL_USEFULNESS_RANKING,
+        cs.MCPToolName.VALIDATE_DONE_DECISION,
+        cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
+        cs.MCPToolName.GET_EXECUTION_READINESS,
+    ),
+}
+
+
+def _build_tool_metadata(registry: "MCPToolsRegistry") -> dict[str, ToolMetadata]:
+    catalog = _build_tool_metadata_catalog(registry)
+    domain_order = [
+        "project",
+        "graph",
+        "retrieval",
+        "mutation",
+        "analysis",
+        "workflow",
+    ]
+    composed: dict[str, ToolMetadata] = {}
+    for domain_name in domain_order:
+        for tool_name in _TOOL_DOMAIN_GROUPS.get(domain_name, ()):  # pragma: no branch
+            metadata = catalog.get(tool_name)
+            if metadata is not None:
+                composed[tool_name] = metadata
+
+    for tool_name, metadata in catalog.items():
+        if tool_name not in composed:
+            composed[tool_name] = metadata
+    return composed
+
+
 class MCPToolsRegistry:
     _RETRYABLE_ERROR_MARKERS = (
         "conflicting transaction",
@@ -1066,6 +1377,168 @@ class MCPToolsRegistry:
         "timeout",
         "timed out",
     )
+    _ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS = 8
+    _ORCHESTRATOR_VISIBLE_TIERS = {"tier1", "meta"}
+    _EXPLORATION_BASE_EPSILON = 0.15
+    _EXPLORATION_MIN_EPSILON = 0.05
+    _EXPLORATION_MAX_EPSILON = 0.35
+    _EXPLORATION_ALLOWED_FAILURE_TYPES = {"no_data", "low_confidence", "unknown"}
+    _EXPLORATION_POLICY_UCB_BONUS = 0.2
+    _TOOL_TIER_MAP = {
+        cs.MCPToolName.QUERY_CODE_GRAPH: "tier1",
+        cs.MCPToolName.SEMANTIC_SEARCH: "tier1",
+        cs.MCPToolName.RUN_CYPHER: "tier1",
+        cs.MCPToolName.SELECT_ACTIVE_PROJECT: "tier1",
+        cs.MCPToolName.GET_FUNCTION_SOURCE: "tier2",
+        cs.MCPToolName.READ_FILE: "tier2",
+        cs.MCPToolName.WRITE_FILE: "tier3",
+        cs.MCPToolName.REFACTOR_BATCH: "tier3",
+        cs.MCPToolName.APPLY_DIFF_SAFE: "tier3",
+        cs.MCPToolName.SURGICAL_REPLACE_CODE: "tier3",
+        cs.MCPToolName.PLAN_TASK: "meta",
+        cs.MCPToolName.TEST_QUALITY_GATE: "meta",
+        cs.MCPToolName.MEMORY_ADD: "meta",
+        cs.MCPToolName.IMPACT_GRAPH: "meta",
+    }
+    _EXECUTION_PHASES = (
+        "preflight",
+        "retrieval",
+        "validation",
+        "execution",
+        "post_validation",
+    )
+    _PHASE_EXEMPT_TOOLS = {
+        cs.MCPToolName.LIST_PROJECTS,
+        cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+        cs.MCPToolName.GET_EXECUTION_READINESS,
+        cs.MCPToolName.GET_TOOL_USEFULNESS_RANKING,
+    }
+    _PHASE_ALLOWED_TOOLS = {
+        "preflight": {
+            cs.MCPToolName.LIST_PROJECTS,
+            cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+            cs.MCPToolName.GET_EXECUTION_READINESS,
+        },
+        "retrieval": {
+            cs.MCPToolName.QUERY_CODE_GRAPH,
+            cs.MCPToolName.SEMANTIC_SEARCH,
+            cs.MCPToolName.GET_FUNCTION_SOURCE,
+            cs.MCPToolName.GET_CODE_SNIPPET,
+            cs.MCPToolName.READ_FILE,
+            cs.MCPToolName.RUN_CYPHER,
+            cs.MCPToolName.LIST_DIRECTORY,
+            cs.MCPToolName.PLAN_TASK,
+            cs.MCPToolName.MEMORY_QUERY_PATTERNS,
+            cs.MCPToolName.MEMORY_LIST,
+            cs.MCPToolName.IMPACT_GRAPH,
+            cs.MCPToolName.VALIDATE_DONE_DECISION,
+            cs.MCPToolName.GET_EXECUTION_READINESS,
+            cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
+        },
+        "validation": {
+            cs.MCPToolName.VALIDATE_DONE_DECISION,
+            cs.MCPToolName.TEST_QUALITY_GATE,
+            cs.MCPToolName.TEST_GENERATE,
+            cs.MCPToolName.PLAN_TASK,
+            cs.MCPToolName.MEMORY_QUERY_PATTERNS,
+            cs.MCPToolName.IMPACT_GRAPH,
+            cs.MCPToolName.GET_EXECUTION_READINESS,
+            cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
+        },
+        "execution": {
+            cs.MCPToolName.APPLY_DIFF_SAFE,
+            cs.MCPToolName.SURGICAL_REPLACE_CODE,
+            cs.MCPToolName.WRITE_FILE,
+            cs.MCPToolName.REFACTOR_BATCH,
+            cs.MCPToolName.RUN_CYPHER,
+            cs.MCPToolName.SYNC_GRAPH_UPDATES,
+            cs.MCPToolName.EXECUTION_FEEDBACK,
+            cs.MCPToolName.TEST_QUALITY_GATE,
+            cs.MCPToolName.VALIDATE_DONE_DECISION,
+            cs.MCPToolName.GET_EXECUTION_READINESS,
+            cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
+        },
+        "post_validation": {
+            cs.MCPToolName.VALIDATE_DONE_DECISION,
+            cs.MCPToolName.TEST_QUALITY_GATE,
+            cs.MCPToolName.TEST_GENERATE,
+            cs.MCPToolName.EXECUTION_FEEDBACK,
+            cs.MCPToolName.MEMORY_ADD,
+            cs.MCPToolName.PLAN_TASK,
+            cs.MCPToolName.GET_EXECUTION_READINESS,
+            cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
+        },
+    }
+
+    @classmethod
+    def _tool_tier(cls, tool_name: str) -> str:
+        return str(cls._TOOL_TIER_MAP.get(tool_name, "unknown"))
+
+    @classmethod
+    def _is_tool_visible_in_orchestrator(cls, tool_name: str) -> tuple[bool, str]:
+        tier = cls._tool_tier(tool_name)
+        return tier in cls._ORCHESTRATOR_VISIBLE_TIERS, tier
+
+    def _current_execution_phase(self) -> str:
+        phase = str(self._session_state.get("execution_phase", "preflight")).strip()
+        if phase not in self._EXECUTION_PHASES:
+            return "preflight"
+        return phase
+
+    def _set_execution_phase(self, phase: str, reason: str) -> None:
+        normalized_phase = str(phase).strip()
+        if normalized_phase not in self._EXECUTION_PHASES:
+            normalized_phase = "preflight"
+        previous = self._current_execution_phase()
+        if previous == normalized_phase:
+            return
+        self._session_state["execution_phase"] = normalized_phase
+        history_raw = self._session_state.get("execution_phase_history", [])
+        history: list[dict[str, object]] = []
+        if isinstance(history_raw, list):
+            for row in history_raw:
+                if isinstance(row, dict):
+                    history.append(cast(dict[str, object], row))
+        history.insert(
+            0,
+            {
+                "from": previous,
+                "to": normalized_phase,
+                "reason": reason,
+                "timestamp": int(time.time()),
+            },
+        )
+        self._session_state["execution_phase_history"] = history[:50]
+
+    def _build_execution_state_contract(self) -> dict[str, object]:
+        phase = self._current_execution_phase()
+        allowed_tools = sorted(self._PHASE_ALLOWED_TOOLS.get(phase, set()))
+        forbidden_tools = sorted(
+            [
+                tool_name
+                for tool_name in self._tools.keys()
+                if tool_name not in allowed_tools
+            ]
+        )
+        return {
+            "phase": phase,
+            "allowed_tools": allowed_tools,
+            "forbidden_tools": forbidden_tools,
+            "phase_history": self._session_state.get("execution_phase_history", []),
+        }
+
+    def get_phase_gate_error(self, tool_name: str) -> str | None:
+        if tool_name in self._PHASE_EXEMPT_TOOLS:
+            return None
+        phase = self._current_execution_phase()
+        allowed = self._PHASE_ALLOWED_TOOLS.get(phase, set())
+        if tool_name in allowed:
+            return None
+        allowed_text = ", ".join(sorted(allowed))
+        return (
+            f"phase_guard_blocked: tool '{tool_name}' is not allowed in phase '{phase}'. "
+            f"Allowed tools: {allowed_text}."
+        )
 
     def __init__(
         self,
@@ -1154,7 +1627,23 @@ class MCPToolsRegistry:
             "manual_memory_add_count": 0,
             "query_success_count": 0,
             "query_result_chunks": [],
+            "file_depth_sum": 0.0,
+            "file_depth_count": 0,
+            "fallback_exploration": self._default_fallback_exploration_state(),
             "last_graph_result_digest": "",
+            "last_graph_query_digest_id": "",
+            "plan_task_count": 0,
+            "graph_query_attempt_count": 0,
+            "session_contract": {},
+            "execution_phase": "preflight",
+            "execution_phase_history": [
+                {
+                    "from": "none",
+                    "to": "preflight",
+                    "reason": "session_initialized",
+                    "timestamp": int(time.time()),
+                }
+            ],
             "semantic_success_count": 0,
             "semantic_similarity_mean": 0.0,
             "edit_success_count": 0,
@@ -1642,9 +2131,448 @@ class MCPToolsRegistry:
         self._session_state["plan_task_completed"] = False
         self._session_state["auto_plan_attempted"] = False
         self._session_state["query_result_chunks"] = []
+        self._session_state["file_depth_sum"] = 0.0
+        self._session_state["file_depth_count"] = 0
+        self._session_state["fallback_exploration"] = (
+            self._default_fallback_exploration_state()
+        )
         self._session_state["last_graph_result_digest"] = ""
+        self._session_state["last_graph_query_digest_id"] = ""
+        self._session_state["session_contract"] = {}
+        self._session_state["execution_phase"] = "preflight"
+        self._session_state["execution_phase_history"] = [
+            {
+                "from": "none",
+                "to": "preflight",
+                "reason": "project_root_reset",
+                "timestamp": int(time.time()),
+            }
+        ]
         self._refresh_internal_agents()
         return resolved_repo
+
+    def _build_session_contract(self, project_name: str) -> dict[str, object]:
+        orchestrator_policy = {
+            "version": "2026-03-04",
+            "published_on_first_call": "select_active_project",
+            "tool_tiering": {
+                "visible_tiers": sorted(self._ORCHESTRATOR_VISIBLE_TIERS),
+                "tier_map": dict(self._TOOL_TIER_MAP),
+                "enforcement": "auto_execution_strict_visibility",
+            },
+            "registry_domains": {
+                domain: list(tool_names)
+                for domain, tool_names in _TOOL_DOMAIN_GROUPS.items()
+            },
+            "tool_chain_guard": {
+                "max_steps": self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS,
+                "base_flow_steps": [
+                    "execution_feedback",
+                    "sync_graph_updates",
+                    "detect_project_drift(optional)",
+                    "validate_done_decision",
+                ],
+                "auto_next_budget": "max_steps - base_flow_steps",
+                "overflow_behavior": "truncate_exact_next_calls_and_report",
+            },
+            "exploration_policy": {
+                "strategy": "epsilon_greedy",
+                "adaptation": "reward_latency_failure_history",
+                "policy_level_optimization": "ucb_style_chain_scoring",
+                "base_epsilon": self._EXPLORATION_BASE_EPSILON,
+                "epsilon_bounds": [
+                    self._EXPLORATION_MIN_EPSILON,
+                    self._EXPLORATION_MAX_EPSILON,
+                ],
+                "allowed_failure_types": sorted(
+                    self._EXPLORATION_ALLOWED_FAILURE_TYPES
+                ),
+                "safety_constraints": {
+                    "disable_on_policy_block": True,
+                    "disable_on_bad_query": True,
+                    "allowed_tools": [
+                        cs.MCPToolName.RUN_CYPHER,
+                        cs.MCPToolName.SEMANTIC_SEARCH,
+                    ],
+                },
+            },
+            "guard_model": {
+                "hard_guards": [
+                    "preflight_gate",
+                    "phase_gate",
+                    "scope_gate",
+                    "write_safety_gate",
+                    "tool_chain_guard",
+                ],
+                "soft_guards": [
+                    "confidence_gate",
+                    "context_confidence_gate",
+                    "pattern_reuse_gate",
+                    "completion_gate",
+                    "test_quality_gate",
+                    "impact_graph_gate",
+                    "replan_gate",
+                ],
+                "hard_guard_behavior": "must_pass_for_execution_safety",
+                "soft_guard_behavior": "advisory_or_done_decision_blocking",
+                "context_confidence_model": {
+                    "name": "context_confidence_v1",
+                    "required_score": 0.6,
+                    "signals": {
+                        "graph_density": 0.35,
+                        "semantic_overlap": 0.30,
+                        "file_depth": 0.20,
+                        "memory_match": 0.15,
+                        "exploration_calibration": "dynamic",
+                    },
+                },
+            },
+            "execution_state": self._build_execution_state_contract(),
+        }
+        return {
+            "active_project": project_name,
+            "default_flow": [
+                "select_active_project",
+                "query_code_graph",
+                "run_cypher(advanced_mode=false, only after graph evidence)",
+                "read_file(only with graph query digest id)",
+            ],
+            "scope_rules": {
+                "preferred": "MATCH (m:Module {project_name: $project_name}) ...",
+                "params": {"project_name": project_name},
+                "literal_allowed": f"MATCH (m:Module {{project_name: '{project_name}'}}) ...",
+            },
+            "query_skeletons": {
+                "single_hop": (
+                    "MATCH (m:Module {project_name: $project_name})-[:CALLS]->(target) "
+                    "RETURN m.name AS source, target.name AS target LIMIT 50"
+                ),
+                "schema_map": (
+                    "MATCH (c:Class {project_name: $project_name, path: $file_path}) "
+                    "RETURN c.name AS name LIMIT 100"
+                ),
+            },
+            "orchestrator_policy": orchestrator_policy,
+        }
+
+    @staticmethod
+    def _mint_query_digest_id(query_text: str, row_count: int) -> str:
+        token = abs(hash((query_text, row_count, int(time.time() * 1000)))) % 1_000_000
+        return f"qd_{int(time.time() * 1000)}_{token}"
+
+    def _planner_usage_rate(self) -> float:
+        plan_task_count = self._coerce_int(
+            self._session_state.get("plan_task_count", 0)
+        )
+        graph_query_attempt_count = self._coerce_int(
+            self._session_state.get("graph_query_attempt_count", 0)
+        )
+        if graph_query_attempt_count <= 0:
+            return 0.0
+        return round(plan_task_count / graph_query_attempt_count, 3)
+
+    def _has_graph_query_digest(self) -> bool:
+        digest_id = str(
+            self._session_state.get("last_graph_query_digest_id", "")
+        ).strip()
+        return bool(digest_id)
+
+    @staticmethod
+    def _build_exact_next_query_graph_call(cypher_query: str) -> dict[str, object]:
+        query_excerpt = " ".join(cypher_query.strip().split())[:300]
+        suggested_nl_query = (
+            "Convert this Cypher intent into graph evidence and return matching rows: "
+            f"{query_excerpt}"
+        )
+        escaped_query = suggested_nl_query.replace('"', '\\"')
+        return {
+            "tool": "query_code_graph",
+            "args": {
+                "natural_language_query": suggested_nl_query,
+                "output_format": "json",
+            },
+            "copy_paste": (
+                "query_code_graph("
+                f'natural_language_query="{escaped_query}", '
+                'output_format="json")'
+            ),
+        }
+
+    def _build_exact_next_call_for_policy_error(
+        self,
+        *,
+        policy_error: str,
+        cypher_query: str,
+        parsed_params: dict[str, object],
+        write: bool,
+        advanced_mode: bool,
+    ) -> dict[str, object]:
+        project_name = self._active_project_name()
+        error_text = str(policy_error or "")
+        repo_root = str(Path(self.project_root).resolve())
+
+        def _esc(value: str) -> str:
+            return value.replace("\\", "\\\\").replace('"', '\\"')
+
+        if "session_preflight_required" in error_text:
+            return {
+                "tool": "select_active_project",
+                "args": {"repo_path": repo_root},
+                "copy_paste": (f'select_active_project(repo_path="{_esc(repo_root)}")'),
+                "why": "preflight_required",
+            }
+
+        if (
+            "run_cypher rejected. Query must be explicitly scoped" in error_text
+            or "run_cypher rejected. Provided $project_name parameter" in error_text
+        ):
+            normalized_query, normalized_params, _ = self._normalize_run_cypher_scope(
+                cypher_query,
+                parsed_params,
+            )
+            params_text = json.dumps(normalized_params, ensure_ascii=False)
+            escaped_query = _esc(normalized_query)
+            escaped_params = params_text.replace("'", "\\'")
+            return {
+                "tool": "run_cypher",
+                "args": {
+                    "cypher": normalized_query,
+                    "params": params_text,
+                    "write": write,
+                    "advanced_mode": True,
+                },
+                "copy_paste": (
+                    f'run_cypher(cypher="{escaped_query}", '
+                    f"params='{escaped_params}', write={str(write).lower()}, advanced_mode=true)"
+                ),
+                "why": "scope_or_param_mismatch",
+            }
+
+        if "run_cypher write rejected" in error_text:
+            return {
+                "tool": "plan_task",
+                "args": {
+                    "goal": "Prepare safe graph write plan for run_cypher",
+                    "context": (
+                        f"Policy error: {error_text}\n"
+                        f"Target project: {project_name}\n"
+                        "Generate a safe read-validate-write sequence with scope and impact checks."
+                    ),
+                },
+                "copy_paste": (
+                    "plan_task("
+                    'goal="Prepare safe graph write plan for run_cypher", '
+                    f'context="Policy error: {_esc(error_text)}")'
+                ),
+                "why": "write_policy_violation",
+            }
+
+        if not advanced_mode:
+            return self._build_exact_next_query_graph_call(cypher_query)
+
+        return {
+            "tool": "query_code_graph",
+            "args": {
+                "natural_language_query": "Show project-scoped graph evidence for this failed run_cypher intent",
+                "output_format": "json",
+            },
+            "copy_paste": (
+                "query_code_graph("
+                'natural_language_query="Show project-scoped graph evidence for this failed run_cypher intent", '
+                'output_format="json")'
+            ),
+            "why": "generic_policy_error",
+        }
+
+    def _build_exact_next_calls_chain(
+        self,
+        *,
+        policy_error: str,
+        cypher_query: str,
+        parsed_params: dict[str, object],
+        write: bool,
+        advanced_mode: bool,
+    ) -> list[dict[str, object]]:
+        project_name = self._active_project_name()
+        error_text = str(policy_error or "")
+
+        def _annotate(
+            item: dict[str, object],
+            *,
+            priority: int,
+            when: str,
+        ) -> dict[str, object]:
+            enriched = dict(item)
+            enriched["priority"] = int(priority)
+            enriched["when"] = when
+            return enriched
+
+        if "session_preflight_required" in error_text:
+            primary_when = (
+                "if preflight is missing or schema summary is not initialized"
+            )
+        elif "run_cypher write rejected" in error_text:
+            primary_when = "if write policy blocks run_cypher"
+        elif "run_cypher rejected" in error_text:
+            primary_when = "if project scope or project_name parameter is invalid"
+        elif "run_cypher_advanced_mode_required" in error_text:
+            primary_when = "if graph-first default flow blocks direct run_cypher"
+        else:
+            primary_when = "if run_cypher policy/gating error occurs"
+
+        primary = self._build_exact_next_call_for_policy_error(
+            policy_error=policy_error,
+            cypher_query=cypher_query,
+            parsed_params=parsed_params,
+            write=write,
+            advanced_mode=advanced_mode,
+        )
+        primary = _annotate(primary, priority=1, when=primary_when)
+
+        fallback_query_graph = self._build_exact_next_query_graph_call(cypher_query)
+        fallback_query_graph = _annotate(
+            fallback_query_graph,
+            priority=2,
+            when="if primary action fails or returns insufficient graph evidence",
+        )
+        fallback_run_cypher_advanced = {
+            "tool": "run_cypher",
+            "args": {
+                "cypher": cypher_query,
+                "params": json.dumps(parsed_params, ensure_ascii=False),
+                "write": write,
+                "advanced_mode": True,
+            },
+            "copy_paste": (
+                "run_cypher("
+                f'cypher="{cypher_query.replace("\\", "\\\\").replace('"', '\\"')}", '
+                f"params='{json.dumps(parsed_params, ensure_ascii=False).replace("'", "\\'")}', "
+                f"write={str(write).lower()}, advanced_mode=true)"
+            ),
+            "why": "expert_override_fallback",
+        }
+        fallback_run_cypher_advanced = _annotate(
+            fallback_run_cypher_advanced,
+            priority=3,
+            when="if expert override is explicitly desired after graph evidence",
+        )
+        fallback_plan = {
+            "tool": "plan_task",
+            "args": {
+                "goal": "Recover from run_cypher policy/gating error",
+                "context": (
+                    f"Policy/gating error: {error_text}\n"
+                    f"Project: {project_name}\n"
+                    "Create a safe graph-first sequence with query_code_graph and scoped run_cypher."
+                ),
+            },
+            "copy_paste": (
+                "plan_task("
+                'goal="Recover from run_cypher policy/gating error", '
+                f'context="Policy/gating error: {error_text.replace('"', '\\"')}")'
+            ),
+            "why": "planner_recovery_fallback",
+        }
+        fallback_plan = _annotate(
+            fallback_plan,
+            priority=3,
+            when="if repeated failures occur and a guided plan is needed",
+        )
+
+        candidates = [primary]
+        if "session_preflight_required" in error_text:
+            candidates.extend([fallback_query_graph, fallback_plan])
+        elif "run_cypher write rejected" in error_text:
+            candidates.extend([fallback_query_graph, fallback_run_cypher_advanced])
+        elif "run_cypher rejected" in error_text:
+            candidates.extend([fallback_query_graph, fallback_plan])
+        elif "run_cypher_advanced_mode_required" in error_text:
+            candidates.extend([fallback_query_graph, fallback_run_cypher_advanced])
+        else:
+            candidates.extend([fallback_query_graph, fallback_plan])
+
+        deduped: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            signature = str(item.get("copy_paste", "")).strip()
+            if not signature:
+                signature = json.dumps(item.get("args", {}), ensure_ascii=False)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            deduped.append(item)
+        deduped.sort(
+            key=lambda row: (
+                self._coerce_int(row.get("priority", 99)),
+                str(row.get("tool", "")),
+            )
+        )
+        return deduped
+
+    @staticmethod
+    def _project_next_best_action_from_exact_calls(
+        exact_next_calls: list[dict[str, object]],
+    ) -> dict[str, object]:
+        if not exact_next_calls:
+            return {}
+        first = exact_next_calls[0]
+        if not isinstance(first, dict):
+            return {}
+        tool_name = str(first.get("tool", "")).strip()
+        if not tool_name:
+            return {}
+        args = first.get("args", {})
+        params_hint = args if isinstance(args, dict) else {}
+        return {
+            "action": "execute_exact_next_call",
+            "tool": tool_name,
+            "params_hint": params_hint,
+            "priority": MCPToolsRegistry._coerce_int(first.get("priority", 1)),
+            "when": str(first.get("when", "")).strip(),
+            "copy_paste": str(first.get("copy_paste", "")).strip(),
+            "why": str(first.get("why", "")).strip(),
+        }
+
+    def _build_policy_guidance_payload(
+        self,
+        *,
+        policy_error: str,
+        cypher_query: str,
+        parsed_params: dict[str, object],
+        write: bool,
+        advanced_mode: bool,
+    ) -> dict[str, object]:
+        schema_context = str(
+            self._session_state.get("preflight_schema_context", "")
+        ).strip()
+        session_contract = self._session_state.get("session_contract", {})
+        exact_next_call = self._build_exact_next_call_for_policy_error(
+            policy_error=policy_error,
+            cypher_query=cypher_query,
+            parsed_params=parsed_params,
+            write=write,
+            advanced_mode=advanced_mode,
+        )
+        exact_next_calls = self._build_exact_next_calls_chain(
+            policy_error=policy_error,
+            cypher_query=cypher_query,
+            parsed_params=parsed_params,
+            write=write,
+            advanced_mode=advanced_mode,
+        )
+        next_best_action = self._project_next_best_action_from_exact_calls(
+            exact_next_calls
+        )
+        return {
+            "exact_next_call": exact_next_call,
+            "exact_next_calls": exact_next_calls,
+            "next_best_action": next_best_action,
+            "schema_context": schema_context,
+            "session_contract": session_contract,
+            "planner_usage_rate": self._planner_usage_rate(),
+        }
 
     def _refresh_internal_agents(self) -> None:
         agent_tools = [
@@ -1780,6 +2708,7 @@ class MCPToolsRegistry:
             )
 
             self._session_state["preflight_project_selected"] = True
+            self._set_execution_phase("retrieval", "select_active_project_completed")
             try:
                 preflight = await asyncio.wait_for(
                     self._run_session_schema_preflight(project_name),
@@ -1797,6 +2726,8 @@ class MCPToolsRegistry:
                     if isinstance(item, dict):
                         preview_rows.append(cast(dict[str, object], item))
             preview_text = self._schema_summary_preview_text(preview_rows, max_items=5)
+            session_contract = self._build_session_contract(project_name)
+            self._session_state["session_contract"] = session_contract
             ui_summary = (
                 f"Active project: {project_name} | indexed={active_indexed} | "
                 f"preflight={preflight_status} | schema_rows={preflight_rows}\n"
@@ -1830,6 +2761,12 @@ class MCPToolsRegistry:
                 },
                 "latest_analysis_timestamp": latest_analysis_timestamp,
                 "session_preflight": preflight,
+                "session_contract": session_contract,
+                "initial_llm_policy_broadcast": cast(
+                    dict[str, object],
+                    session_contract.get("orchestrator_policy", {}),
+                ),
+                "execution_state": self._build_execution_state_contract(),
                 "policy": {
                     "query_code_graph_scope_enforced": True,
                     "run_cypher_scope_enforced": True,
@@ -1841,7 +2778,11 @@ class MCPToolsRegistry:
                     "index_repository_drift_proof_enforced": True,
                     "completion_gate_refactor_batch_requires_plan": True,
                     "confidence_gate_enabled": True,
+                    "context_confidence_gate_enabled": True,
                     "pattern_reuse_gate_enabled": True,
+                    "soft_hard_guard_partition_enabled": True,
+                    "epsilon_exploration_enabled": True,
+                    "adaptive_epsilon_enabled": True,
                 },
             }
         except Exception as exc:
@@ -2216,6 +3157,19 @@ class MCPToolsRegistry:
         next_best_action: dict[str, object],
     ) -> dict[str, object]:
         tool_name = str(next_best_action.get("tool", "")).strip()
+        if not tool_name:
+            return {"executed": False, "reason": "missing_tool_name"}
+
+        visible, tier = self._is_tool_visible_in_orchestrator(tool_name)
+        if not visible:
+            return {
+                "executed": False,
+                "reason": "tool_not_visible_in_orchestrator_tiering",
+                "tool": tool_name,
+                "tier": tier,
+                "visible_tiers": sorted(self._ORCHESTRATOR_VISIBLE_TIERS),
+            }
+
         params_hint = next_best_action.get("params_hint", {})
         if not isinstance(params_hint, dict):
             params_hint = {}
@@ -2236,6 +3190,39 @@ class MCPToolsRegistry:
             if not nl_query:
                 return {"executed": False, "reason": "missing_natural_language_query"}
             result = await self.query_code_graph(natural_language_query=nl_query)
+            return {"executed": True, "tool": tool_name, "result": result}
+
+        if tool_name == cs.MCPToolName.SELECT_ACTIVE_PROJECT:
+            repo_path = params_hint_dict.get("repo_path")
+            if not isinstance(repo_path, str):
+                repo_path = None
+            result = await self.select_active_project(repo_path=repo_path)
+            return {"executed": True, "tool": tool_name, "result": result}
+
+        if tool_name == cs.MCPToolName.RUN_CYPHER:
+            cypher = str(params_hint_dict.get("cypher", "")).strip()
+            if not cypher:
+                return {"executed": False, "reason": "missing_cypher"}
+
+            params_value = params_hint_dict.get("params")
+            params_text: str | None = None
+            if isinstance(params_value, str):
+                params_text = params_value
+            elif isinstance(params_value, dict):
+                params_text = json.dumps(params_value, ensure_ascii=False)
+
+            reason = params_hint_dict.get("reason")
+            if not isinstance(reason, str):
+                reason = None
+
+            result = await self.run_cypher(
+                cypher=cypher,
+                params=params_text,
+                write=bool(params_hint_dict.get("write", False)),
+                user_requested=bool(params_hint_dict.get("user_requested", False)),
+                reason=reason,
+                advanced_mode=bool(params_hint_dict.get("advanced_mode", False)),
+            )
             return {"executed": True, "tool": tool_name, "result": result}
 
         if tool_name == cs.MCPToolName.IMPACT_GRAPH:
@@ -2284,6 +3271,108 @@ class MCPToolsRegistry:
             "executed": False,
             "reason": "tool_not_supported_for_auto_execution",
             "tool": tool_name,
+        }
+
+    def _normalize_exact_next_calls(
+        self,
+        exact_next_calls: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        normalized: list[dict[str, object]] = []
+        for raw_item in exact_next_calls:
+            if not isinstance(raw_item, dict):
+                continue
+            tool_name = str(raw_item.get("tool", "")).strip()
+            if not tool_name:
+                continue
+            args = raw_item.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
+            normalized.append(
+                {
+                    "tool": tool_name,
+                    "args": cast(dict[str, object], args),
+                    "priority": self._coerce_int(raw_item.get("priority", 99), 99),
+                    "when": str(raw_item.get("when", "")).strip(),
+                    "copy_paste": str(raw_item.get("copy_paste", "")).strip(),
+                    "why": str(raw_item.get("why", "")).strip(),
+                }
+            )
+
+        normalized.sort(
+            key=lambda row: (
+                self._coerce_int(row.get("priority", 99), 99),
+                str(row.get("tool", "")),
+            )
+        )
+        return normalized
+
+    async def _auto_execute_exact_next_calls(
+        self,
+        exact_next_calls: list[dict[str, object]],
+        *,
+        max_candidates: int | None = None,
+    ) -> dict[str, object]:
+        ordered_calls = self._normalize_exact_next_calls(exact_next_calls)
+        if not ordered_calls:
+            return {
+                "executed": False,
+                "mode": "exact_next_calls",
+                "reason": "no_exact_next_calls",
+            }
+
+        candidate_limit = self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS
+        if max_candidates is not None:
+            candidate_limit = max(1, int(max_candidates))
+        candidate_limit = max(
+            1,
+            min(candidate_limit, self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS),
+        )
+        truncated = len(ordered_calls) > candidate_limit
+        bounded_calls = ordered_calls[:candidate_limit]
+
+        attempts: list[dict[str, object]] = []
+        for item in bounded_calls:
+            tool_name = str(item.get("tool", "")).strip()
+            args = item.get("args", {})
+            if not isinstance(args, dict):
+                args = {}
+
+            step_result = await self._auto_execute_next_best_action(
+                {
+                    "tool": tool_name,
+                    "params_hint": cast(dict[str, object], args),
+                }
+            )
+            executed = bool(step_result.get("executed", False))
+            attempts.append(
+                {
+                    "tool": tool_name,
+                    "priority": self._coerce_int(item.get("priority", 99), 99),
+                    "when": str(item.get("when", "")),
+                    "executed": executed,
+                    "reason": str(step_result.get("reason", "")),
+                }
+            )
+            if executed:
+                return {
+                    "executed": True,
+                    "mode": "exact_next_calls",
+                    "selected": item,
+                    "result": step_result.get("result", {}),
+                    "attempts": attempts,
+                    "candidate_limit": candidate_limit,
+                    "total_candidates": len(ordered_calls),
+                    "truncated": truncated,
+                }
+
+        return {
+            "executed": False,
+            "mode": "exact_next_calls",
+            "reason": "no_supported_exact_next_call_executed",
+            "attempts": attempts,
+            "candidate_limit": candidate_limit,
+            "total_candidates": len(ordered_calls),
+            "truncated": truncated,
         }
 
     def _orchestrate_circuit_state(self) -> dict[str, object]:
@@ -2425,6 +3514,7 @@ class MCPToolsRegistry:
         verify_drift: bool | None = None,
         debounce_seconds: int | None = None,
     ) -> dict[str, object]:
+        self._set_execution_phase("execution", "orchestrate_realtime_flow_start")
         now = time.time()
         circuit_open, retry_after = self._orchestrate_circuit_open(now)
         if circuit_open:
@@ -2558,24 +3648,66 @@ class MCPToolsRegistry:
         if not isinstance(done_result, dict):
             done_result = {"status": "ok", "decision": "not_done"}
 
+        max_tool_chain_steps = self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS
+        base_tool_chain_steps = 3 + (1 if verify_drift_effective else 0)
+        remaining_tool_chain_budget = max(
+            0,
+            max_tool_chain_steps - base_tool_chain_steps,
+        )
+
         auto_next_result: dict[str, object] | None = None
+        auto_stage_name = "skip_auto_execute_next_best_action"
         if auto_execute_next_effective and isinstance(done_result, dict):
             done_result_dict = cast(dict[str, object], done_result)
-            raw_next_best_action = done_result_dict.get("next_best_action", {})
-            if isinstance(raw_next_best_action, dict):
-                next_best_action = cast(dict[str, object], raw_next_best_action)
-                auto_stage = await self._run_orchestrate_stage_with_retry(
-                    stage="auto_execute_next_best_action",
-                    operation=lambda: self._auto_execute_next_best_action(
-                        next_best_action
-                    ),
-                    attempts=max(
-                        1, int(settings.MCP_ORCHESTRATE_AUTO_NEXT_RETRY_ATTEMPTS)
-                    ),
-                    base_delay_seconds=max(
-                        0.01, float(settings.MCP_ORCHESTRATE_RETRY_BASE_DELAY_SECONDS)
-                    ),
-                )
+            auto_stage: dict[str, object] | None = None
+            if remaining_tool_chain_budget <= 0:
+                auto_next_result = {
+                    "executed": False,
+                    "reason": "max_tool_chain_guard_reached",
+                    "max_tool_chain_steps": max_tool_chain_steps,
+                    "base_tool_chain_steps": base_tool_chain_steps,
+                }
+            else:
+                raw_exact_next_calls = done_result_dict.get("exact_next_calls", [])
+                if isinstance(raw_exact_next_calls, list) and raw_exact_next_calls:
+                    auto_stage_name = "auto_execute_exact_next_calls"
+                    auto_stage = await self._run_orchestrate_stage_with_retry(
+                        stage=auto_stage_name,
+                        operation=lambda: self._auto_execute_exact_next_calls(
+                            cast(list[dict[str, object]], raw_exact_next_calls),
+                            max_candidates=remaining_tool_chain_budget,
+                        ),
+                        attempts=max(
+                            1, int(settings.MCP_ORCHESTRATE_AUTO_NEXT_RETRY_ATTEMPTS)
+                        ),
+                        base_delay_seconds=max(
+                            0.01,
+                            float(settings.MCP_ORCHESTRATE_RETRY_BASE_DELAY_SECONDS),
+                        ),
+                    )
+                else:
+                    raw_next_best_action = done_result_dict.get("next_best_action", {})
+                    if isinstance(raw_next_best_action, dict):
+                        auto_stage_name = "auto_execute_next_best_action"
+                        next_best_action = cast(dict[str, object], raw_next_best_action)
+                        auto_stage = await self._run_orchestrate_stage_with_retry(
+                            stage=auto_stage_name,
+                            operation=lambda: self._auto_execute_next_best_action(
+                                next_best_action
+                            ),
+                            attempts=max(
+                                1,
+                                int(settings.MCP_ORCHESTRATE_AUTO_NEXT_RETRY_ATTEMPTS),
+                            ),
+                            base_delay_seconds=max(
+                                0.01,
+                                float(
+                                    settings.MCP_ORCHESTRATE_RETRY_BASE_DELAY_SECONDS
+                                ),
+                            ),
+                        )
+
+            if auto_stage is not None:
                 if bool(auto_stage.get("ok", False)):
                     auto_payload = auto_stage.get("result")
                     if isinstance(auto_payload, dict):
@@ -2602,32 +3734,57 @@ class MCPToolsRegistry:
         if isinstance(done_result, dict):
             done_result_dict = cast(dict[str, object], done_result)
             done_ui_summary = str(done_result_dict.get("ui_summary", "")).strip()
+        flow_steps = [
+            "execution_feedback",
+            "sync_graph_updates",
+            (
+                "detect_project_drift"
+                if verify_drift_effective
+                else "skip_detect_project_drift"
+            ),
+            "validate_done_decision",
+            (
+                auto_stage_name
+                if auto_execute_next_effective
+                else "skip_auto_execute_next_best_action"
+            ),
+        ]
+        self._memory_store.add_entry(
+            text=json.dumps(
+                {
+                    "kind": "successful_tool_chain",
+                    "action": action,
+                    "result": result,
+                    "tool_history": flow_steps,
+                    "auto_next": auto_next_result or {},
+                    "timestamp": int(time.time()),
+                },
+                ensure_ascii=False,
+            ),
+            tags=["pattern", "chain", "orchestrate", "success"],
+        )
         top_ui_summary = done_ui_summary or "Realtime flow executed"
         return {
             "status": "ok",
             "ui_summary": top_ui_summary,
-            "flow": [
-                "execution_feedback",
-                "sync_graph_updates",
-                (
-                    "detect_project_drift"
-                    if verify_drift_effective
-                    else "skip_detect_project_drift"
-                ),
-                "validate_done_decision",
-                (
-                    "auto_execute_next_best_action"
-                    if auto_execute_next_effective
-                    else "skip_auto_execute_next_best_action"
-                ),
-            ],
+            "flow": flow_steps,
             "debounce_seconds": bounded_debounce,
+            "tool_chain_guard": {
+                "max_steps": max_tool_chain_steps,
+                "base_steps": base_tool_chain_steps,
+                "remaining_for_auto_next": remaining_tool_chain_budget,
+            },
+            "tool_tiering": {
+                "visible_tiers": sorted(self._ORCHESTRATOR_VISIBLE_TIERS),
+                "max_tool_chain_steps": self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS,
+            },
             "feedback": feedback_result,
             "sync": sync_result,
             "drift": drift_result,
             "done": done_result,
             "auto_next": auto_next_result,
             "circuit_breaker": circuit_snapshot,
+            "execution_state": self._build_execution_state_contract(),
         }
 
     def _active_project_name(self) -> str:
@@ -2639,6 +3796,58 @@ class MCPToolsRegistry:
         return self._policy_engine.validate_project_scope_policy(
             cypher_query, parsed_params
         )
+
+    @staticmethod
+    def _replace_project_scope_literals(cypher_query: str, project_name: str) -> str:
+        updated = cypher_query
+        updated = re.sub(
+            r"(`?project_name`?\s*(?::|=)\s*['\"])\s*[^'\"]+\s*(['\"])",
+            rf"\1{project_name}\2",
+            updated,
+            flags=re.IGNORECASE,
+        )
+        updated = re.sub(
+            r"(:\s*Project\s*\{[^{}]*`?name`?\s*:\s*['\"])\s*[^'\"]+\s*(['\"][^{}]*\})",
+            rf"\1{project_name}\2",
+            updated,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return updated
+
+    @staticmethod
+    def _append_scope_fix_hint(project_name: str) -> str:
+        return (
+            "Scope fix hint: use explicit active-project scope with one of these forms -> "
+            f'MATCH (m:Module {{project_name: $project_name}}) ... params={{"project_name":"{project_name}"}} '
+            f"or MATCH (m:Module {{project_name: '{project_name}'}}) ..."
+        )
+
+    def _normalize_run_cypher_scope(
+        self,
+        cypher_query: str,
+        parsed_params: dict[str, object],
+    ) -> tuple[str, dict[str, object], list[str]]:
+        project_name = self._active_project_name()
+        normalized_query = cypher_query
+        normalized_params = dict(parsed_params)
+        notes: list[str] = []
+
+        replaced_query = self._replace_project_scope_literals(
+            normalized_query, project_name
+        )
+        if replaced_query != normalized_query:
+            normalized_query = replaced_query
+            notes.append("normalized_project_scope_literal")
+
+        if "$project_name" in normalized_query.lower() and (
+            not isinstance(normalized_params.get(cs.KEY_PROJECT_NAME), str)
+            or str(normalized_params.get(cs.KEY_PROJECT_NAME, "")).strip()
+            != project_name
+        ):
+            normalized_params[cs.KEY_PROJECT_NAME] = project_name
+            notes.append("injected_project_name_param")
+
+        return normalized_query, normalized_params, notes
 
     def _validate_write_allowlist_policy(self, cypher_query: str) -> str | None:
         return self._policy_engine.validate_write_allowlist_policy(cypher_query)
@@ -2761,12 +3970,883 @@ class MCPToolsRegistry:
             "LIMIT 200"
         )
 
+    @staticmethod
+    def _classify_query_failure(
+        *,
+        failure_hint: str,
+        error_text: str,
+        result_rows: int,
+    ) -> str:
+        normalized_hint = failure_hint.strip().lower()
+        normalized_error = error_text.strip().lower()
+
+        if result_rows <= 0 and (
+            "zero_rows" in normalized_hint
+            or "no_data" in normalized_hint
+            or "empty" in normalized_hint
+        ):
+            return "no_data"
+
+        if any(
+            marker in normalized_error
+            for marker in (
+                "scope",
+                "policy",
+                "advanced_mode_required",
+                "phase_guard_blocked",
+                "session_preflight_required",
+            )
+        ):
+            return "policy_block"
+
+        if any(
+            marker in normalized_error
+            for marker in (
+                "syntax",
+                "invalid",
+                "can't be put after return",
+                "query execution failed",
+            )
+        ):
+            return "bad_query"
+
+        if "low_confidence" in normalized_hint:
+            return "low_confidence"
+
+        if result_rows <= 0:
+            return "no_data"
+        return "unknown"
+
+    def _adaptive_fallback_order(
+        self,
+        *,
+        natural_language_query: str,
+        failure_type: str,
+    ) -> list[str]:
+        default_order = [cs.MCPToolName.RUN_CYPHER, cs.MCPToolName.SEMANTIC_SEARCH]
+
+        if failure_type in {"bad_query", "policy_block"}:
+            return default_order
+
+        lowered_query = natural_language_query.lower()
+        semantic_first_cues = (
+            "grep",
+            "keyword",
+            "text",
+            "regex",
+            "string",
+            "search in files",
+        )
+        if any(cue in lowered_query for cue in semantic_first_cues):
+            return [cs.MCPToolName.SEMANTIC_SEARCH, cs.MCPToolName.RUN_CYPHER]
+
+        chain_patterns = self._memory_store.query_patterns(
+            query=natural_language_query,
+            filter_tags=["pattern", "chain"],
+            success_only=True,
+            limit=5,
+        )
+        for entry in chain_patterns:
+            chain_signature = str(entry.get("chain_signature", "")).lower()
+            if "semantic_search" in chain_signature and "run_cypher" in chain_signature:
+                semantic_idx = chain_signature.find("semantic_search")
+                run_cypher_idx = chain_signature.find("run_cypher")
+                if (
+                    semantic_idx >= 0
+                    and run_cypher_idx >= 0
+                    and semantic_idx < run_cypher_idx
+                ):
+                    return [cs.MCPToolName.SEMANTIC_SEARCH, cs.MCPToolName.RUN_CYPHER]
+
+        return default_order
+
+    @staticmethod
+    def _fallback_chain_signature(tool_order: list[str]) -> str:
+        normalized = [
+            str(tool).strip().lower() for tool in tool_order if str(tool).strip()
+        ]
+        return "->".join(normalized)
+
+    @staticmethod
+    def _default_fallback_exploration_state() -> dict[str, object]:
+        return {
+            "calls": 0,
+            "explore": 0,
+            "exploit": 0,
+            "success": 0,
+            "failure": 0,
+            "consecutive_failures": 0,
+            "reward_total": 0.0,
+            "latency_ms_total": 0.0,
+            "last_mode": "exploit",
+            "last_epsilon": 0.0,
+            "last_draw": 0.0,
+            "chains": {},
+            "recent": [],
+        }
+
+    @staticmethod
+    def _normalize_chain_signature(chain_signature: str) -> str:
+        parts = [
+            segment.strip().lower()
+            for segment in re.split(r"\s*->\s*", str(chain_signature))
+            if segment.strip()
+        ]
+        return "->".join(parts)
+
+    def _ensure_exploration_bucket(self) -> dict[str, object]:
+        raw_bucket = self._session_state.get("fallback_exploration")
+        if isinstance(raw_bucket, dict):
+            return cast(dict[str, object], raw_bucket)
+        bucket = self._default_fallback_exploration_state()
+        self._session_state["fallback_exploration"] = bucket
+        return bucket
+
+    def _build_fallback_chain_candidates(
+        self,
+        baseline_order: list[str],
+    ) -> list[list[str]]:
+        candidates = [list(baseline_order)]
+        reversed_order = list(reversed(baseline_order))
+        if reversed_order != baseline_order:
+            candidates.append(reversed_order)
+        deduped: list[list[str]] = []
+        seen: set[str] = set()
+        for order in candidates:
+            key = self._fallback_chain_signature(order)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(order)
+        return deduped
+
+    def _score_fallback_chain_policy(
+        self,
+        *,
+        tool_order: list[str],
+        natural_language_query: str,
+    ) -> dict[str, object]:
+        chain_key = self._fallback_chain_signature(tool_order)
+        bucket = self._ensure_exploration_bucket()
+        chains_raw = bucket.get("chains", {})
+        chains = (
+            cast(dict[str, object], chains_raw) if isinstance(chains_raw, dict) else {}
+        )
+        chain_bucket_raw = chains.get(chain_key)
+        chain_bucket = (
+            cast(dict[str, object], chain_bucket_raw)
+            if isinstance(chain_bucket_raw, dict)
+            else {}
+        )
+
+        calls = self._coerce_int(chain_bucket.get("calls", 0))
+        success = self._coerce_int(chain_bucket.get("success", 0))
+        failure = self._coerce_int(chain_bucket.get("failure", 0))
+        reward_total = self._coerce_float(chain_bucket.get("reward_total", 0.0))
+        latency_ms_total = self._coerce_float(chain_bucket.get("latency_ms_total", 0.0))
+
+        success_rate = (success / calls) if calls > 0 else 0.5
+        avg_reward = (reward_total / calls) if calls > 0 else 0.5
+        avg_latency_ms = (latency_ms_total / calls) if calls > 0 else 600.0
+        latency_score = max(0.0, min(1.0, 1.0 - (avg_latency_ms / 3000.0)))
+        failure_rate = (failure / calls) if calls > 0 else 0.0
+
+        total_calls = max(1, self._coerce_int(bucket.get("calls", 0)))
+        exploration_bonus = self._EXPLORATION_POLICY_UCB_BONUS * (
+            ((total_calls + 1) ** 0.5) / ((calls + 1) ** 0.5)
+        )
+
+        memory_rate = 0.5
+        memory_rates = self._memory_store.get_chain_success_rates(
+            query=natural_language_query,
+            limit=20,
+        )
+        for item in memory_rates:
+            if not isinstance(item, dict):
+                continue
+            candidate_key = self._normalize_chain_signature(
+                str(item.get("chain_signature", ""))
+            )
+            candidate_trimmed = candidate_key.removeprefix("query_code_graph->")
+            if chain_key in (candidate_key, candidate_trimmed):
+                memory_rate = self._coerce_float(item.get("success_rate", 0.5), 0.5)
+                break
+
+        score = (
+            (success_rate * 0.35)
+            + (avg_reward * 0.30)
+            + (latency_score * 0.15)
+            + (memory_rate * 0.20)
+            + exploration_bonus
+            - (failure_rate * 0.10)
+        )
+        return {
+            "chain": chain_key,
+            "calls": calls,
+            "success_rate": round(success_rate, 3),
+            "avg_reward": round(avg_reward, 3),
+            "avg_latency_ms": round(avg_latency_ms, 3),
+            "memory_success_rate": round(memory_rate, 3),
+            "exploration_bonus": round(exploration_bonus, 3),
+            "score": round(score, 3),
+        }
+
+    def _compute_exploration_epsilon(self, failure_type: str) -> float:
+        override = self._session_state.get("exploration_epsilon_override")
+        if override is not None:
+            return max(
+                self._EXPLORATION_MIN_EPSILON,
+                min(self._EXPLORATION_MAX_EPSILON, self._coerce_float(override)),
+            )
+
+        epsilon = self._EXPLORATION_BASE_EPSILON
+        if failure_type == "no_data":
+            epsilon += 0.03
+        elif failure_type == "unknown":
+            epsilon += 0.02
+
+        summary = self._build_exploration_summary()
+        calls = self._coerce_int(summary.get("calls", 0))
+        explore_ratio = self._coerce_float(summary.get("explore_ratio", 0.0))
+        failure_rate = self._coerce_float(summary.get("failure_rate", 0.0))
+        dominant_chain_ratio = self._coerce_float(
+            summary.get("dominant_chain_ratio", 0.0)
+        )
+        consecutive_failures = self._coerce_int(summary.get("consecutive_failures", 0))
+        reward_trend = self._coerce_float(summary.get("reward_trend", 0.0))
+
+        epsilon += min(0.12, failure_rate * 0.12)
+        if calls >= 8 and explore_ratio < 0.12:
+            epsilon += 0.04
+        if calls >= 8 and dominant_chain_ratio > 0.75:
+            epsilon += 0.05
+        if consecutive_failures >= 2:
+            epsilon += 0.05
+        if reward_trend < -0.05:
+            epsilon += 0.04
+        if calls >= 30 and failure_rate < 0.2 and reward_trend > 0.02:
+            epsilon -= 0.03
+
+        return max(
+            self._EXPLORATION_MIN_EPSILON, min(self._EXPLORATION_MAX_EPSILON, epsilon)
+        )
+
+    def _is_exploration_safe(
+        self,
+        *,
+        failure_type: str,
+        natural_language_query: str,
+        baseline_order: list[str],
+    ) -> tuple[bool, str]:
+        if failure_type not in self._EXPLORATION_ALLOWED_FAILURE_TYPES:
+            return False, "failure_type_not_explorable"
+        if len(baseline_order) != 2:
+            return False, "unsupported_chain_length"
+        allowed_tools = {cs.MCPToolName.RUN_CYPHER, cs.MCPToolName.SEMANTIC_SEARCH}
+        if not all(tool in allowed_tools for tool in baseline_order):
+            return False, "unsupported_tools"
+        lowered_query = natural_language_query.lower()
+        semantic_first_cues = (
+            "grep",
+            "keyword",
+            "text",
+            "regex",
+            "string",
+            "search in files",
+        )
+        if any(cue in lowered_query for cue in semantic_first_cues):
+            return False, "strong_semantic_cue"
+        return True, "eligible"
+
+    def _select_fallback_order_with_exploration(
+        self,
+        *,
+        natural_language_query: str,
+        failure_type: str,
+        baseline_order: list[str],
+    ) -> tuple[list[str], dict[str, object]]:
+        override_mode_raw = self._session_state.get("exploration_force_mode")
+        override_mode = (
+            str(override_mode_raw).strip().lower()
+            if override_mode_raw is not None
+            else ""
+        )
+        safety_ok, safety_reason = self._is_exploration_safe(
+            failure_type=failure_type,
+            natural_language_query=natural_language_query,
+            baseline_order=baseline_order,
+        )
+        candidates = self._build_fallback_chain_candidates(baseline_order)
+        policy_scores = [
+            self._score_fallback_chain_policy(
+                tool_order=order,
+                natural_language_query=natural_language_query,
+            )
+            for order in candidates
+        ]
+        best_policy = max(
+            policy_scores,
+            key=lambda item: self._coerce_float(item.get("score", 0.0)),
+        )
+        best_order_key = str(best_policy.get("chain", ""))
+        best_order = next(
+            (
+                order
+                for order in candidates
+                if self._fallback_chain_signature(order) == best_order_key
+            ),
+            baseline_order,
+        )
+        epsilon = self._compute_exploration_epsilon(failure_type)
+
+        if override_mode in {"off", "exploit"}:
+            return best_order, {
+                "mode": "exploit",
+                "reason": "forced_exploit",
+                "epsilon": round(epsilon, 3),
+                "draw": 1.0,
+                "safety": safety_reason,
+                "policy_scores": policy_scores,
+                "policy_best_chain": best_order_key,
+            }
+        if override_mode == "explore" and safety_ok:
+            alternative_candidates = [
+                order
+                for order in candidates
+                if self._fallback_chain_signature(order) != best_order_key
+            ]
+            selected_order = (
+                alternative_candidates[0] if alternative_candidates else best_order
+            )
+            return selected_order, {
+                "mode": "explore",
+                "reason": "forced_explore",
+                "epsilon": round(epsilon, 3),
+                "draw": 0.0,
+                "safety": safety_reason,
+                "policy_scores": policy_scores,
+                "policy_best_chain": best_order_key,
+            }
+        if not safety_ok:
+            return baseline_order, {
+                "mode": "exploit",
+                "reason": "safety_constraint",
+                "epsilon": round(epsilon, 3),
+                "draw": 1.0,
+                "safety": safety_reason,
+                "policy_scores": policy_scores,
+                "policy_best_chain": best_order_key,
+            }
+
+        draw = random.random()
+        explore = draw < epsilon
+        alternative_candidates = [
+            order
+            for order in candidates
+            if self._fallback_chain_signature(order) != best_order_key
+        ]
+        selected_order = (
+            (alternative_candidates[0] if alternative_candidates else best_order)
+            if explore
+            else best_order
+        )
+        return selected_order, {
+            "mode": "explore" if explore else "exploit",
+            "reason": "epsilon_greedy",
+            "epsilon": round(epsilon, 3),
+            "draw": round(draw, 6),
+            "safety": safety_reason,
+            "policy_scores": policy_scores,
+            "policy_best_chain": best_order_key,
+        }
+
+    def _compute_fallback_reward(
+        self,
+        *,
+        success: bool,
+        rows: int,
+        latency_ms: float,
+        failure_type: str,
+        mode: str,
+    ) -> float:
+        success_component = 1.0 if success else 0.0
+        row_component = max(0.0, min(1.0, rows / 10.0))
+        latency_component = max(0.0, min(1.0, 1.0 - (latency_ms / 3000.0)))
+        failure_penalty = 0.0
+        if failure_type in {"bad_query", "policy_block"}:
+            failure_penalty = -0.1
+        mode_bonus = 0.05 if (mode == "explore" and success) else 0.0
+        raw = (
+            (success_component * 0.45)
+            + (row_component * 0.25)
+            + (latency_component * 0.20)
+            + mode_bonus
+            + failure_penalty
+        )
+        return max(0.0, min(1.0, raw))
+
+    def _record_fallback_exploration(
+        self,
+        *,
+        mode: str,
+        selected_order: list[str],
+        baseline_order: list[str],
+        epsilon: float,
+        draw: float,
+        success: bool,
+        rows: int,
+        latency_ms: float,
+        reward: float,
+        failure_type: str,
+    ) -> None:
+        bucket = self._ensure_exploration_bucket()
+        bucket["calls"] = self._coerce_int(bucket.get("calls", 0)) + 1
+        if mode == "explore":
+            bucket["explore"] = self._coerce_int(bucket.get("explore", 0)) + 1
+        else:
+            bucket["exploit"] = self._coerce_int(bucket.get("exploit", 0)) + 1
+        if success:
+            bucket["success"] = self._coerce_int(bucket.get("success", 0)) + 1
+            bucket["consecutive_failures"] = 0
+        else:
+            bucket["failure"] = self._coerce_int(bucket.get("failure", 0)) + 1
+            bucket["consecutive_failures"] = (
+                self._coerce_int(bucket.get("consecutive_failures", 0)) + 1
+            )
+        bucket["reward_total"] = (
+            self._coerce_float(bucket.get("reward_total", 0.0)) + reward
+        )
+        bucket["latency_ms_total"] = self._coerce_float(
+            bucket.get("latency_ms_total", 0.0)
+        ) + max(0.0, float(latency_ms))
+        bucket["last_mode"] = mode
+        bucket["last_epsilon"] = round(epsilon, 3)
+        bucket["last_draw"] = round(draw, 6)
+
+        chain_key = self._fallback_chain_signature(selected_order)
+        chains_raw = bucket.get("chains", {})
+        chains = (
+            cast(dict[str, object], chains_raw) if isinstance(chains_raw, dict) else {}
+        )
+        chain_bucket_raw = chains.get(chain_key)
+        chain_bucket = (
+            cast(dict[str, object], chain_bucket_raw)
+            if isinstance(chain_bucket_raw, dict)
+            else {
+                "calls": 0,
+                "success": 0,
+                "failure": 0,
+                "rows_total": 0,
+                "latency_ms_total": 0.0,
+                "reward_total": 0.0,
+                "explore": 0,
+                "exploit": 0,
+            }
+        )
+        chain_bucket["calls"] = self._coerce_int(chain_bucket.get("calls", 0)) + 1
+        if success:
+            chain_bucket["success"] = (
+                self._coerce_int(chain_bucket.get("success", 0)) + 1
+            )
+        else:
+            chain_bucket["failure"] = (
+                self._coerce_int(chain_bucket.get("failure", 0)) + 1
+            )
+        chain_bucket["rows_total"] = self._coerce_int(
+            chain_bucket.get("rows_total", 0)
+        ) + max(0, int(rows))
+        chain_bucket["latency_ms_total"] = self._coerce_float(
+            chain_bucket.get("latency_ms_total", 0.0)
+        ) + max(0.0, float(latency_ms))
+        chain_bucket["reward_total"] = (
+            self._coerce_float(chain_bucket.get("reward_total", 0.0)) + reward
+        )
+        chain_bucket[mode] = self._coerce_int(chain_bucket.get(mode, 0)) + 1
+        chains[chain_key] = chain_bucket
+        bucket["chains"] = chains
+
+        recent_raw = bucket.get("recent", [])
+        recent = (
+            cast(list[dict[str, object]], recent_raw)
+            if isinstance(recent_raw, list)
+            else []
+        )
+        recent.insert(
+            0,
+            {
+                "mode": mode,
+                "selected_chain": chain_key,
+                "baseline_chain": self._fallback_chain_signature(baseline_order),
+                "success": bool(success),
+                "rows": max(0, int(rows)),
+                "failure_type": failure_type,
+                "latency_ms": round(max(0.0, float(latency_ms)), 3),
+                "reward": round(reward, 3),
+                "epsilon": round(epsilon, 3),
+                "draw": round(draw, 6),
+                "timestamp": int(time.time()),
+            },
+        )
+        bucket["recent"] = recent[:30]
+        self._session_state["fallback_exploration"] = bucket
+
+    def _build_exploration_summary(self) -> dict[str, object]:
+        bucket = self._ensure_exploration_bucket()
+        calls = self._coerce_int(bucket.get("calls", 0))
+        explore = self._coerce_int(bucket.get("explore", 0))
+        exploit = self._coerce_int(bucket.get("exploit", 0))
+        success_total = self._coerce_int(bucket.get("success", 0))
+        failure_total = self._coerce_int(bucket.get("failure", 0))
+        explore_ratio = (explore / calls) if calls > 0 else 0.0
+        failure_rate = (failure_total / calls) if calls > 0 else 0.0
+        avg_reward = (
+            self._coerce_float(bucket.get("reward_total", 0.0)) / calls
+            if calls > 0
+            else 0.0
+        )
+        avg_latency_ms = (
+            self._coerce_float(bucket.get("latency_ms_total", 0.0)) / calls
+            if calls > 0
+            else 0.0
+        )
+        consecutive_failures = self._coerce_int(bucket.get("consecutive_failures", 0))
+        chains_raw = bucket.get("chains", {})
+        chains = (
+            cast(dict[str, object], chains_raw) if isinstance(chains_raw, dict) else {}
+        )
+        chain_rows: list[dict[str, object]] = []
+        for chain_signature, raw_chain in chains.items():
+            if not isinstance(raw_chain, dict):
+                continue
+            chain_bucket = cast(dict[str, object], raw_chain)
+            chain_calls = self._coerce_int(chain_bucket.get("calls", 0))
+            chain_success = self._coerce_int(chain_bucket.get("success", 0))
+            chain_failure = self._coerce_int(chain_bucket.get("failure", 0))
+            chain_success_rate = (
+                (chain_success / chain_calls) if chain_calls > 0 else 0.0
+            )
+            chain_avg_reward = (
+                self._coerce_float(chain_bucket.get("reward_total", 0.0)) / chain_calls
+                if chain_calls > 0
+                else 0.0
+            )
+            chain_avg_latency = (
+                self._coerce_float(chain_bucket.get("latency_ms_total", 0.0))
+                / chain_calls
+                if chain_calls > 0
+                else 0.0
+            )
+            chain_rows.append(
+                {
+                    "chain": str(chain_signature),
+                    "calls": chain_calls,
+                    "success": chain_success,
+                    "failure": chain_failure,
+                    "success_rate": round(chain_success_rate, 3),
+                    "avg_reward": round(chain_avg_reward, 3),
+                    "avg_latency_ms": round(chain_avg_latency, 3),
+                    "rows_total": self._coerce_int(chain_bucket.get("rows_total", 0)),
+                    "explore": self._coerce_int(chain_bucket.get("explore", 0)),
+                    "exploit": self._coerce_int(chain_bucket.get("exploit", 0)),
+                }
+            )
+        chain_rows.sort(
+            key=lambda row: (
+                self._coerce_float(row.get("success_rate", 0.0)),
+                self._coerce_int(row.get("calls", 0)),
+            ),
+            reverse=True,
+        )
+        dominant_chain_ratio = 0.0
+        if calls > 0 and chain_rows:
+            dominant_chain_ratio = (
+                self._coerce_int(chain_rows[0].get("calls", 0)) / calls
+            )
+
+        recent_raw = bucket.get("recent", [])
+        recent = (
+            cast(list[dict[str, object]], recent_raw)
+            if isinstance(recent_raw, list)
+            else []
+        )
+        recent_rewards = [
+            self._coerce_float(item.get("reward", 0.0))
+            for item in recent
+            if isinstance(item, dict)
+        ]
+        latest_slice = recent_rewards[:10]
+        previous_slice = recent_rewards[10:20]
+        latest_avg_reward = (
+            sum(latest_slice) / len(latest_slice) if latest_slice else avg_reward
+        )
+        previous_avg_reward = (
+            sum(previous_slice) / len(previous_slice)
+            if previous_slice
+            else latest_avg_reward
+        )
+        reward_trend = latest_avg_reward - previous_avg_reward
+        return {
+            "calls": calls,
+            "explore": explore,
+            "exploit": exploit,
+            "success": success_total,
+            "failure": failure_total,
+            "explore_ratio": round(explore_ratio, 3),
+            "failure_rate": round(failure_rate, 3),
+            "avg_reward": round(avg_reward, 3),
+            "avg_latency_ms": round(avg_latency_ms, 3),
+            "latest_avg_reward": round(latest_avg_reward, 3),
+            "reward_trend": round(reward_trend, 3),
+            "dominant_chain_ratio": round(dominant_chain_ratio, 3),
+            "consecutive_failures": consecutive_failures,
+            "last_mode": str(bucket.get("last_mode", "exploit")),
+            "last_epsilon": round(
+                self._coerce_float(bucket.get("last_epsilon", 0.0)), 3
+            ),
+            "last_draw": round(self._coerce_float(bucket.get("last_draw", 0.0)), 6),
+            "chains": chain_rows[:5],
+        }
+
+    async def _run_standardized_query_fallback_chain(
+        self,
+        *,
+        natural_language_query: str,
+        cypher_query: str,
+        failure_hint: str = "query_returned_zero_rows",
+        error_text: str = "",
+        result_rows: int = 0,
+    ) -> dict[str, object]:
+        fallback_started_at = time.perf_counter()
+        failure_type = self._classify_query_failure(
+            failure_hint=failure_hint,
+            error_text=error_text,
+            result_rows=result_rows,
+        )
+        baseline_order = self._adaptive_fallback_order(
+            natural_language_query=natural_language_query,
+            failure_type=failure_type,
+        )
+        tool_order, exploration_decision = self._select_fallback_order_with_exploration(
+            natural_language_query=natural_language_query,
+            failure_type=failure_type,
+            baseline_order=baseline_order,
+        )
+        fallback_steps: list[dict[str, object]] = []
+
+        for tool_name in tool_order:
+            if tool_name == cs.MCPToolName.RUN_CYPHER:
+                step_started_at = time.perf_counter()
+                run_cypher_result = await self.run_cypher(
+                    cypher=cypher_query,
+                    params=json.dumps({}, ensure_ascii=False),
+                    write=False,
+                    reason="query_code_graph_standardized_fallback",
+                    advanced_mode=True,
+                )
+                step_latency_ms = (time.perf_counter() - step_started_at) * 1000.0
+                run_cypher_ok = (
+                    isinstance(run_cypher_result, dict)
+                    and not run_cypher_result.get("error")
+                    and isinstance(run_cypher_result.get("results"), list)
+                    and bool(run_cypher_result.get("results"))
+                )
+                fallback_steps.append(
+                    {
+                        "tool": cs.MCPToolName.RUN_CYPHER,
+                        "executed": True,
+                        "success": bool(run_cypher_ok),
+                        "latency_ms": round(step_latency_ms, 3),
+                        "rows": (
+                            len(
+                                cast(list[object], run_cypher_result.get("results", []))
+                            )
+                            if isinstance(run_cypher_result, dict)
+                            and isinstance(run_cypher_result.get("results"), list)
+                            else 0
+                        ),
+                    }
+                )
+                if run_cypher_ok:
+                    result_count = (
+                        len(cast(list[object], run_cypher_result.get("results", [])))
+                        if isinstance(run_cypher_result, dict)
+                        and isinstance(run_cypher_result.get("results"), list)
+                        else 0
+                    )
+                    total_latency_ms = (
+                        time.perf_counter() - fallback_started_at
+                    ) * 1000.0
+                    mode = str(exploration_decision.get("mode", "exploit"))
+                    reward = self._compute_fallback_reward(
+                        success=True,
+                        rows=result_count,
+                        latency_ms=total_latency_ms,
+                        failure_type=failure_type,
+                        mode=mode,
+                    )
+                    self._record_fallback_exploration(
+                        mode=mode,
+                        selected_order=tool_order,
+                        baseline_order=baseline_order,
+                        epsilon=self._coerce_float(
+                            exploration_decision.get("epsilon", 0.0)
+                        ),
+                        draw=self._coerce_float(exploration_decision.get("draw", 1.0)),
+                        success=True,
+                        rows=result_count,
+                        latency_ms=total_latency_ms,
+                        reward=reward,
+                        failure_type=failure_type,
+                    )
+                    return {
+                        "status": "ok",
+                        "source": "run_cypher",
+                        "results": run_cypher_result.get("results", []),
+                        "query_used": cypher_query,
+                        "fallback_chain": fallback_steps,
+                        "fallback_diagnostics": {
+                            "failure_type": failure_type,
+                            "baseline_order": baseline_order,
+                            "tool_order": tool_order,
+                            "selected_chain": self._fallback_chain_signature(
+                                tool_order
+                            ),
+                            "latency_ms": round(total_latency_ms, 3),
+                            "reward": round(reward, 3),
+                            "exploration": exploration_decision,
+                        },
+                    }
+
+            if tool_name == cs.MCPToolName.SEMANTIC_SEARCH:
+                step_started_at = time.perf_counter()
+                semantic_result = await self.semantic_search(
+                    query=natural_language_query,
+                    top_k=10,
+                )
+                step_latency_ms = (time.perf_counter() - step_started_at) * 1000.0
+                semantic_rows = semantic_result.get("results", [])
+                semantic_ok = isinstance(semantic_rows, list) and bool(semantic_rows)
+                fallback_steps.append(
+                    {
+                        "tool": cs.MCPToolName.SEMANTIC_SEARCH,
+                        "executed": True,
+                        "success": bool(semantic_ok),
+                        "latency_ms": round(step_latency_ms, 3),
+                        "rows": (
+                            len(cast(list[object], semantic_rows))
+                            if isinstance(semantic_rows, list)
+                            else 0
+                        ),
+                    }
+                )
+                if semantic_ok:
+                    semantic_normalized: list[dict[str, object]] = []
+                    for item in cast(list[object], semantic_rows):
+                        if not isinstance(item, dict):
+                            continue
+                        item_dict = cast(dict[str, object], item)
+                        semantic_normalized.append(
+                            {
+                                "name": item_dict.get("qualified_name")
+                                or item_dict.get("symbol")
+                                or item_dict.get("name"),
+                                "qualified_name": item_dict.get("qualified_name"),
+                                "path": item_dict.get("file_path")
+                                or item_dict.get("path"),
+                                "score": item_dict.get("score", 0.0),
+                                "source": "semantic_search",
+                            }
+                        )
+                    total_latency_ms = (
+                        time.perf_counter() - fallback_started_at
+                    ) * 1000.0
+                    mode = str(exploration_decision.get("mode", "exploit"))
+                    reward = self._compute_fallback_reward(
+                        success=True,
+                        rows=len(semantic_normalized),
+                        latency_ms=total_latency_ms,
+                        failure_type=failure_type,
+                        mode=mode,
+                    )
+                    self._record_fallback_exploration(
+                        mode=mode,
+                        selected_order=tool_order,
+                        baseline_order=baseline_order,
+                        epsilon=self._coerce_float(
+                            exploration_decision.get("epsilon", 0.0)
+                        ),
+                        draw=self._coerce_float(exploration_decision.get("draw", 1.0)),
+                        success=True,
+                        rows=len(semantic_normalized),
+                        latency_ms=total_latency_ms,
+                        reward=reward,
+                        failure_type=failure_type,
+                    )
+                    return {
+                        "status": "ok",
+                        "source": "semantic_search",
+                        "results": semantic_normalized,
+                        "query_used": cypher_query,
+                        "fallback_chain": fallback_steps,
+                        "fallback_diagnostics": {
+                            "failure_type": failure_type,
+                            "baseline_order": baseline_order,
+                            "tool_order": tool_order,
+                            "selected_chain": self._fallback_chain_signature(
+                                tool_order
+                            ),
+                            "latency_ms": round(total_latency_ms, 3),
+                            "reward": round(reward, 3),
+                            "exploration": exploration_decision,
+                        },
+                    }
+
+        total_latency_ms = (time.perf_counter() - fallback_started_at) * 1000.0
+        mode = str(exploration_decision.get("mode", "exploit"))
+        reward = self._compute_fallback_reward(
+            success=False,
+            rows=0,
+            latency_ms=total_latency_ms,
+            failure_type=failure_type,
+            mode=mode,
+        )
+        self._record_fallback_exploration(
+            mode=mode,
+            selected_order=tool_order,
+            baseline_order=baseline_order,
+            epsilon=self._coerce_float(exploration_decision.get("epsilon", 0.0)),
+            draw=self._coerce_float(exploration_decision.get("draw", 1.0)),
+            success=False,
+            rows=0,
+            latency_ms=total_latency_ms,
+            reward=reward,
+            failure_type=failure_type,
+        )
+        return {
+            "status": "error",
+            "source": "none",
+            "results": [],
+            "query_used": cypher_query,
+            "fallback_chain": fallback_steps,
+            "fallback_diagnostics": {
+                "failure_type": failure_type,
+                "baseline_order": baseline_order,
+                "tool_order": tool_order,
+                "selected_chain": self._fallback_chain_signature(tool_order),
+                "latency_ms": round(total_latency_ms, 3),
+                "reward": round(reward, 3),
+                "exploration": exploration_decision,
+            },
+        }
+
     async def query_code_graph(
         self, natural_language_query: str, output_format: str = "json"
     ) -> QueryResultDict | str:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
+            self._set_execution_phase("retrieval", "query_code_graph")
             await self._auto_plan_if_needed(natural_language_query)
+            self._session_bump("graph_query_attempt_count")
             project_name = self._active_project_name()
             cypher_query = await self._generate_project_scoped_cypher(
                 natural_language_query=natural_language_query,
@@ -2783,6 +4863,7 @@ class MCPToolsRegistry:
             repaired_attempts = 0
             max_repaired_attempts = 2
             parser_fallback_attempted = False
+            deterministic_second_pass_attempted = False
             while True:
                 try:
                     results = await self._run_with_retries(
@@ -2805,6 +4886,44 @@ class MCPToolsRegistry:
                 if results:
                     break
 
+                if not deterministic_second_pass_attempted:
+                    deterministic_second_pass_attempted = True
+                    template_queries = self._build_deterministic_second_pass_queries(
+                        natural_language_query=natural_language_query,
+                        project_name=project_name,
+                    )
+                    for template_query in template_queries:
+                        try:
+                            template_scope_error = self._validate_project_scope_policy(
+                                template_query, {}
+                            )
+                            if template_scope_error is not None:
+                                continue
+
+                            async def _template_read_once() -> list[dict[str, Any]]:
+                                return await asyncio.wait_for(
+                                    asyncio.to_thread(
+                                        self.ingestor.fetch_all,
+                                        template_query,
+                                    ),
+                                    timeout=60.0,
+                                )
+
+                            template_results = await self._run_with_retries(
+                                _template_read_once,
+                                attempts=2,
+                                base_delay_seconds=0.3,
+                            )
+                            if template_results:
+                                cypher_query = template_query
+                                results = template_results
+                                break
+                        except Exception:
+                            continue
+
+                    if results:
+                        break
+
                 if not parser_fallback_attempted and self._is_parser_focused_query(
                     natural_language_query
                 ):
@@ -2822,6 +4941,68 @@ class MCPToolsRegistry:
                     previous_error="query_returned_zero_rows",
                 )
 
+            fallback_chain: list[dict[str, object]] = []
+            fallback_diagnostics: dict[str, object] = {}
+            if not results:
+                fallback = await self._run_standardized_query_fallback_chain(
+                    natural_language_query=natural_language_query,
+                    cypher_query=cypher_query,
+                    failure_hint="query_returned_zero_rows",
+                    error_text="",
+                    result_rows=0,
+                )
+                fallback_chain = cast(
+                    list[dict[str, object]], fallback.get("fallback_chain", [])
+                )
+                fallback_diagnostics = cast(
+                    dict[str, object],
+                    fallback.get("fallback_diagnostics", {}),
+                )
+                fallback_results = fallback.get("results", [])
+                if isinstance(fallback_results, list):
+                    results = cast(list[dict[str, Any]], fallback_results)
+
+                if isinstance(fallback.get("query_used"), str):
+                    cypher_query = str(fallback.get("query_used"))
+
+                if isinstance(fallback.get("source"), str) and str(
+                    fallback.get("source")
+                ) in {"run_cypher", "semantic_search"}:
+                    realized_chain = ["query_code_graph"]
+                    for step in fallback_chain:
+                        if not isinstance(step, dict):
+                            continue
+                        tool_name = str(step.get("tool", "")).strip()
+                        if tool_name:
+                            realized_chain.append(tool_name)
+                    exploration_details = (
+                        cast(
+                            dict[str, object],
+                            fallback_diagnostics.get("exploration", {}),
+                        )
+                        if isinstance(fallback_diagnostics.get("exploration", {}), dict)
+                        else {}
+                    )
+                    self._memory_store.add_entry(
+                        text=json.dumps(
+                            {
+                                "kind": "successful_tool_chain",
+                                "query": natural_language_query,
+                                "tool_history": realized_chain,
+                                "selected_source": fallback.get("source"),
+                                "exploration_mode": exploration_details.get(
+                                    "mode", "exploit"
+                                ),
+                                "exploration_reason": exploration_details.get(
+                                    "reason", ""
+                                ),
+                                "rows": len(results),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        tags=["pattern", "chain", "fallback", "success"],
+                    )
+
             self._session_bump("query_success_count")
             self._session_bump("graph_evidence_count")
             capped_results, truncated, total_rows = self._cap_query_results(results)
@@ -2829,6 +5010,10 @@ class MCPToolsRegistry:
             self._session_state["query_result_chunks"] = chunks
             graph_digest = self._build_graph_result_digest(results)
             self._session_state["last_graph_result_digest"] = graph_digest
+            query_digest_id = ""
+            if total_rows > 0:
+                query_digest_id = self._mint_query_digest_id(cypher_query, total_rows)
+                self._session_state["last_graph_query_digest_id"] = query_digest_id
             if graph_digest:
                 self._memory_store.add_entry(
                     text=json.dumps(
@@ -2838,6 +5023,7 @@ class MCPToolsRegistry:
                             "query": natural_language_query,
                             "rows": total_rows,
                             "digest": graph_digest,
+                            "query_digest_id": query_digest_id,
                         },
                         ensure_ascii=False,
                     ),
@@ -2858,22 +5044,40 @@ class MCPToolsRegistry:
                 results=cast(list[ResultRow], capped_results),
                 summary=summary,
             )
+            result_payload: dict[str, object] = {
+                "query_used": result_dict.get("query_used", ""),
+                "results": result_dict.get("results", []),
+                "summary": result_dict.get("summary", ""),
+            }
+            result_payload["query_digest_id"] = query_digest_id
+            result_payload["planner_usage_rate"] = self._planner_usage_rate()
+            result_payload["schema_context"] = str(
+                self._session_state.get("preflight_schema_context", "")
+            )
+            result_payload["session_contract"] = self._session_state.get(
+                "session_contract", {}
+            )
+            if fallback_chain:
+                result_payload["fallback_chain"] = fallback_chain
+                result_payload["fallback_diagnostics"] = fallback_diagnostics
             logger.info(
                 lg.MCP_QUERY_RESULTS.format(
-                    count=len(result_dict.get(cs.DICT_KEY_RESULTS, []))
+                    count=len(
+                        cast(list[object], result_payload.get(cs.DICT_KEY_RESULTS, []))
+                    )
                 )
             )
 
             normalized_format = output_format.strip().lower()
             if normalized_format == "cypher":
-                return str(result_dict.get("query_used", ""))
+                return str(result_payload.get("query_used", ""))
 
             if normalized_format == "text":
-                query_used = str(result_dict.get("query_used", ""))
-                summary = str(result_dict.get("summary", ""))
-                results = result_dict.get("results", [])
+                query_used = str(result_payload.get("query_used", ""))
+                summary = str(result_payload.get("summary", ""))
+                results_payload = cast(list[object], result_payload.get("results", []))
                 results_text = json.dumps(
-                    results,
+                    results_payload,
                     indent=2,
                     ensure_ascii=False,
                 )
@@ -2886,7 +5090,7 @@ class MCPToolsRegistry:
                     f"{summary}"
                 )
 
-            return result_dict
+            return cast(QueryResultDict, result_payload)
         except Exception as e:
             logger.exception(lg.MCP_ERROR_QUERY.format(error=e))
             self._record_tool_usefulness(
@@ -2894,6 +5098,39 @@ class MCPToolsRegistry:
                 success=False,
                 usefulness_score=0.0,
             )
+            fallback = await self._run_standardized_query_fallback_chain(
+                natural_language_query=natural_language_query,
+                cypher_query=(
+                    "MATCH (m:Module {project_name: $project_name}) "
+                    "RETURN m.name AS name LIMIT 50"
+                ),
+                failure_hint="query_execution_exception",
+                error_text=str(e),
+                result_rows=0,
+            )
+            fallback_results_raw = fallback.get("results", [])
+            fallback_results: list[ResultRow] = []
+            if isinstance(fallback_results_raw, list):
+                fallback_results = cast(list[ResultRow], fallback_results_raw)
+            if fallback_results:
+                response = QueryResultDict(
+                    query_used=str(fallback.get("query_used", "")),
+                    results=fallback_results,
+                    summary=(
+                        "Query execution failed; standardized fallback returned "
+                        f"{len(fallback_results)} rows via {fallback.get('source', 'fallback')}."
+                    ),
+                )
+                response_payload: dict[str, object] = {
+                    "query_used": response.get("query_used", ""),
+                    "results": response.get("results", []),
+                    "summary": response.get("summary", ""),
+                }
+                response_payload["fallback_chain"] = fallback.get("fallback_chain", [])
+                response_payload["fallback_diagnostics"] = fallback.get(
+                    "fallback_diagnostics", {}
+                )
+                return cast(QueryResultDict, response_payload)
             return QueryResultDict(
                 error=str(e),
                 query_used=cs.QUERY_NOT_AVAILABLE,
@@ -2904,6 +5141,7 @@ class MCPToolsRegistry:
             )
 
     async def semantic_search(self, query: str, top_k: int = 5) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "semantic_search")
         if not query.strip():
             self._record_tool_usefulness(
                 cs.MCPToolName.SEMANTIC_SEARCH,
@@ -2951,6 +5189,7 @@ class MCPToolsRegistry:
             return {"error": str(exc), "results": []}
 
     async def get_function_source(self, node_id: int) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "get_function_source")
         try:
             source = await asyncio.wait_for(
                 asyncio.to_thread(get_function_source_code, int(node_id)),
@@ -2991,6 +5230,7 @@ class MCPToolsRegistry:
 
     async def get_code_snippet(self, qualified_name: str) -> CodeSnippetResultDict:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
+        self._set_execution_phase("retrieval", "get_code_snippet")
         try:
             snippet = await self._code_tool.function(qualified_name=qualified_name)
             result: CodeSnippetResultDict | None = snippet.model_dump()
@@ -3031,6 +5271,7 @@ class MCPToolsRegistry:
         self, file_path: str, target_code: str, replacement_code: str
     ) -> str:
         logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
+        self._set_execution_phase("execution", "surgical_replace_code")
         try:
             result = await self._file_editor_tool.function(
                 file_path=file_path,
@@ -3047,6 +5288,7 @@ class MCPToolsRegistry:
         self, file_path: str, offset: int | None = None, limit: int | None = None
     ) -> str:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
+        self._set_execution_phase("retrieval", "read_file")
         try:
             graph_evidence_count = self._coerce_int(
                 self._session_state.get("graph_evidence_count", 0)
@@ -3067,8 +5309,25 @@ class MCPToolsRegistry:
                     )
                 )
 
+            if (
+                bool(settings.MCP_ENFORCE_GRAPH_FIRST_READS)
+                and not self._has_graph_query_digest()
+            ):
+                self._record_tool_usefulness(
+                    cs.MCPToolName.READ_FILE,
+                    success=False,
+                    usefulness_score=0.0,
+                )
+                return te.ERROR_WRAPPER.format(
+                    message=(
+                        "graph_digest_required: call query_code_graph (or run_cypher after graph-first flow) "
+                        "and obtain a successful query_digest_id before read_file"
+                    )
+                )
+
             if offset is not None or limit is not None:
                 full_path = Path(self.project_root) / file_path
+                path_depth = max(0, len(Path(file_path).parts) - 1)
                 start = offset if offset is not None else 0
 
                 with open(full_path, encoding=cs.ENCODING_UTF8) as f:
@@ -3093,6 +5352,13 @@ class MCPToolsRegistry:
                     )
                     self._session_bump("evidence_reads")
                     self._session_bump("code_evidence_count")
+                    self._session_state["file_depth_sum"] = self._coerce_float(
+                        self._session_state.get("file_depth_sum", 0.0)
+                    ) + float(path_depth)
+                    self._session_state["file_depth_count"] = (
+                        self._coerce_int(self._session_state.get("file_depth_count", 0))
+                        + 1
+                    )
                     self._record_tool_usefulness(
                         cs.MCPToolName.READ_FILE,
                         success=True,
@@ -3103,6 +5369,13 @@ class MCPToolsRegistry:
                 result = await self._file_reader_tool.function(file_path=file_path)
                 self._session_bump("evidence_reads")
                 self._session_bump("code_evidence_count")
+                path_depth = max(0, len(Path(file_path).parts) - 1)
+                self._session_state["file_depth_sum"] = self._coerce_float(
+                    self._session_state.get("file_depth_sum", 0.0)
+                ) + float(path_depth)
+                self._session_state["file_depth_count"] = (
+                    self._coerce_int(self._session_state.get("file_depth_count", 0)) + 1
+                )
                 self._record_tool_usefulness(
                     cs.MCPToolName.READ_FILE,
                     success=True,
@@ -3121,6 +5394,7 @@ class MCPToolsRegistry:
 
     async def write_file(self, file_path: str, content: str) -> str:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
+        self._set_execution_phase("execution", "write_file")
         try:
             result = await self._file_writer_tool.function(
                 file_path=file_path, content=content
@@ -3136,6 +5410,7 @@ class MCPToolsRegistry:
     async def list_directory(
         self, repo_path: str, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
     ) -> str:
+        self._set_execution_phase("retrieval", "list_directory")
         try:
             self._set_project_root(repo_path)
             logger.info(lg.MCP_LIST_DIR.format(path=f"{repo_path}:{directory_path}"))
@@ -3201,7 +5476,12 @@ class MCPToolsRegistry:
         write: bool = False,
         user_requested: bool = False,
         reason: str | None = None,
+        advanced_mode: bool = False,
     ) -> dict[str, object]:
+        self._set_execution_phase(
+            "execution" if bool(write) else "retrieval",
+            "run_cypher_write" if bool(write) else "run_cypher_read",
+        )
         if not cypher:
             return {"error": te.MCP_INVALID_RESPONSE, "results": []}
         if not write:
@@ -3215,15 +5495,21 @@ class MCPToolsRegistry:
             except json.JSONDecodeError:
                 parsed_params = {}
 
+        normalized_cypher, normalized_params, normalization_notes = (
+            self._normalize_run_cypher_scope(cypher, parsed_params)
+        )
+
         write_impact: int | None = None
         risk_factor = 1.0
         if write:
-            write_impact = await self._estimate_write_impact(cypher, parsed_params)
+            write_impact = await self._estimate_write_impact(
+                normalized_cypher, normalized_params
+            )
             risk_factor = await self._compute_project_risk_factor()
 
         policy_error = self._validate_run_cypher_policy(
-            cypher=cypher,
-            parsed_params=parsed_params,
+            cypher=normalized_cypher,
+            parsed_params=normalized_params,
             write=write,
             user_requested=user_requested,
             reason=reason,
@@ -3236,7 +5522,68 @@ class MCPToolsRegistry:
                 success=False,
                 usefulness_score=0.0,
             )
-            return {"error": policy_error, "results": []}
+            response: dict[str, object] = {"error": policy_error, "results": []}
+            if (
+                cs.MCP_RUN_CYPHER_SCOPE_ERROR.format(
+                    project_name=self._active_project_name()
+                )
+                in policy_error
+                or cs.MCP_RUN_CYPHER_PROJECT_PARAM_MISMATCH.format(
+                    project_name=self._active_project_name()
+                )
+                in policy_error
+            ):
+                response["scope_hint"] = self._append_scope_fix_hint(
+                    self._active_project_name()
+                )
+            if normalization_notes:
+                response["scope_normalization"] = {
+                    "applied": normalization_notes,
+                    "query_used": normalized_cypher,
+                    "params_used": normalized_params,
+                }
+            response.update(
+                self._build_policy_guidance_payload(
+                    policy_error=policy_error,
+                    cypher_query=normalized_cypher,
+                    parsed_params=normalized_params,
+                    write=write,
+                    advanced_mode=advanced_mode,
+                )
+            )
+            return response
+
+        bypass_reasons = {"session_preflight_schema_summary"}
+        if (
+            not write
+            and not advanced_mode
+            and str(reason or "").strip() not in bypass_reasons
+            and not self._has_graph_query_digest()
+        ):
+            self._record_tool_usefulness(
+                cs.MCPToolName.RUN_CYPHER,
+                success=False,
+                usefulness_score=0.0,
+            )
+            return {
+                "error": (
+                    "run_cypher_advanced_mode_required: default flow enforces graph-first retrieval. "
+                    "Call query_code_graph first, then use run_cypher; or set advanced_mode=true for expert traversal control."
+                ),
+                "results": [],
+                "flow_hint": [
+                    "select_active_project",
+                    "query_code_graph",
+                    "run_cypher",
+                ],
+                **self._build_policy_guidance_payload(
+                    policy_error="run_cypher_advanced_mode_required",
+                    cypher_query=normalized_cypher,
+                    parsed_params=normalized_params,
+                    write=write,
+                    advanced_mode=advanced_mode,
+                ),
+            }
 
         try:
             if write:
@@ -3245,8 +5592,8 @@ class MCPToolsRegistry:
                     await asyncio.wait_for(
                         asyncio.to_thread(
                             self.ingestor.execute_write,
-                            cypher,
-                            cast(dict[str, Any], parsed_params),
+                            normalized_cypher,
+                            cast(dict[str, Any], normalized_params),
                         ),
                         timeout=60.0,
                     )
@@ -3262,14 +5609,27 @@ class MCPToolsRegistry:
                     success=True,
                     usefulness_score=0.9,
                 )
-                return {"status": "ok", "results": []}
+                result_payload: dict[str, object] = {"status": "ok", "results": []}
+                result_payload["schema_context"] = str(
+                    self._session_state.get("preflight_schema_context", "")
+                )
+                result_payload["session_contract"] = self._session_state.get(
+                    "session_contract", {}
+                )
+                if normalization_notes:
+                    result_payload["scope_normalization"] = {
+                        "applied": normalization_notes,
+                        "query_used": normalized_cypher,
+                        "params_used": normalized_params,
+                    }
+                return result_payload
 
             async def _read_once() -> list[dict[str, Any]]:
                 return await asyncio.wait_for(
                     asyncio.to_thread(
                         self.ingestor.fetch_all,
-                        cypher,
-                        cast(dict[str, Any], parsed_params),
+                        normalized_cypher,
+                        cast(dict[str, Any], normalized_params),
                     ),
                     timeout=60.0,
                 )
@@ -3279,6 +5639,14 @@ class MCPToolsRegistry:
                 attempts=3,
                 base_delay_seconds=0.5,
             )
+            query_digest_id = ""
+            if len(results) > 0:
+                query_digest_id = self._mint_query_digest_id(
+                    normalized_cypher, len(results)
+                )
+                self._session_state["last_graph_query_digest_id"] = query_digest_id
+                graph_digest = self._build_graph_result_digest(results)
+                self._session_state["last_graph_result_digest"] = graph_digest
             self._session_bump("query_success_count")
             self._session_bump("graph_evidence_count")
             self._record_tool_usefulness(
@@ -3286,7 +5654,22 @@ class MCPToolsRegistry:
                 success=True,
                 usefulness_score=1.0 if len(results) > 0 else 0.5,
             )
-            return {"status": "ok", "results": results}
+            response_payload: dict[str, object] = {"status": "ok", "results": results}
+            response_payload["query_digest_id"] = query_digest_id
+            response_payload["planner_usage_rate"] = self._planner_usage_rate()
+            response_payload["schema_context"] = str(
+                self._session_state.get("preflight_schema_context", "")
+            )
+            response_payload["session_contract"] = self._session_state.get(
+                "session_contract", {}
+            )
+            if normalization_notes:
+                response_payload["scope_normalization"] = {
+                    "applied": normalization_notes,
+                    "query_used": normalized_cypher,
+                    "params_used": normalized_params,
+                }
+            return response_payload
         except TimeoutError:
             self._record_tool_usefulness(
                 cs.MCPToolName.RUN_CYPHER,
@@ -3301,6 +5684,61 @@ class MCPToolsRegistry:
                 usefulness_score=0.0,
             )
             return {"error": str(exc), "results": []}
+
+    @staticmethod
+    def _build_deterministic_second_pass_queries(
+        natural_language_query: str,
+        project_name: str,
+    ) -> list[str]:
+        safe_project = project_name.replace("'", "\\'")
+        lowered = natural_language_query.lower()
+
+        templates: list[str] = []
+
+        if any(
+            token in lowered
+            for token in ("call", "caller", "callee", "hop", "chain", "dependency")
+        ):
+            templates.append(
+                "MATCH (m:Module {project_name: '"
+                + safe_project
+                + "'})-[:CALLS]->(target) "
+                "RETURN m.name AS source, m.path AS source_path, "
+                "target.name AS target, target.path AS target_path "
+                "LIMIT 80"
+            )
+
+        if any(token in lowered for token in ("class", "method", "function")):
+            templates.append(
+                "MATCH (m:Module {project_name: '"
+                + safe_project
+                + "'})-[:DEFINES]->(c:Class) "
+                "OPTIONAL MATCH (c)-[:DEFINES_METHOD]->(meth:Method) "
+                "RETURN m.path AS module_path, c.name AS class_name, meth.name AS method_name "
+                "LIMIT 120"
+            )
+            templates.append(
+                "MATCH (m:Module {project_name: '"
+                + safe_project
+                + "'})-[:DEFINES]->(f:Function) "
+                "RETURN m.path AS module_path, f.name AS function_name, f.qualified_name AS qualified_name "
+                "LIMIT 120"
+            )
+
+        templates.append(
+            "MATCH (m:Module {project_name: '" + safe_project + "'}) "
+            "RETURN m.name AS name, m.path AS path, m.qualified_name AS qualified_name "
+            "LIMIT 80"
+        )
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for query in templates:
+            if query in seen:
+                continue
+            seen.add(query)
+            deduped.append(query)
+        return deduped
 
     async def _estimate_write_impact(
         self, cypher_query: str, parsed_params: dict[str, object]
@@ -3672,6 +6110,7 @@ class MCPToolsRegistry:
         return {"count": len(artifacts), "artifacts": artifacts}
 
     async def apply_diff_safe(self, file_path: str, chunks: str) -> dict[str, object]:
+        self._set_execution_phase("execution", "apply_diff_safe")
         if file_path.startswith(".env"):
             return {"error": "sensitive_path"}
         try:
@@ -3683,6 +6122,7 @@ class MCPToolsRegistry:
         return await self._apply_diff_chunks(file_path, payload)
 
     async def refactor_batch(self, chunks: str) -> dict[str, object]:
+        self._set_execution_phase("execution", "refactor_batch")
         try:
             payload = json.loads(chunks)
         except json.JSONDecodeError:
@@ -3758,6 +6198,7 @@ class MCPToolsRegistry:
     async def test_generate(
         self, goal: str, context: str | None = None
     ) -> dict[str, object]:
+        self._set_execution_phase("post_validation", "test_generate")
         prompt = goal if context is None else f"{goal}\nContext: {context}"
         try:
             result = await asyncio.wait_for(
@@ -3789,6 +6230,7 @@ class MCPToolsRegistry:
     async def memory_add(
         self, entry: str, tags: str | None = None
     ) -> dict[str, object]:
+        self._set_execution_phase("post_validation", "memory_add")
         parsed_tags: list[str] = []
         if tags:
             parsed_tags = [item.strip() for item in tags.split(",") if item.strip()]
@@ -3807,16 +6249,22 @@ class MCPToolsRegistry:
         success_only: bool = False,
         limit: int = 20,
     ) -> dict[str, object]:
+        self._set_execution_phase("validation", "memory_query_patterns")
         tag_filters = (
             [item.strip() for item in filter_tags.split(",") if item.strip()]
             if isinstance(filter_tags, str)
             else []
         )
+        bounded_limit = max(1, min(int(limit), 100))
         entries = self._memory_store.query_patterns(
             query=query,
             filter_tags=tag_filters,
             success_only=bool(success_only),
-            limit=max(1, min(int(limit), 100)),
+            limit=bounded_limit,
+        )
+        chain_success_rates = self._memory_store.get_chain_success_rates(
+            query=query,
+            limit=min(10, bounded_limit),
         )
         self._session_bump("memory_pattern_query_count")
         self._record_tool_usefulness(
@@ -3830,6 +6278,7 @@ class MCPToolsRegistry:
             "filter_tags": tag_filters,
             "success_only": bool(success_only),
             "entries": entries,
+            "chain_success_rates": chain_success_rates,
         }
 
     async def execution_feedback(
@@ -3838,6 +6287,7 @@ class MCPToolsRegistry:
         result: str,
         issues: str | None = None,
     ) -> dict[str, object]:
+        self._set_execution_phase("post_validation", "execution_feedback")
         parsed_issues = (
             [item.strip() for item in issues.split(",") if item.strip()]
             if isinstance(issues, str)
@@ -3899,6 +6349,7 @@ class MCPToolsRegistry:
         edge_cases: str,
         negative_tests: str,
     ) -> dict[str, object]:
+        self._set_execution_phase("validation", "test_quality_gate")
         coverage_score = self._normalize_quality_score(coverage)
         edge_cases_score = self._normalize_quality_score(edge_cases)
         negative_tests_score = self._normalize_quality_score(negative_tests)
@@ -3930,6 +6381,8 @@ class MCPToolsRegistry:
         self, goal: str, context: str | None = None
     ) -> dict[str, object]:
         try:
+            self._set_execution_phase("validation", "plan_task")
+            self._session_bump("plan_task_count")
             memory_patterns = await self.memory_query_patterns(
                 query=goal,
                 filter_tags="plan,refactor,success",
@@ -3945,13 +6398,42 @@ class MCPToolsRegistry:
                         text = item_dict.get("text")
                         if isinstance(text, str) and text.strip():
                             pattern_texts.append(text.strip()[:300])
-            augmented_context = context or ""
-            if pattern_texts:
-                augmented_context = (
-                    ((augmented_context + "\n") if augmented_context else "")
-                    + "Memory patterns (must consider):\n"
-                    + "\n".join(f"- {line}" for line in pattern_texts[:5])
-                )
+            chain_success_rates_raw = memory_patterns.get("chain_success_rates", [])
+            chain_success_rates: list[dict[str, object]] = []
+            if isinstance(chain_success_rates_raw, list):
+                for item in chain_success_rates_raw:
+                    if isinstance(item, dict):
+                        chain_success_rates.append(cast(dict[str, object], item))
+
+            pattern_lines = (
+                [f"- {line}" for line in pattern_texts[:5]]
+                if pattern_texts
+                else ["- none"]
+            )
+            chain_lines: list[str] = []
+            for item in chain_success_rates[:5]:
+                signature = str(item.get("chain_signature", "")).strip()
+                success_rate = self._coerce_float(item.get("success_rate", 0.0))
+                total_count = self._coerce_int(item.get("total_count", 0))
+                if signature:
+                    chain_lines.append(
+                        f"- {signature} (success_rate={success_rate:.2f}, total={total_count})"
+                    )
+            if not chain_lines:
+                chain_lines = ["- none"]
+
+            mandatory_memory_block = (
+                "Memory pattern injection (mandatory):\n"
+                "Matched patterns:\n"
+                + "\n".join(pattern_lines)
+                + "\n"
+                + "Chain success-rate candidates:\n"
+                + "\n".join(chain_lines)
+            )
+
+            augmented_context = (
+                (context + "\n") if context else ""
+            ) + mandatory_memory_block
 
             result = await asyncio.wait_for(
                 self._planner_agent.plan(goal, context=augmented_context),
@@ -3964,8 +6446,20 @@ class MCPToolsRegistry:
                 usefulness_score=1.0,
             )
             if hasattr(result, "content") and isinstance(result.content, dict):
-                return {"status": result.status, **result.content}
-            return {"status": result.status, "content": result.content}
+                return {
+                    "status": result.status,
+                    **result.content,
+                    "retrieved_patterns": pattern_texts[:5],
+                    "chain_success_rates": chain_success_rates[:5],
+                    "memory_injection_mandatory": True,
+                }
+            return {
+                "status": result.status,
+                "content": result.content,
+                "retrieved_patterns": pattern_texts[:5],
+                "chain_success_rates": chain_success_rates[:5],
+                "memory_injection_mandatory": True,
+            }
         except TimeoutError:
             self._record_tool_usefulness(
                 cs.MCPToolName.PLAN_TASK,
@@ -4055,6 +6549,168 @@ class MCPToolsRegistry:
             except ValueError:
                 return default
         return default
+
+    def _compute_context_confidence_model(
+        self,
+        *,
+        graph_evidence_count: int,
+        code_evidence_count: int,
+        semantic_similarity_mean: float,
+        manual_memory_add_count: int,
+        exploration_summary: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        query_chunks_raw = self._session_state.get("query_result_chunks", [])
+        graph_row_count = 0
+        if isinstance(query_chunks_raw, list):
+            for chunk in query_chunks_raw:
+                if isinstance(chunk, list):
+                    graph_row_count += len(
+                        [row for row in chunk if isinstance(row, dict)]
+                    )
+
+        file_depth_sum = self._coerce_float(
+            self._session_state.get("file_depth_sum", 0.0)
+        )
+        file_depth_count = self._coerce_int(
+            self._session_state.get("file_depth_count", 0)
+        )
+        memory_pattern_query_count = self._coerce_int(
+            self._session_state.get("memory_pattern_query_count", 0)
+        )
+
+        graph_density = max(
+            0.0,
+            min(
+                1.0,
+                max(
+                    graph_evidence_count / 3.0,
+                    graph_row_count / 50.0,
+                ),
+            ),
+        )
+        semantic_overlap = max(0.0, min(1.0, semantic_similarity_mean))
+        if file_depth_count > 0:
+            file_depth_mean = max(0.0, file_depth_sum / float(file_depth_count))
+            file_depth = max(0.0, min(1.0, file_depth_mean / 4.0))
+        elif code_evidence_count > 0:
+            file_depth_mean = 1.0
+            file_depth = max(0.0, min(1.0, code_evidence_count / 4.0))
+        else:
+            file_depth_mean = 0.0
+            file_depth = 0.0
+
+        memory_match_raw = (memory_pattern_query_count + manual_memory_add_count) / 2.0
+        memory_match = max(0.0, min(1.0, memory_match_raw))
+
+        weights = {
+            "graph_density": 0.35,
+            "semantic_overlap": 0.30,
+            "file_depth": 0.20,
+            "memory_match": 0.15,
+        }
+        score = (
+            (weights["graph_density"] * graph_density)
+            + (weights["semantic_overlap"] * semantic_overlap)
+            + (weights["file_depth"] * file_depth)
+            + (weights["memory_match"] * memory_match)
+        )
+        exploration_data = exploration_summary or {}
+        exploration_calls = self._coerce_int(exploration_data.get("calls", 0))
+        exploration_success_rate = max(
+            0.0,
+            min(1.0, self._coerce_float(exploration_data.get("success_rate", 0.0))),
+        )
+        exploration_avg_reward = max(
+            0.0,
+            min(1.0, self._coerce_float(exploration_data.get("avg_reward", 0.0))),
+        )
+        calibration_coverage = max(0.0, min(1.0, exploration_calls / 20.0))
+        calibration_quality = (exploration_success_rate * 0.4) + (
+            exploration_avg_reward * 0.6
+        )
+        calibration_delta = (calibration_quality - 0.5) * 0.10 * calibration_coverage
+        score = max(0.0, min(1.0, score + calibration_delta))
+        required = 0.6
+        score_rounded = round(score, 3)
+        return {
+            "name": "context_confidence_v1",
+            "score": score_rounded,
+            "required": required,
+            "pass": score >= required,
+            "status": (
+                "high" if score >= 0.8 else "medium" if score >= required else "low"
+            ),
+            "weights": weights,
+            "components": {
+                "graph_density": round(graph_density, 3),
+                "semantic_overlap": round(semantic_overlap, 3),
+                "file_depth": round(file_depth, 3),
+                "memory_match": round(memory_match, 3),
+                "exploration_calibration": round(calibration_delta, 3),
+            },
+            "signals": {
+                "graph_row_count": graph_row_count,
+                "file_depth_mean": round(file_depth_mean, 3),
+                "file_depth_count": file_depth_count,
+                "memory_pattern_query_count": memory_pattern_query_count,
+                "manual_memory_add_count": manual_memory_add_count,
+                "confidence_calibration": {
+                    "exploration_calls": exploration_calls,
+                    "coverage": round(calibration_coverage, 3),
+                    "quality": round(calibration_quality, 3),
+                    "delta": round(calibration_delta, 3),
+                },
+            },
+        }
+
+    def _build_guard_partition(
+        self,
+        readiness: dict[str, object],
+    ) -> dict[str, object]:
+        hard_guard_checks = {
+            "preflight_gate": bool(
+                self._session_state.get("preflight_project_selected", False)
+            ),
+            "phase_gate": self._current_execution_phase() in self._EXECUTION_PHASES,
+            "scope_gate": True,
+            "write_safety_gate": True,
+            "tool_chain_guard": True,
+        }
+        hard_failed = [
+            name for name, gate_pass in hard_guard_checks.items() if not gate_pass
+        ]
+
+        soft_guards = [
+            "confidence_gate",
+            "context_confidence_gate",
+            "pattern_reuse_gate",
+            "completion_gate",
+            "test_quality_gate",
+            "impact_graph_gate",
+            "replan_gate",
+        ]
+        soft_failed: list[str] = []
+        for gate_name in soft_guards:
+            gate_payload = readiness.get(gate_name, {})
+            if isinstance(gate_payload, dict):
+                gate_payload_dict = cast(dict[str, object], gate_payload)
+                if not bool(gate_payload_dict.get("pass", False)):
+                    soft_failed.append(gate_name)
+
+        return {
+            "hard": {
+                "required": list(hard_guard_checks.keys()),
+                "failed": hard_failed,
+                "pass": not hard_failed,
+                "severity": "blocking",
+            },
+            "soft": {
+                "required": soft_guards,
+                "failed": soft_failed,
+                "pass": not soft_failed,
+                "severity": "advisory_or_done_decision",
+            },
+        }
 
     async def _apply_diff_chunks(
         self, file_path: str, payload: list[dict[str, object]]
@@ -4183,6 +6839,14 @@ class MCPToolsRegistry:
         pattern_reuse_score = self._coerce_float(
             self._session_state.get("pattern_reuse_score", 0.0)
         )
+        exploration_summary = self._build_exploration_summary()
+        context_confidence = self._compute_context_confidence_model(
+            graph_evidence_count=graph_evidence_count,
+            code_evidence_count=code_evidence_count,
+            semantic_similarity_mean=semantic_similarity_mean,
+            manual_memory_add_count=manual_memory_add_count,
+            exploration_summary=exploration_summary,
+        )
 
         completion_requirements = {
             "semantic": semantic_success > 0,
@@ -4197,12 +6861,26 @@ class MCPToolsRegistry:
             name for name, satisfied in completion_requirements.items() if not satisfied
         ]
 
+        context_components_raw = context_confidence.get("components", {})
+        context_components = (
+            cast(dict[str, object], context_components_raw)
+            if isinstance(context_components_raw, dict)
+            else {}
+        )
+        context_score = self._coerce_float(context_confidence.get("score", 0.0))
         confidence_components = {
-            "graph": 1.0 if graph_evidence_count > 0 else 0.0,
-            "code": 1.0 if code_evidence_count > 0 else 0.0,
-            "semantic": max(0.0, min(1.0, semantic_similarity_mean)),
+            "graph_density": self._coerce_float(
+                context_components.get("graph_density", 0.0)
+            ),
+            "semantic_overlap": self._coerce_float(
+                context_components.get("semantic_overlap", 0.0)
+            ),
+            "file_depth": self._coerce_float(context_components.get("file_depth", 0.0)),
+            "memory_match": self._coerce_float(
+                context_components.get("memory_match", 0.0)
+            ),
         }
-        confidence_total = sum(confidence_components.values())
+        confidence_total = context_score * 3.0
 
         confidence_required = 2.0
         pattern_required = 70.0
@@ -4212,13 +6890,16 @@ class MCPToolsRegistry:
         if not isinstance(replan_reasons, list):
             replan_reasons = []
 
-        return {
+        readiness = {
             "confidence_gate": {
                 "score": round(confidence_total, 3),
                 "required": confidence_required,
                 "components": confidence_components,
+                "model": "context_confidence_v1",
+                "context_confidence_score": round(context_score, 3),
                 "pass": confidence_total >= confidence_required,
             },
+            "context_confidence_gate": context_confidence,
             "pattern_reuse_gate": {
                 "score": round(pattern_reuse_score, 3),
                 "required": pattern_required,
@@ -4267,6 +6948,7 @@ class MCPToolsRegistry:
                 "manual_memory_add_count": manual_memory_add_count,
                 "semantic_similarity_mean": round(semantic_similarity_mean, 3),
                 "pattern_reuse_score": round(pattern_reuse_score, 3),
+                "context_confidence_score": round(context_score, 3),
                 "execution_feedback_count": self._coerce_int(
                     self._session_state.get("execution_feedback_count", 0)
                 ),
@@ -4285,16 +6967,25 @@ class MCPToolsRegistry:
                 "policy_deny_count": self._coerce_int(
                     self._session_state.get("policy_deny_count", 0)
                 ),
+                "fallback_exploration": self._build_exploration_summary(),
             },
         }
+        readiness["guard_partition"] = self._build_guard_partition(readiness)
+        return readiness
 
     async def get_execution_readiness(self) -> dict[str, object]:
-        return self._compute_execution_readiness()
+        readiness = self._compute_execution_readiness()
+        readiness["execution_state"] = self._build_execution_state_contract()
+        return readiness
 
     @staticmethod
     def _done_protocol_checks(readiness: dict[str, object]) -> list[dict[str, object]]:
         check_specs = [
             ("confidence_gate", "confidence gate is below required threshold"),
+            (
+                "context_confidence_gate",
+                "context confidence model score is below required threshold",
+            ),
             ("pattern_reuse_gate", "pattern reuse score is below required threshold"),
             ("completion_gate", "required completion evidence is missing"),
             ("test_quality_gate", "test quality gate did not pass"),
@@ -4474,6 +7165,7 @@ class MCPToolsRegistry:
         goal: str | None = None,
         context: str | None = None,
     ) -> dict[str, object]:
+        self._set_execution_phase("validation", "validate_done_decision_start")
         readiness = self._compute_execution_readiness()
         checks = self._done_protocol_checks(readiness)
         blockers = [
@@ -4541,7 +7233,7 @@ class MCPToolsRegistry:
             f"Blockers: {len(blockers)}\n"
             f"Next Best Action: {next_best_action.get('action', '')}"
         )
-        return {
+        response = {
             "status": "ok",
             "decision": final_decision,
             "protocol": {
@@ -4549,6 +7241,7 @@ class MCPToolsRegistry:
                 "pass": len(blockers) == 0,
             },
             "blockers": blockers,
+            "guard_partition": readiness.get("guard_partition", {}),
             "confidence_summary": confidence_summary,
             "next_best_action": next_best_action,
             "ui_summary": ui_summary,
@@ -4559,7 +7252,14 @@ class MCPToolsRegistry:
             },
             "deterministic_decision": decision,
             "readiness": readiness,
+            "execution_state": self._build_execution_state_contract(),
         }
+        if final_decision == "done":
+            self._set_execution_phase("execution", "validate_done_decision_done")
+        else:
+            self._set_execution_phase("retrieval", "validate_done_decision_not_done")
+        response["execution_state"] = self._build_execution_state_contract()
+        return response
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:
         return [

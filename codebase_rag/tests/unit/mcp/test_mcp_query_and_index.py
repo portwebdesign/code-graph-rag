@@ -131,6 +131,29 @@ class TestQueryCodeGraph:
         assert result["results"] == []
         assert "Returned 0 rows" in result["summary"]
 
+    async def test_query_uses_deterministic_second_pass_on_zero_rows(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+            mcp_registry
+        )  # type: ignore[attr-defined]
+
+        def fetch_all_side_effect(
+            cypher: str, params: dict | None = None
+        ) -> list[dict]:
+            _ = params
+            if "-[:CALLS]->" in cypher:
+                return [{"source": "main", "target": "add"}]
+            return []
+
+        mcp_registry.ingestor.fetch_all.side_effect = fetch_all_side_effect  # type: ignore[attr-defined]
+
+        result = await mcp_registry.query_code_graph("What functions does main call?")
+
+        assert len(result["results"]) == 1
+        assert result["results"][0]["source"] == "main"
+        assert "-[:CALLS]->" in result["query_used"]
+
     async def test_query_with_complex_natural_language(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:

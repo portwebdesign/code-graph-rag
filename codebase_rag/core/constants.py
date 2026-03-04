@@ -2839,6 +2839,7 @@ class MCPParamName(StrEnum):
     CYPHER = "cypher"
     PARAMS = "params"
     WRITE = "write"
+    ADVANCED_MODE = "advanced_mode"
     REASON = "reason"
     CHUNKS = "chunks"
     GOAL = "goal"

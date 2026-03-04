@@ -33,11 +33,14 @@ def mcp_registry(temp_test_repo: Path) -> MCPToolsRegistry:
 
     mock_cypher_gen.generate = mock_generate
 
-    return MCPToolsRegistry(
+    registry = MCPToolsRegistry(
         project_root=str(temp_test_repo),
         ingestor=mock_ingestor,
         cypher_gen=mock_cypher_gen,
     )
+    registry._session_state["last_graph_query_digest_id"] = "qd_fixture"
+    registry._session_state["graph_evidence_count"] = 1
+    return registry
 
 
 class TestMCPStatsAndMermaidTools:
@@ -81,6 +84,145 @@ class TestMCPStatsAndMermaidTools:
 
         assert "error" in result
         assert result.get("results") == []
+        exact_next_call = cast(dict[str, object], result.get("exact_next_call", {}))
+        assert exact_next_call.get("tool") == "run_cypher"
+        assert "copy_paste" in exact_next_call
+        exact_next_calls = cast(
+            list[dict[str, object]], result.get("exact_next_calls", [])
+        )
+        assert len(exact_next_calls) >= 2
+        assert exact_next_calls[0].get("tool") == "run_cypher"
+        assert exact_next_calls[0].get("priority") == 1
+        assert isinstance(exact_next_calls[0].get("when"), str)
+        next_best_action = cast(dict[str, object], result.get("next_best_action", {}))
+        assert next_best_action.get("action") == "execute_exact_next_call"
+        assert next_best_action.get("tool") == exact_next_calls[0].get("tool")
+        assert next_best_action.get("priority") == exact_next_calls[0].get("priority")
+
+    async def test_run_cypher_requires_query_graph_first_by_default(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_read = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "RETURN m.name AS name LIMIT 10"
+        )
+        mcp_registry._session_state["last_graph_query_digest_id"] = ""
+        mcp_registry._session_state["graph_evidence_count"] = 0
+
+        result = await mcp_registry.run_cypher(scoped_read, None, False)
+
+        assert "error" in result
+        assert "run_cypher_advanced_mode_required" in str(result.get("error", ""))
+        exact_next_call = cast(dict[str, object], result.get("exact_next_call", {}))
+        assert exact_next_call.get("tool") == "query_code_graph"
+        assert "copy_paste" in exact_next_call
+        exact_next_calls = cast(
+            list[dict[str, object]], result.get("exact_next_calls", [])
+        )
+        assert len(exact_next_calls) >= 2
+        assert exact_next_calls[0].get("tool") == "query_code_graph"
+        assert exact_next_calls[0].get("priority") == 1
+        assert isinstance(exact_next_calls[0].get("when"), str)
+        next_best_action = cast(dict[str, object], result.get("next_best_action", {}))
+        assert next_best_action.get("action") == "execute_exact_next_call"
+        assert next_best_action.get("tool") == exact_next_calls[0].get("tool")
+        assert next_best_action.get("priority") == exact_next_calls[0].get("priority")
+
+    async def test_run_cypher_allows_advanced_mode_without_prior_digest(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"name": "n1"}]
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_read = (
+            f"MATCH (m:Module {{project_name: '{project_name}'}}) "
+            "RETURN m.name AS name LIMIT 10"
+        )
+        mcp_registry._session_state["last_graph_query_digest_id"] = ""
+
+        result = await mcp_registry.run_cypher(
+            scoped_read,
+            None,
+            False,
+            advanced_mode=True,
+        )
+
+        assert result.get("status") == "ok"
+        assert result.get("results") == [{"name": "n1"}]
+
+    async def test_run_cypher_injects_project_param_when_missing(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"name": "mod"}]
+
+        scoped_param_query = (
+            "MATCH (m:Module {project_name: $project_name}) "
+            "RETURN m.name AS name LIMIT 5"
+        )
+
+        result = await mcp_registry.run_cypher(
+            scoped_param_query,
+            None,
+            False,
+            advanced_mode=True,
+        )
+
+        assert result.get("status") == "ok"
+        assert result.get("results") == [{"name": "mod"}]
+        assert "scope_normalization" in result
+        scope_info = cast(dict[str, object], result.get("scope_normalization", {}))
+        applied = cast(list[str], scope_info.get("applied", []))
+        assert "injected_project_name_param" in applied
+
+    async def test_run_cypher_normalizes_project_scope_literal(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"name": "mod"}]
+        active_project = Path(mcp_registry.project_root).resolve().name
+
+        wrong_literal_query = (
+            "MATCH (m:Module { project_name : 'wrong-project' }) "
+            "RETURN m.name AS name LIMIT 5"
+        )
+
+        result = await mcp_registry.run_cypher(
+            wrong_literal_query,
+            None,
+            False,
+            advanced_mode=True,
+        )
+
+        assert result.get("status") == "ok"
+        assert result.get("results") == [{"name": "mod"}]
+        assert "scope_normalization" in result
+        scope_info = cast(dict[str, object], result.get("scope_normalization", {}))
+        query_used = str(scope_info.get("query_used", ""))
+        assert active_project in query_used
+
+    async def test_run_cypher_scope_variants_are_accepted_in_advanced_mode(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"name": "mod"}]
+        active_project = Path(mcp_registry.project_root).resolve().name
+
+        variants = [
+            f"MATCH (m:Module {{project_name:'{active_project}'}}) RETURN m.name AS name LIMIT 1",
+            f"MATCH (m:Module {{ project_name : '{active_project}' }}) RETURN m.name AS name LIMIT 1",
+            f"MATCH (p:Project {{name: '{active_project}'}}) RETURN p.name AS name LIMIT 1",
+        ]
+
+        for query in variants:
+            result = await mcp_registry.run_cypher(
+                query,
+                None,
+                False,
+                advanced_mode=True,
+            )
+            assert result.get("status") == "ok"
 
     async def test_run_cypher_write_requires_user_request(
         self, mcp_registry: MCPToolsRegistry
@@ -121,6 +263,20 @@ class TestMCPStatsAndMermaidTools:
 
         assert "error" in result
         assert result.get("results") == []
+        exact_next_call = cast(dict[str, object], result.get("exact_next_call", {}))
+        assert exact_next_call.get("tool") == "plan_task"
+        assert "copy_paste" in exact_next_call
+        exact_next_calls = cast(
+            list[dict[str, object]], result.get("exact_next_calls", [])
+        )
+        assert len(exact_next_calls) >= 2
+        assert exact_next_calls[0].get("tool") == "plan_task"
+        assert exact_next_calls[0].get("priority") == 1
+        assert isinstance(exact_next_calls[0].get("when"), str)
+        next_best_action = cast(dict[str, object], result.get("next_best_action", {}))
+        assert next_best_action.get("action") == "execute_exact_next_call"
+        assert next_best_action.get("tool") == exact_next_calls[0].get("tool")
+        assert next_best_action.get("priority") == exact_next_calls[0].get("priority")
 
     async def test_run_cypher_write_rejects_unknown_label(
         self, mcp_registry: MCPToolsRegistry

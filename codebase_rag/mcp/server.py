@@ -118,6 +118,11 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             logger.warning(preflight_error)
             return _create_error_content(preflight_error)
 
+        phase_error = tools.get_phase_gate_error(name)
+        if phase_error is not None:
+            logger.warning(phase_error)
+            return _create_error_content(phase_error)
+
         try:
             handler_info = tools.get_tool_handler(name)
             if not handler_info:

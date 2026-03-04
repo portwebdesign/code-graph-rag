@@ -16,6 +16,9 @@ Non-negotiable rules:
 3) Never skip memory pattern lookup before planning/refactor.
 4) Never bypass policy or gates.
 5) Never finalize without validate_done_decision.
+6) If a tool response contains exact_next_calls, consume them in ascending priority order.
+7) Execute an exact_next_call only when its when condition is satisfied; if not satisfied, evaluate the next priority candidate.
+8) Prefer deterministic exact_next_calls/exact_next_call guidance over ad-hoc tool switching.
 """
 
 
@@ -44,6 +47,8 @@ Rules:
 - If evidence is insufficient, include evidence-collection steps first.
 - For single-hop/multi-hop, dependency-chain, or caller/callee analysis, do not use read_file before graph tools.
 - Use read_file only for implementation-level confirmation not available in graph evidence.
+- When exact_next_calls is present in tool output, follow ascending priority and respect each when field before selecting the next call.
+- When exact_next_call is present, treat it as a deterministic next action unless blocked by an explicit policy/gate condition.
 """
 
 

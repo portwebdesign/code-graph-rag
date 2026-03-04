@@ -32,6 +32,22 @@ class MCPPolicyEngine:
         r"\b(SET|CREATE|MERGE|DELETE|DETACH\s+DELETE|REMOVE)\b",
         re.IGNORECASE,
     )
+    _PROJECT_NAME_LITERAL_PATTERN = re.compile(
+        r"`?project_name`?\s*(?::|=)\s*['\"](?P<project_name>[A-Za-z0-9._\-/]+)['\"]",
+        re.IGNORECASE,
+    )
+    _PROJECT_NAME_PARAM_PATTERN = re.compile(
+        r"`?project_name`?\s*(?::|=)\s*\$project_name\b",
+        re.IGNORECASE,
+    )
+    _PROJECT_NODE_NAME_LITERAL_PATTERN = re.compile(
+        r":\s*Project\s*\{[^{}]*`?name`?\s*:\s*['\"](?P<project_name>[A-Za-z0-9._\-/]+)['\"][^{}]*\}",
+        re.IGNORECASE | re.DOTALL,
+    )
+    _PROJECT_NODE_NAME_PARAM_PATTERN = re.compile(
+        r":\s*Project\s*\{[^{}]*`?name`?\s*:\s*\$project_name\b[^{}]*\}",
+        re.IGNORECASE | re.DOTALL,
+    )
     _GENERIC_REASONS = {
         "fix",
         "change",
@@ -300,9 +316,14 @@ class MCPPolicyEngine:
         self, cypher_query: str, parsed_params: dict[str, object] | None = None
     ) -> str | None:
         project_name = self._active_project_name_getter()
+        normalized_project = project_name.strip().lower()
         is_scoped = self.is_project_scoped_cypher(cypher_query, project_name)
         params = parsed_params or {}
-        uses_project_param = "$project_name" in cypher_query.lower()
+        uses_project_param = bool(
+            self._PROJECT_NAME_PARAM_PATTERN.search(cypher_query)
+            or self._PROJECT_NODE_NAME_PARAM_PATTERN.search(cypher_query)
+            or "$project_name" in cypher_query.lower()
+        )
 
         if uses_project_param:
             project_param = params.get(cs.KEY_PROJECT_NAME)
@@ -315,9 +336,26 @@ class MCPPolicyEngine:
                 )
             is_scoped = True
 
+        literal_scopes = self._extract_project_scope_literals(cypher_query)
+        if normalized_project in literal_scopes:
+            is_scoped = True
+
         if not is_scoped:
             return cs.MCP_RUN_CYPHER_SCOPE_ERROR.format(project_name=project_name)
         return None
+
+    @classmethod
+    def _extract_project_scope_literals(cls, cypher_query: str) -> set[str]:
+        values: set[str] = set()
+        for match in cls._PROJECT_NAME_LITERAL_PATTERN.finditer(cypher_query):
+            candidate = str(match.group("project_name") or "").strip().lower()
+            if candidate:
+                values.add(candidate)
+        for match in cls._PROJECT_NODE_NAME_LITERAL_PATTERN.finditer(cypher_query):
+            candidate = str(match.group("project_name") or "").strip().lower()
+            if candidate:
+                values.add(candidate)
+        return values
 
     def validate_write_allowlist_policy(self, cypher_query: str) -> str | None:
         normalized = f" {re.sub(r'\\s+', ' ', cypher_query.lower())} "
@@ -416,20 +454,15 @@ class MCPPolicyEngine:
 
     @staticmethod
     def is_project_scoped_cypher(cypher_query: str, project_name: str) -> bool:
-        normalized_query = cypher_query.lower()
-        normalized_project = project_name.lower()
-        scoped_patterns = (
-            f"project {{name: '{normalized_project}'}}",
-            f'project {{name: "{normalized_project}"}}',
-            f"project_name: '{normalized_project}'",
-            f'project_name: "{normalized_project}"',
-            f"project_name='{normalized_project}'",
-            f'project_name="{normalized_project}"',
-            f"project_name = '{normalized_project}'",
-            f'project_name = "{normalized_project}"',
-        )
-        if any(pattern in normalized_query for pattern in scoped_patterns):
+        normalized_project = project_name.strip().lower()
+        literal_values = MCPPolicyEngine._extract_project_scope_literals(cypher_query)
+        if normalized_project in literal_values:
             return True
+        if MCPPolicyEngine._PROJECT_NAME_PARAM_PATTERN.search(
+            cypher_query
+        ) or MCPPolicyEngine._PROJECT_NODE_NAME_PARAM_PATTERN.search(cypher_query):
+            return True
+        normalized_query = cypher_query.lower()
         return (
             "project_name" in normalized_query and "$project_name" in normalized_query
         )
