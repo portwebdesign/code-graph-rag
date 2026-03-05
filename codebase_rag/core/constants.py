@@ -2887,6 +2887,7 @@ MCP_SYNC_GRAPH_REASON_REQUIRED = (
 )
 MCP_QUERY_SCOPE_ERROR = "Generated Cypher is not explicitly scoped to active project '{project_name}'. Query cancelled to prevent cross-project access."
 MCP_RUN_CYPHER_SCOPE_ERROR = "run_cypher rejected. Query must be explicitly scoped to active project '{project_name}'."
+MCP_RUN_CYPHER_PROJECT_PARAM_REQUIRED = "run_cypher rejected. Query must use parameterized project scope with $project_name for active project '{project_name}'."
 MCP_RUN_CYPHER_WRITE_REQUIRES_USER_REQUEST = "run_cypher write rejected. Set user_requested=true only when user explicitly requested write operation."
 MCP_RUN_CYPHER_REASON_REQUIRED = "run_cypher write rejected. Provide a non-empty reason describing why write is necessary."
 MCP_RUN_CYPHER_PROJECT_PARAM_MISMATCH = "run_cypher rejected. Provided $project_name parameter does not match active project '{project_name}'."
@@ -2918,6 +2919,13 @@ MCP_IMPACT_GATE_BLOCKED = (
 )
 MCP_TEST_QUALITY_GATE_BLOCKED = "Change blocked by test quality gate. score={score} is below required threshold {required}."
 MCP_REPLAN_REQUIRED = "Replan required due to execution feedback: {reasons}."
+MCP_MEMORY_PRIMING_REQUIRED = (
+    "workflow_gate_blocked: memory_query_patterns must run before '{tool_name}'."
+)
+MCP_PLAN_TASK_REQUIRED_FOR_COMPLEX_QUERY = "workflow_gate_blocked: complex task detected for '{tool_name}'. Run plan_task first."
+MCP_READ_FILE_QUERY_GRAPH_REQUIRED = (
+    "workflow_gate_blocked: read_file requires query_code_graph evidence first."
+)
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"

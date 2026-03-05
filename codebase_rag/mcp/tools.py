@@ -1431,17 +1431,46 @@ class MCPToolsRegistry:
             cs.MCPToolName.MEMORY_QUERY_PATTERNS,
             cs.MCPToolName.MEMORY_LIST,
             cs.MCPToolName.IMPACT_GRAPH,
+            cs.MCPToolName.GET_GRAPH_STATS,
+            cs.MCPToolName.GET_DEPENDENCY_STATS,
+            cs.MCPToolName.GET_ANALYSIS_REPORT,
+            cs.MCPToolName.GET_ANALYSIS_METRIC,
+            cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
+            cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+            cs.MCPToolName.RUN_ANALYSIS,
+            cs.MCPToolName.RUN_ANALYSIS_SUBSET,
+            cs.MCPToolName.SECURITY_SCAN,
+            cs.MCPToolName.PERFORMANCE_HOTSPOTS,
+            cs.MCPToolName.EXPORT_MERMAID,
             cs.MCPToolName.VALIDATE_DONE_DECISION,
             cs.MCPToolName.GET_EXECUTION_READINESS,
             cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
         },
         "validation": {
+            cs.MCPToolName.QUERY_CODE_GRAPH,
+            cs.MCPToolName.SEMANTIC_SEARCH,
+            cs.MCPToolName.GET_FUNCTION_SOURCE,
+            cs.MCPToolName.GET_CODE_SNIPPET,
+            cs.MCPToolName.READ_FILE,
+            cs.MCPToolName.RUN_CYPHER,
+            cs.MCPToolName.LIST_DIRECTORY,
             cs.MCPToolName.VALIDATE_DONE_DECISION,
             cs.MCPToolName.TEST_QUALITY_GATE,
             cs.MCPToolName.TEST_GENERATE,
             cs.MCPToolName.PLAN_TASK,
             cs.MCPToolName.MEMORY_QUERY_PATTERNS,
             cs.MCPToolName.IMPACT_GRAPH,
+            cs.MCPToolName.GET_GRAPH_STATS,
+            cs.MCPToolName.GET_DEPENDENCY_STATS,
+            cs.MCPToolName.GET_ANALYSIS_REPORT,
+            cs.MCPToolName.GET_ANALYSIS_METRIC,
+            cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
+            cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+            cs.MCPToolName.RUN_ANALYSIS,
+            cs.MCPToolName.RUN_ANALYSIS_SUBSET,
+            cs.MCPToolName.SECURITY_SCAN,
+            cs.MCPToolName.PERFORMANCE_HOTSPOTS,
+            cs.MCPToolName.EXPORT_MERMAID,
             cs.MCPToolName.GET_EXECUTION_READINESS,
             cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
         },
@@ -1542,6 +1571,216 @@ class MCPToolsRegistry:
             f"Allowed tools: {allowed_text}."
         )
 
+    _WORKFLOW_GATE_EXEMPT_TOOLS: set[str] = {
+        cs.MCPToolName.LIST_PROJECTS,
+        cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+        cs.MCPToolName.GET_EXECUTION_READINESS,
+        cs.MCPToolName.MEMORY_QUERY_PATTERNS,
+        cs.MCPToolName.MEMORY_LIST,
+        cs.MCPToolName.PLAN_TASK,
+    }
+    _PLAN_GATE_TOOLS: set[str] = {
+        cs.MCPToolName.QUERY_CODE_GRAPH,
+        cs.MCPToolName.RUN_CYPHER,
+        cs.MCPToolName.SEMANTIC_SEARCH,
+        cs.MCPToolName.READ_FILE,
+        cs.MCPToolName.IMPACT_GRAPH,
+        cs.MCPToolName.REFACTOR_BATCH,
+        cs.MCPToolName.APPLY_DIFF_SAFE,
+    }
+    _COMPLEX_TASK_KEYWORDS: tuple[str, ...] = (
+        "refactor",
+        "multi",
+        "dependency",
+        "architecture",
+        "impact",
+        "change",
+        "modify",
+        "migration",
+        "caller",
+        "callee",
+        "hop",
+        "chain",
+    )
+
+    @staticmethod
+    def _extract_gate_query_text(
+        tool_name: str,
+        arguments: dict[str, object],
+    ) -> str:
+        if tool_name == cs.MCPToolName.QUERY_CODE_GRAPH:
+            return str(arguments.get("natural_language_query", "")).strip()
+        if tool_name == cs.MCPToolName.SEMANTIC_SEARCH:
+            return str(arguments.get("query", "")).strip()
+        if tool_name == cs.MCPToolName.RUN_CYPHER:
+            return str(arguments.get("cypher", "")).strip()
+        if tool_name == cs.MCPToolName.READ_FILE:
+            return str(arguments.get("file_path", "")).strip()
+        return ""
+
+    @classmethod
+    def _is_complex_task(cls, query_text: str) -> bool:
+        normalized = query_text.strip().lower()
+        if len(normalized) >= 140:
+            return True
+        return any(keyword in normalized for keyword in cls._COMPLEX_TASK_KEYWORDS)
+
+    def get_workflow_gate_payload(
+        self,
+        tool_name: str,
+        arguments: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        if tool_name in self._WORKFLOW_GATE_EXEMPT_TOOLS:
+            return None
+        args = arguments if isinstance(arguments, dict) else {}
+        query_text = self._extract_gate_query_text(tool_name, args)
+        escaped_query = query_text.replace("\\", "\\\\").replace('"', '\\"')
+
+        if bool(settings.MCP_READ_FILE_REQUIRES_QUERY_GRAPH) and (
+            tool_name == cs.MCPToolName.READ_FILE
+            and self._coerce_int(
+                self._session_state.get("query_code_graph_success_count", 0)
+            )
+            <= 0
+        ):
+            exact_next_calls: list[dict[str, object]] = [
+                {
+                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                    "args": {
+                        "natural_language_query": (
+                            f"Locate implementation context for file: {args.get('file_path', '')}"
+                        ),
+                        "output_format": "json",
+                    },
+                    "priority": 1,
+                    "when": "read_file requested without query_code_graph evidence",
+                    "copy_paste": (
+                        "query_code_graph("
+                        f'natural_language_query="Locate implementation context for file: {str(args.get("file_path", "")).replace("\\", "\\\\").replace('"', '\\"')}", '
+                        'output_format="json")'
+                    ),
+                    "why": "graph_first_for_read_file",
+                },
+                {
+                    "tool": cs.MCPToolName.READ_FILE,
+                    "args": dict(args),
+                    "priority": 2,
+                    "when": "after query_code_graph returns evidence",
+                    "copy_paste": "read_file(...)",
+                    "why": "implementation_verification_after_graph_evidence",
+                },
+            ]
+            return {
+                "status": "blocked",
+                "gate": "workflow",
+                "error": cs.MCP_READ_FILE_QUERY_GRAPH_REQUIRED,
+                "blocked_tool": tool_name,
+                "active_project": self._active_project_name(),
+                "exact_next_calls": exact_next_calls,
+                "next_best_action": self._project_next_best_action_from_exact_calls(
+                    exact_next_calls
+                ),
+                "session_contract": self._session_state.get("session_contract", {}),
+                "ui_summary": "workflow_gate_blocked: run query_code_graph before read_file.",
+            }
+
+        if bool(settings.MCP_ENFORCE_MEMORY_PRIMING_GATE) and not bool(
+            self._session_state.get("memory_primed", False)
+        ):
+            memory_query = query_text or "session bootstrap patterns"
+            exact_next_calls = [
+                {
+                    "tool": cs.MCPToolName.MEMORY_QUERY_PATTERNS,
+                    "args": {
+                        "query": memory_query,
+                        "success_only": True,
+                        "limit": 8,
+                    },
+                    "priority": 1,
+                    "when": "memory priming required before non-exempt tools",
+                    "copy_paste": (
+                        "memory_query_patterns("
+                        f'query="{memory_query.replace("\\", "\\\\").replace('"', '\\"')}", '
+                        "success_only=true, limit=8)"
+                    ),
+                    "why": "memory_first_policy",
+                },
+                {
+                    "tool": tool_name,
+                    "args": dict(args),
+                    "priority": 2,
+                    "when": "after memory_query_patterns succeeds",
+                    "copy_paste": f"{tool_name}(...)",
+                    "why": "resume_original_intent",
+                },
+            ]
+            return {
+                "status": "blocked",
+                "gate": "workflow",
+                "error": cs.MCP_MEMORY_PRIMING_REQUIRED.format(tool_name=tool_name),
+                "blocked_tool": tool_name,
+                "active_project": self._active_project_name(),
+                "exact_next_calls": exact_next_calls,
+                "next_best_action": self._project_next_best_action_from_exact_calls(
+                    exact_next_calls
+                ),
+                "session_contract": self._session_state.get("session_contract", {}),
+                "ui_summary": "workflow_gate_blocked: run memory_query_patterns first.",
+            }
+
+        if (
+            bool(settings.MCP_ENFORCE_COMPLEX_PLAN_GATE)
+            and tool_name in self._PLAN_GATE_TOOLS
+            and not bool(self._session_state.get("plan_task_completed", False))
+            and self._is_complex_task(query_text)
+        ):
+            goal_text = query_text or f"Create plan for tool {tool_name}"
+            exact_next_calls = [
+                {
+                    "tool": cs.MCPToolName.PLAN_TASK,
+                    "args": {
+                        "goal": goal_text,
+                        "context": (
+                            "Mandatory complex-task plan gate. "
+                            "Prepare graph-first deterministic sequence before execution."
+                        ),
+                    },
+                    "priority": 1,
+                    "when": "complex task detected before execution",
+                    "copy_paste": (
+                        "plan_task("
+                        f'goal="{escaped_query}", '
+                        'context="Mandatory complex-task plan gate. Prepare graph-first deterministic sequence before execution.")'
+                    ),
+                    "why": "complex_task_plan_gate",
+                },
+                {
+                    "tool": tool_name,
+                    "args": dict(args),
+                    "priority": 2,
+                    "when": "after plan_task returns deterministic steps",
+                    "copy_paste": f"{tool_name}(...)",
+                    "why": "resume_original_intent",
+                },
+            ]
+            return {
+                "status": "blocked",
+                "gate": "workflow",
+                "error": cs.MCP_PLAN_TASK_REQUIRED_FOR_COMPLEX_QUERY.format(
+                    tool_name=tool_name
+                ),
+                "blocked_tool": tool_name,
+                "active_project": self._active_project_name(),
+                "exact_next_calls": exact_next_calls,
+                "next_best_action": self._project_next_best_action_from_exact_calls(
+                    exact_next_calls
+                ),
+                "session_contract": self._session_state.get("session_contract", {}),
+                "ui_summary": "workflow_gate_blocked: run plan_task for complex intent.",
+            }
+
+        return None
+
     def __init__(
         self,
         project_root: str,
@@ -1609,6 +1848,7 @@ class MCPToolsRegistry:
         self._policy_engine = MCPPolicyEngine(
             active_project_name_getter=self._active_project_name,
             max_write_impact=50,
+            require_project_name_param=bool(settings.MCP_REQUIRE_PROJECT_NAME_PARAM),
         )
         self._session_state: dict[str, object] = {
             "orchestrator_prompt": self._orchestrator_prompt,
@@ -1634,6 +1874,8 @@ class MCPToolsRegistry:
             "fallback_exploration": self._default_fallback_exploration_state(),
             "last_graph_result_digest": "",
             "last_graph_query_digest_id": "",
+            "query_code_graph_success_count": 0,
+            "memory_primed": False,
             "plan_task_count": 0,
             "graph_query_attempt_count": 0,
             "session_contract": {},
@@ -1826,10 +2068,10 @@ class MCPToolsRegistry:
 
     @staticmethod
     def _project_scoped_schema_summary_query(project_name: str, limit: int) -> str:
-        safe_project_name = project_name.replace("'", "\\'")
+        _ = project_name
         bounded_limit = max(20, min(int(limit), 2000))
         return (
-            "MATCH (m:Module {project_name: '" + safe_project_name + "'}) "
+            "MATCH (m:Module {project_name: $project_name}) "
             "WITH collect(DISTINCT m) AS modules "
             "UNWIND modules AS module "
             "OPTIONAL MATCH (module)-[:DEFINES]->(def) "
@@ -1930,6 +2172,8 @@ class MCPToolsRegistry:
 
     async def _auto_plan_if_needed(self, user_query: str) -> None:
         if not bool(settings.MCP_AUTO_PLAN_ON_FIRST_QUERY):
+            return
+        if not self._is_complex_task(user_query):
             return
         if bool(self._session_state.get("plan_task_completed", False)):
             return
@@ -2257,6 +2501,8 @@ class MCPToolsRegistry:
         )
         self._session_state["last_graph_result_digest"] = ""
         self._session_state["last_graph_query_digest_id"] = ""
+        self._session_state["query_code_graph_success_count"] = 0
+        self._session_state["memory_primed"] = False
         self._session_state["session_contract"] = {}
         self._session_state["execution_phase"] = "preflight"
         self._session_state["execution_phase_history"] = [
@@ -2448,6 +2694,8 @@ class MCPToolsRegistry:
 
         if (
             "run_cypher rejected. Query must be explicitly scoped" in error_text
+            or "run_cypher rejected. Query must use parameterized project scope"
+            in error_text
             or "run_cypher rejected. Provided $project_name parameter" in error_text
         ):
             normalized_query, normalized_params, _ = self._normalize_run_cypher_scope(
@@ -3944,7 +4192,28 @@ class MCPToolsRegistry:
         return updated
 
     @staticmethod
-    def _append_scope_fix_hint(project_name: str) -> str:
+    def _parameterize_project_scope_literals(cypher_query: str) -> str:
+        updated = cypher_query
+        updated = re.sub(
+            r"(`?project_name`?\s*(?::|=)\s*)['\"][^'\"]+['\"]",
+            r"\1$project_name",
+            updated,
+            flags=re.IGNORECASE,
+        )
+        updated = re.sub(
+            r"(:\s*Project\s*\{[^{}]*`?name`?\s*:\s*)['\"][^'\"]+['\"]",
+            r"\1$project_name",
+            updated,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return updated
+
+    def _append_scope_fix_hint(self, project_name: str) -> str:
+        if bool(settings.MCP_REQUIRE_PROJECT_NAME_PARAM):
+            return (
+                "Scope fix hint: use explicit active-project scope with $project_name -> "
+                f'MATCH (m:Module {{project_name: $project_name}}) ... params={{"project_name":"{project_name}"}}'
+            )
         return (
             "Scope fix hint: use explicit active-project scope with one of these forms -> "
             f'MATCH (m:Module {{project_name: $project_name}}) ... params={{"project_name":"{project_name}"}} '
@@ -3967,6 +4236,14 @@ class MCPToolsRegistry:
         if replaced_query != normalized_query:
             normalized_query = replaced_query
             notes.append("normalized_project_scope_literal")
+
+        if bool(settings.MCP_REQUIRE_PROJECT_NAME_PARAM):
+            parameterized_query = self._parameterize_project_scope_literals(
+                normalized_query
+            )
+            if parameterized_query != normalized_query:
+                normalized_query = parameterized_query
+                notes.append("parameterized_project_scope_literal")
 
         if "$project_name" in normalized_query.lower() and (
             not isinstance(normalized_params.get(cs.KEY_PROJECT_NAME), str)
@@ -3993,10 +4270,10 @@ class MCPToolsRegistry:
             f"{natural_language_query}\n\n"
             "STRICT PROJECT SCOPE REQUIREMENT:\n"
             f"- Active project: '{project_name}'.\n"
-            "- Generated Cypher MUST explicitly include project scoping.\n"
-            "- Use one of these forms:\n"
-            f"  1) MATCH (p:Project {{name: '{project_name}'}}) ...\n"
-            f"  2) MATCH (m:Module {{project_name: '{project_name}'}}) ...\n"
+            "- Generated Cypher MUST explicitly include parameterized project scoping with $project_name.\n"
+            "- Required form examples:\n"
+            "  1) MATCH (p:Project {name: $project_name}) ...\n"
+            "  2) MATCH (m:Module {project_name: $project_name}) ...\n"
             "- Never generate a cross-project query.\n"
             "- Generate a SINGLE read-only query block with one final RETURN clause.\n"
             "- Never place MATCH/OPTIONAL MATCH after RETURN.\n"
@@ -4037,8 +4314,15 @@ class MCPToolsRegistry:
                 schema_context=schema_context if schema_context else None,
             )
             generated_query = await self.cypher_gen.generate(scoped_prompt)
+            generated_query, _, _ = self._normalize_run_cypher_scope(
+                generated_query,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
             last_query = generated_query
-            scope_error = self._validate_project_scope_policy(generated_query, {})
+            scope_error = self._validate_project_scope_policy(
+                generated_query,
+                {cs.KEY_PROJECT_NAME: project_name},
+            )
             if scope_error is None:
                 return generated_query
         raise ValueError(cs.MCP_QUERY_SCOPE_ERROR.format(project_name=project_name))
@@ -4061,7 +4345,14 @@ class MCPToolsRegistry:
             schema_context=schema_context if schema_context else None,
         )
         generated_query = await self.cypher_gen.generate(scoped_prompt)
-        scope_error = self._validate_project_scope_policy(generated_query, {})
+        generated_query, _, _ = self._normalize_run_cypher_scope(
+            generated_query,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
+        scope_error = self._validate_project_scope_policy(
+            generated_query,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
         if scope_error is not None:
             raise ValueError(cs.MCP_QUERY_SCOPE_ERROR.format(project_name=project_name))
         return generated_query
@@ -4080,9 +4371,9 @@ class MCPToolsRegistry:
 
     @staticmethod
     def _build_parser_scope_fallback_query(project_name: str) -> str:
-        safe_project_name = project_name.replace("'", "\\'")
+        _ = project_name
         return (
-            "MATCH (m:Module {project_name: '" + safe_project_name + "'}) "
+            "MATCH (m:Module {project_name: $project_name}) "
             "WHERE replace(coalesce(m.path, ''), '\\\\', '/') CONTAINS '/codebase_rag/parsers' "
             "OPTIONAL MATCH (m)-[:DEFINES]->(d) "
             "OPTIONAL MATCH (d)-[:DEFINES_METHOD]->(meth) "
@@ -4981,10 +5272,15 @@ class MCPToolsRegistry:
                 natural_language_query=natural_language_query,
                 project_name=project_name,
             )
+            query_params: dict[str, Any] = {cs.KEY_PROJECT_NAME: project_name}
 
             async def _read_once() -> list[dict[str, Any]]:
                 return await asyncio.wait_for(
-                    asyncio.to_thread(self.ingestor.fetch_all, cypher_query),
+                    asyncio.to_thread(
+                        self.ingestor.fetch_all,
+                        cypher_query,
+                        query_params,
+                    ),
                     timeout=60.0,
                 )
 
@@ -5024,7 +5320,8 @@ class MCPToolsRegistry:
                     for template_query in template_queries:
                         try:
                             template_scope_error = self._validate_project_scope_policy(
-                                template_query, {}
+                                template_query,
+                                {cs.KEY_PROJECT_NAME: project_name},
                             )
                             if template_scope_error is not None:
                                 continue
@@ -5034,6 +5331,7 @@ class MCPToolsRegistry:
                                     asyncio.to_thread(
                                         self.ingestor.fetch_all,
                                         template_query,
+                                        query_params,
                                     ),
                                     timeout=60.0,
                                 )
@@ -5134,6 +5432,7 @@ class MCPToolsRegistry:
 
             self._session_bump("query_success_count")
             self._session_bump("graph_evidence_count")
+            self._session_bump("query_code_graph_success_count")
             capped_results, truncated, total_rows = self._cap_query_results(results)
             chunks = self._split_rows_into_chunks(results)
             self._session_state["query_result_chunks"] = chunks
@@ -5419,6 +5718,24 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         self._set_execution_phase("retrieval", "read_file")
         try:
+            if (
+                bool(settings.MCP_READ_FILE_REQUIRES_QUERY_GRAPH)
+                and self._coerce_int(
+                    self._session_state.get("query_code_graph_success_count", 0)
+                )
+                <= 0
+            ):
+                self._record_tool_usefulness(
+                    cs.MCPToolName.READ_FILE,
+                    success=False,
+                    usefulness_score=0.0,
+                )
+                return te.ERROR_WRAPPER.format(
+                    message=(
+                        "query_code_graph_required: call query_code_graph first and obtain graph evidence before read_file"
+                    )
+                )
+
             graph_evidence_count = self._coerce_int(
                 self._session_state.get("graph_evidence_count", 0)
             )
@@ -5819,7 +6136,7 @@ class MCPToolsRegistry:
         natural_language_query: str,
         project_name: str,
     ) -> list[str]:
-        safe_project = project_name.replace("'", "\\'")
+        _ = project_name
         lowered = natural_language_query.lower()
 
         templates: list[str] = []
@@ -5829,9 +6146,7 @@ class MCPToolsRegistry:
             for token in ("call", "caller", "callee", "hop", "chain", "dependency")
         ):
             templates.append(
-                "MATCH (m:Module {project_name: '"
-                + safe_project
-                + "'})-[:CALLS]->(target) "
+                "MATCH (m:Module {project_name: $project_name})-[:CALLS]->(target) "
                 "RETURN m.name AS source, m.path AS source_path, "
                 "target.name AS target, target.path AS target_path "
                 "LIMIT 80"
@@ -5839,23 +6154,19 @@ class MCPToolsRegistry:
 
         if any(token in lowered for token in ("class", "method", "function")):
             templates.append(
-                "MATCH (m:Module {project_name: '"
-                + safe_project
-                + "'})-[:DEFINES]->(c:Class) "
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Class) "
                 "OPTIONAL MATCH (c)-[:DEFINES_METHOD]->(meth:Method) "
                 "RETURN m.path AS module_path, c.name AS class_name, meth.name AS method_name "
                 "LIMIT 120"
             )
             templates.append(
-                "MATCH (m:Module {project_name: '"
-                + safe_project
-                + "'})-[:DEFINES]->(f:Function) "
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(f:Function) "
                 "RETURN m.path AS module_path, f.name AS function_name, f.qualified_name AS qualified_name "
                 "LIMIT 120"
             )
 
         templates.append(
-            "MATCH (m:Module {project_name: '" + safe_project + "'}) "
+            "MATCH (m:Module {project_name: $project_name}) "
             "RETURN m.name AS name, m.path AS path, m.qualified_name AS qualified_name "
             "LIMIT 80"
         )
@@ -6378,7 +6689,7 @@ class MCPToolsRegistry:
         success_only: bool = False,
         limit: int = 20,
     ) -> dict[str, object]:
-        self._set_execution_phase("validation", "memory_query_patterns")
+        self._set_execution_phase("retrieval", "memory_query_patterns")
         tag_filters = (
             [item.strip() for item in filter_tags.split(",") if item.strip()]
             if isinstance(filter_tags, str)
@@ -6395,6 +6706,7 @@ class MCPToolsRegistry:
             query=query,
             limit=min(10, bounded_limit),
         )
+        self._session_state["memory_primed"] = True
         self._session_bump("memory_pattern_query_count")
         self._record_tool_usefulness(
             cs.MCPToolName.MEMORY_QUERY_PATTERNS,

@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import cast
 
 from loguru import logger
 from mcp.server import Server
@@ -140,6 +141,19 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
                 TextContent(
                     type=cs.MCP_CONTENT_TYPE_TEXT,
                     text=json.dumps(payload, indent=cs.MCP_JSON_INDENT),
+                )
+            ]
+
+        workflow_gate_payload = tools.get_workflow_gate_payload(
+            name,
+            cast(dict[str, object] | None, arguments),
+        )
+        if workflow_gate_payload is not None:
+            logger.warning(str(workflow_gate_payload.get("error", "workflow_gate")))
+            return [
+                TextContent(
+                    type=cs.MCP_CONTENT_TYPE_TEXT,
+                    text=json.dumps(workflow_gate_payload, indent=cs.MCP_JSON_INDENT),
                 )
             ]
 

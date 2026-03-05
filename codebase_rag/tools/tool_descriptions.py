@@ -117,9 +117,10 @@ MCP_SYNC_GRAPH_UPDATES = (
 )
 
 MCP_QUERY_CODE_GRAPH = (
-    "Query the codebase knowledge graph using natural language. "
+    "PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. "
     "Ask questions like 'What functions call UserService.create_user?' or "
     "'Show me all classes that implement the Repository interface'. "
+    "MUST be used before read_file and before default run_cypher flow. "
     "Requires preflight: run list_projects -> select_active_project first."
 )
 
@@ -145,7 +146,8 @@ MCP_SURGICAL_REPLACE_CODE = (
 
 MCP_READ_FILE = (
     "Read the contents of a file from the project. Supports pagination for large files. "
-    "Use this for implementation-level source verification, not as first step for relationship/hop analysis."
+    "Use this for implementation-level source verification, not as first step for relationship/hop analysis. "
+    "Requires prior query_code_graph evidence in strict graph-first mode."
 )
 
 MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
@@ -253,7 +255,8 @@ MCP_RUN_CYPHER = (
     "Execute a raw Cypher query against the Memgraph database. "
     "Requires preflight: run list_projects -> select_active_project first. "
     "Use this for advanced ad-hoc querying not covered by standard tools and for explicit single-hop/multi-hop traversal control. "
-    "Query MUST be scoped to active project to avoid cross-project access. "
+    "Default graph-first flow: query_code_graph first, then run_cypher. "
+    "Query MUST be scoped to active project and MUST use $project_name parameter to avoid cross-project access. "
     "Set write=True ONLY IF you intend to modify the graph (nodes/edges). "
     "For write operations, user_requested=true and a non-empty high-quality reason are required. "
     "Write operations run safe dry-run impact analysis and are blocked when impact is too high. "
@@ -274,7 +277,7 @@ MCP_REFACTOR_BATCH = (
 MCP_PLAN_TASK = (
     "Ask an agent planner to create a multi-step execution plan for a specified goal. "
     "Provide the 'goal' and optional 'context' the planner might need. "
-    "Helpful for breaking down complex refactoring or feature additions."
+    "Mandatory in strict mode for complex/multi-step intents before execution tools."
 )
 
 MCP_TEST_GENERATE = (
@@ -291,7 +294,8 @@ MCP_MEMORY_LIST = "List recently added memory entries from the persistent memory
 
 MCP_MEMORY_QUERY_PATTERNS = (
     "Query memory for similar successful patterns before planning or refactoring. "
-    "Supports free-text query, optional tag filters, and success-only filtering."
+    "Supports free-text query, optional tag filters, and success-only filtering. "
+    "Can be auto-required by workflow gate before non-exempt tools."
 )
 
 MCP_EXECUTION_FEEDBACK = (

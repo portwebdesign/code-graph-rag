@@ -74,9 +74,11 @@ class MCPPolicyEngine:
         *,
         active_project_name_getter: Callable[[], str],
         max_write_impact: int = 50,
+        require_project_name_param: bool = True,
     ) -> None:
         self._active_project_name_getter = active_project_name_getter
         self._max_write_impact = max_write_impact
+        self._require_project_name_param = bool(require_project_name_param)
 
     def validate_operation(
         self,
@@ -317,13 +319,19 @@ class MCPPolicyEngine:
     ) -> str | None:
         project_name = self._active_project_name_getter()
         normalized_project = project_name.strip().lower()
-        is_scoped = self.is_project_scoped_cypher(cypher_query, project_name)
         params = parsed_params or {}
         uses_project_param = bool(
             self._PROJECT_NAME_PARAM_PATTERN.search(cypher_query)
             or self._PROJECT_NODE_NAME_PARAM_PATTERN.search(cypher_query)
             or "$project_name" in cypher_query.lower()
         )
+
+        if self._require_project_name_param and not uses_project_param:
+            return cs.MCP_RUN_CYPHER_PROJECT_PARAM_REQUIRED.format(
+                project_name=project_name
+            )
+
+        is_scoped = self.is_project_scoped_cypher(cypher_query, project_name)
 
         if uses_project_param:
             project_param = params.get(cs.KEY_PROJECT_NAME)

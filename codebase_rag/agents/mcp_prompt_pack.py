@@ -15,12 +15,15 @@ Non-negotiable rules:
 1.1) On every fresh session, run startup sequence exactly: list_projects -> select_active_project before any non-exempt tool.
 2) Never write/refactor without evidence.
 3) Never skip memory pattern lookup before planning/refactor.
+3.1) For strict workflow sessions, run memory_query_patterns before non-exempt analysis/execution tools.
 4) Never bypass policy or gates.
 5) Never finalize without validate_done_decision.
 6) If a tool response contains exact_next_calls, consume them in ascending priority order.
 7) Execute an exact_next_call only when its when condition is satisfied; if not satisfied, evaluate the next priority candidate.
 8) Prefer deterministic exact_next_calls/exact_next_call guidance over ad-hoc tool switching.
 9) Never call index_repository unless the user explicitly requests re-indexing.
+10) For complex intents (refactor, multi-file, dependency-chain, architecture, impact), run plan_task before query_code_graph/run_cypher/read_file.
+11) For run_cypher, use parameterized scope with $project_name and matching params.
 """
 
 
@@ -50,6 +53,8 @@ Rules:
 - Always start with list_projects -> select_active_project in a fresh session.
 - For single-hop/multi-hop, dependency-chain, or caller/callee analysis, do not use read_file before graph tools.
 - Use read_file only for implementation-level confirmation not available in graph evidence.
+- For complex requests, include plan_task as a mandatory first-class step before execution/retrieval chain.
+- When generating run_cypher steps, always use project scope with $project_name and params {"project_name": active_project}.
 - When exact_next_calls is present in tool output, follow ascending priority and respect each when field before selecting the next call.
 - When exact_next_call is present, treat it as a deterministic next action unless blocked by an explicit policy/gate condition.
 - Do not use index_repository as a preflight step.

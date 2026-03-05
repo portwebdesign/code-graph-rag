@@ -56,6 +56,7 @@ def mcp_registry(temp_project_root: Path) -> MCPToolsRegistry:
     registry._file_reader_tool.function = AsyncMock()
     registry._session_state["graph_evidence_count"] = 1
     registry._session_state["last_graph_query_digest_id"] = "qd_fixture"
+    registry._session_state["query_code_graph_success_count"] = 1
 
     return registry
 

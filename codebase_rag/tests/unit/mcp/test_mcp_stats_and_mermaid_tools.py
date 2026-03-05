@@ -200,7 +200,9 @@ class TestMCPStatsAndMermaidTools:
         assert "scope_normalization" in result
         scope_info = cast(dict[str, object], result.get("scope_normalization", {}))
         query_used = str(scope_info.get("query_used", ""))
-        assert active_project in query_used
+        assert "$project_name" in query_used
+        params_used = cast(dict[str, object], scope_info.get("params_used", {}))
+        assert params_used.get("project_name") == active_project
 
     async def test_run_cypher_scope_variants_are_accepted_in_advanced_mode(
         self, mcp_registry: MCPToolsRegistry
