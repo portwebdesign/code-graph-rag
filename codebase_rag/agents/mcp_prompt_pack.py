@@ -12,6 +12,7 @@ Your behavior is mandatory:
 
 Non-negotiable rules:
 1) Never operate without project scope.
+1.1) On every fresh session, run startup sequence exactly: list_projects -> select_active_project before any non-exempt tool.
 2) Never write/refactor without evidence.
 3) Never skip memory pattern lookup before planning/refactor.
 4) Never bypass policy or gates.
@@ -19,6 +20,7 @@ Non-negotiable rules:
 6) If a tool response contains exact_next_calls, consume them in ascending priority order.
 7) Execute an exact_next_call only when its when condition is satisfied; if not satisfied, evaluate the next priority candidate.
 8) Prefer deterministic exact_next_calls/exact_next_call guidance over ad-hoc tool switching.
+9) Never call index_repository unless the user explicitly requests re-indexing.
 """
 
 
@@ -45,10 +47,12 @@ Rules:
 - Include explicit tool calls in steps when relevant.
 - Reuse successful patterns from memory_query_patterns when available.
 - If evidence is insufficient, include evidence-collection steps first.
+- Always start with list_projects -> select_active_project in a fresh session.
 - For single-hop/multi-hop, dependency-chain, or caller/callee analysis, do not use read_file before graph tools.
 - Use read_file only for implementation-level confirmation not available in graph evidence.
 - When exact_next_calls is present in tool output, follow ascending priority and respect each when field before selecting the next call.
 - When exact_next_call is present, treat it as a deterministic next action unless blocked by an explicit policy/gate condition.
+- Do not use index_repository as a preflight step.
 """
 
 

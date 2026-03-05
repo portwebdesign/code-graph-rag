@@ -76,13 +76,15 @@ FILE_EDITOR = (
 # (H) MCP tool descriptions
 MCP_LIST_PROJECTS = (
     "List all indexed projects in the knowledge graph database. "
-    "Returns a list of project names that have been indexed."
+    "Returns a list of project names that have been indexed. "
+    "MANDATORY START: call this first in a fresh session, then call select_active_project."
 )
 
 MCP_SELECT_ACTIVE_PROJECT = (
     "Preflight tool to set/confirm the active repository context and return project-scoped readiness info. "
     "Optionally accepts repo_path to switch active root, then reports active project, indexed status, "
-    "project-scoped graph counts, latest analysis timestamp, and enforced safety policies."
+    "project-scoped graph counts, latest analysis timestamp, and enforced safety policies. "
+    "MANDATORY SECOND STEP after list_projects before using non-exempt tools."
 )
 
 MCP_DETECT_PROJECT_DRIFT = (
@@ -117,7 +119,8 @@ MCP_SYNC_GRAPH_UPDATES = (
 MCP_QUERY_CODE_GRAPH = (
     "Query the codebase knowledge graph using natural language. "
     "Ask questions like 'What functions call UserService.create_user?' or "
-    "'Show me all classes that implement the Repository interface'."
+    "'Show me all classes that implement the Repository interface'. "
+    "Requires preflight: run list_projects -> select_active_project first."
 )
 
 MCP_SEMANTIC_SEARCH = (
@@ -248,6 +251,7 @@ MCP_EXPORT_MERMAID = (
 
 MCP_RUN_CYPHER = (
     "Execute a raw Cypher query against the Memgraph database. "
+    "Requires preflight: run list_projects -> select_active_project first. "
     "Use this for advanced ad-hoc querying not covered by standard tools and for explicit single-hop/multi-hop traversal control. "
     "Query MUST be scoped to active project to avoid cross-project access. "
     "Set write=True ONLY IF you intend to modify the graph (nodes/edges). "

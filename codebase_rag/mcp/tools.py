@@ -1453,6 +1453,8 @@ class MCPToolsRegistry:
             cs.MCPToolName.RUN_CYPHER,
             cs.MCPToolName.SYNC_GRAPH_UPDATES,
             cs.MCPToolName.EXECUTION_FEEDBACK,
+            cs.MCPToolName.SECURITY_SCAN,
+            cs.MCPToolName.PERFORMANCE_HOTSPOTS,
             cs.MCPToolName.TEST_QUALITY_GATE,
             cs.MCPToolName.VALIDATE_DONE_DECISION,
             cs.MCPToolName.GET_EXECUTION_READINESS,
@@ -1704,6 +1706,123 @@ class MCPToolsRegistry:
                 "Re-run select_active_project to initialize project-scoped schema context."
             )
         return None
+
+    def build_gate_guidance_payload(
+        self,
+        *,
+        tool_name: str,
+        gate_error: str,
+        gate_type: str,
+    ) -> dict[str, object]:
+        repo_root = str(Path(self.project_root).resolve())
+        project_name = self._active_project_name()
+
+        def _esc(value: str) -> str:
+            return value.replace("\\", "\\\\").replace('"', '\\"')
+
+        exact_next_calls: list[dict[str, object]] = []
+        if gate_type == "preflight":
+            project_selected = bool(
+                self._session_state.get("preflight_project_selected", False)
+            )
+            schema_loaded = bool(
+                self._session_state.get("preflight_schema_summary_loaded", False)
+            )
+
+            if not project_selected:
+                exact_next_calls = [
+                    {
+                        "tool": cs.MCPToolName.LIST_PROJECTS,
+                        "args": {},
+                        "priority": 1,
+                        "when": "session is new or active project unknown",
+                        "copy_paste": "list_projects()",
+                        "why": "discover_available_projects",
+                    },
+                    {
+                        "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                        "args": {"repo_path": repo_root},
+                        "priority": 2,
+                        "when": "after list_projects confirms target",
+                        "copy_paste": (
+                            f'select_active_project(repo_path="{_esc(repo_root)}")'
+                        ),
+                        "why": "initialize_project_scope_and_schema_preflight",
+                    },
+                ]
+            elif not schema_loaded:
+                exact_next_calls = [
+                    {
+                        "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                        "args": {"repo_path": repo_root},
+                        "priority": 1,
+                        "when": "project selected but schema preflight missing",
+                        "copy_paste": (
+                            f'select_active_project(repo_path="{_esc(repo_root)}")'
+                        ),
+                        "why": "rebuild_schema_preflight_context",
+                    }
+                ]
+            else:
+                exact_next_calls = [
+                    {
+                        "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                        "args": {"repo_path": repo_root},
+                        "priority": 1,
+                        "when": "preflight guard blocked unexpectedly",
+                        "copy_paste": (
+                            f'select_active_project(repo_path="{_esc(repo_root)}")'
+                        ),
+                        "why": "refresh_preflight_state",
+                    }
+                ]
+        else:
+            phase = self._current_execution_phase()
+            allowed = sorted(self._PHASE_ALLOWED_TOOLS.get(phase, set()))
+            fallback_tool = (
+                cs.MCPToolName.GET_EXECUTION_READINESS
+                if cs.MCPToolName.GET_EXECUTION_READINESS in allowed
+                else (allowed[0] if allowed else cs.MCPToolName.SELECT_ACTIVE_PROJECT)
+            )
+            fallback_args: dict[str, object] = {}
+            fallback_copy = f"{fallback_tool}()"
+            if fallback_tool == cs.MCPToolName.SELECT_ACTIVE_PROJECT:
+                fallback_args = {"repo_path": repo_root}
+                fallback_copy = f'select_active_project(repo_path="{_esc(repo_root)}")'
+            exact_next_calls = [
+                {
+                    "tool": fallback_tool,
+                    "args": fallback_args,
+                    "priority": 1,
+                    "when": f"tool {tool_name} is blocked in phase {phase}",
+                    "copy_paste": fallback_copy,
+                    "why": "phase_guard_recovery",
+                }
+            ]
+
+        next_best_action = self._project_next_best_action_from_exact_calls(
+            exact_next_calls
+        )
+        startup_sequence = [
+            cs.MCPToolName.LIST_PROJECTS,
+            cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+        ]
+        return {
+            "status": "blocked",
+            "gate": gate_type,
+            "error": str(gate_error),
+            "blocked_tool": tool_name,
+            "active_project": project_name,
+            "repo_root": repo_root,
+            "mandatory_startup_sequence": startup_sequence,
+            "exact_next_calls": exact_next_calls,
+            "next_best_action": next_best_action,
+            "session_contract": self._session_state.get("session_contract", {}),
+            "ui_summary": (
+                f"{gate_type}_gate_blocked: run mandatory startup sequence "
+                "list_projects -> select_active_project before non-exempt tools."
+            ),
+        }
 
     @staticmethod
     def _project_scoped_schema_summary_query(project_name: str, limit: int) -> str:
@@ -2232,10 +2351,15 @@ class MCPToolsRegistry:
         return {
             "active_project": project_name,
             "default_flow": [
+                "list_projects",
                 "select_active_project",
                 "query_code_graph",
                 "run_cypher(advanced_mode=false, only after graph evidence)",
                 "read_file(only with graph query digest id)",
+            ],
+            "mandatory_startup_sequence": [
+                "list_projects",
+                "select_active_project",
             ],
             "scope_rules": {
                 "preferred": "MATCH (m:Module {project_name: $project_name}) ...",
@@ -3092,10 +3216,12 @@ class MCPToolsRegistry:
                 queries=self.queries,
             )
 
+            timeout_seconds = max(60.0, float(settings.MCP_SYNC_GRAPH_TIMEOUT_SECONDS))
+
             async def _run_sync_once() -> None:
                 await asyncio.wait_for(
                     asyncio.to_thread(updater.run),
-                    timeout=max(60.0, float(settings.MCP_SYNC_GRAPH_TIMEOUT_SECONDS)),
+                    timeout=timeout_seconds,
                 )
 
             await self._run_with_retries(
@@ -3132,12 +3258,15 @@ class MCPToolsRegistry:
                 "reason": reason.strip(),
             }
         except TimeoutError:
+            timeout_seconds = max(60.0, float(settings.MCP_SYNC_GRAPH_TIMEOUT_SECONDS))
             self._record_tool_usefulness(
                 cs.MCPToolName.SYNC_GRAPH_UPDATES,
                 success=False,
                 usefulness_score=0.0,
             )
-            return {"error": "sync_graph_updates_timed_out_after_900s"}
+            return {
+                "error": f"sync_graph_updates_timed_out_after_{int(timeout_seconds)}s"
+            }
         except Exception as exc:
             self._record_tool_usefulness(
                 cs.MCPToolName.SYNC_GRAPH_UPDATES,

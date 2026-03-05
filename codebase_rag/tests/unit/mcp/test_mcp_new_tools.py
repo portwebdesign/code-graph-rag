@@ -111,6 +111,12 @@ class TestMCPNewTools:
         session_contract = cast(dict[str, object], result.get("session_contract", {}))
         assert session_contract.get("active_project") == project_name
         assert "default_flow" in session_contract
+        default_flow = cast(list[str], session_contract.get("default_flow", []))
+        assert default_flow[:2] == ["list_projects", "select_active_project"]
+        startup_sequence = cast(
+            list[str], session_contract.get("mandatory_startup_sequence", [])
+        )
+        assert startup_sequence == ["list_projects", "select_active_project"]
         scope_rules = cast(dict[str, object], session_contract.get("scope_rules", {}))
         assert "preferred" in scope_rules
         orchestrator_policy = cast(
@@ -180,6 +186,50 @@ class TestMCPNewTools:
     ) -> None:
         assert mcp_registry.get_preflight_gate_error("list_projects") is None
         assert mcp_registry.get_preflight_gate_error("select_active_project") is None
+
+    def test_preflight_gate_guidance_payload_for_new_session(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        error = mcp_registry.get_preflight_gate_error("query_code_graph")
+        assert isinstance(error, str)
+
+        payload = mcp_registry.build_gate_guidance_payload(
+            tool_name="query_code_graph",
+            gate_error=error,
+            gate_type="preflight",
+        )
+
+        assert payload.get("status") == "blocked"
+        assert payload.get("gate") == "preflight"
+        assert payload.get("blocked_tool") == "query_code_graph"
+        exact_next_calls = cast(
+            list[dict[str, object]], payload.get("exact_next_calls")
+        )
+        assert exact_next_calls[0].get("tool") == "list_projects"
+        assert exact_next_calls[1].get("tool") == "select_active_project"
+        next_best_action = cast(dict[str, object], payload.get("next_best_action", {}))
+        assert next_best_action.get("tool") == "list_projects"
+
+    def test_preflight_gate_guidance_payload_when_schema_missing(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["preflight_project_selected"] = True
+        mcp_registry._session_state["preflight_schema_summary_loaded"] = False
+
+        error = mcp_registry.get_preflight_gate_error("run_cypher")
+        assert isinstance(error, str)
+
+        payload = mcp_registry.build_gate_guidance_payload(
+            tool_name="run_cypher",
+            gate_error=error,
+            gate_type="preflight",
+        )
+
+        exact_next_calls = cast(
+            list[dict[str, object]], payload.get("exact_next_calls")
+        )
+        assert len(exact_next_calls) == 1
+        assert exact_next_calls[0].get("tool") == "select_active_project"
 
     def test_phase_gate_blocks_mutation_during_retrieval(
         self, mcp_registry: MCPToolsRegistry

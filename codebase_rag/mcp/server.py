@@ -116,12 +116,32 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
         preflight_error = tools.get_preflight_gate_error(name)
         if preflight_error is not None:
             logger.warning(preflight_error)
-            return _create_error_content(preflight_error)
+            payload = tools.build_gate_guidance_payload(
+                tool_name=name,
+                gate_error=preflight_error,
+                gate_type="preflight",
+            )
+            return [
+                TextContent(
+                    type=cs.MCP_CONTENT_TYPE_TEXT,
+                    text=json.dumps(payload, indent=cs.MCP_JSON_INDENT),
+                )
+            ]
 
         phase_error = tools.get_phase_gate_error(name)
         if phase_error is not None:
             logger.warning(phase_error)
-            return _create_error_content(phase_error)
+            payload = tools.build_gate_guidance_payload(
+                tool_name=name,
+                gate_error=phase_error,
+                gate_type="phase",
+            )
+            return [
+                TextContent(
+                    type=cs.MCP_CONTENT_TYPE_TEXT,
+                    text=json.dumps(payload, indent=cs.MCP_JSON_INDENT),
+                )
+            ]
 
         try:
             handler_info = tools.get_tool_handler(name)
