@@ -7,10 +7,12 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import sys
+import time
 import uuid
 from collections import deque
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -381,15 +383,60 @@ def _setup_common_initialization(repo_path: str) -> Path:
     logger.remove()
     logger.add(sys.stdout, format=cs.LOG_FORMAT)
     logger.add(analysis_dir / "parse.log", format=cs.LOG_FORMAT, mode="w")
-    tmp_dir = project_root / cs.TMP_DIR
-    if tmp_dir.exists():
-        if tmp_dir.is_dir():
-            shutil.rmtree(tmp_dir)
-        else:
-            tmp_dir.unlink()
-    tmp_dir.mkdir()
+    _prepare_tmp_dir(project_root)
 
     return project_root
+
+
+def _handle_remove_readonly(
+    func: Callable[..., object], path: str, exc_info: BaseException
+) -> None:
+    """Retries a failed removal after making the target writable."""
+    if not isinstance(exc_info, PermissionError):
+        raise exc_info
+
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _remove_path_with_retries(
+    path: Path, attempts: int = 3, delay_seconds: float = 0.2
+) -> bool:
+    """Best-effort removal for files and directories, with Windows-friendly retries."""
+    last_error: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path, onexc=_handle_remove_readonly)
+            else:
+                path.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError as exc:
+            last_error = exc
+            if attempt < attempts - 1:
+                time.sleep(delay_seconds * (attempt + 1))
+
+    logger.warning("Failed to remove temporary path {}: {}", path, last_error)
+    return False
+
+
+def _prepare_tmp_dir(project_root: Path) -> Path:
+    """Ensures the project temp directory exists without failing on locked stale entries."""
+    tmp_dir = project_root / cs.TMP_DIR
+    if tmp_dir.exists() and not tmp_dir.is_dir():
+        if not _remove_path_with_retries(tmp_dir):
+            msg = f"Unable to replace temp path with directory: {tmp_dir}"
+            raise OSError(msg)
+
+    if tmp_dir.is_dir():
+        for child in list(tmp_dir.iterdir()):
+            _remove_path_with_retries(child)
+    else:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    return tmp_dir
 
 
 def _create_configuration_table(
