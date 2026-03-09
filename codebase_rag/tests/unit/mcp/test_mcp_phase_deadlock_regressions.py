@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock
 
@@ -93,3 +94,59 @@ class TestMCPPhaseDeadlockRegressions:
         )
 
         assert result.get("status") == "ok"
+
+    async def test_get_execution_readiness_promotes_retrieval_to_validation(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._set_execution_phase("retrieval", "simulate_blocked_test_generate")
+
+        readiness = await mcp_registry.get_execution_readiness()
+
+        assert mcp_registry._current_execution_phase() == "validation"
+        execution_state = cast(dict[str, object], readiness.get("execution_state", {}))
+        assert execution_state.get("phase") == "validation"
+        assert mcp_registry.get_phase_gate_error("test_generate") is None
+
+    async def test_test_generate_becomes_phase_allowed_after_readiness_recovery(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        async def fake_run(task: str) -> object:
+            _ = task
+            return SimpleNamespace(status="ok", content="generated tests")
+
+        mcp_registry._test_agent.run = fake_run
+        mcp_registry._set_execution_phase("retrieval", "simulate_blocked_test_generate")
+
+        _ = await mcp_registry.get_execution_readiness()
+        result = await mcp_registry.test_generate("generate integration tests")
+
+        assert result.get("status") == "ok"
+        assert result.get("content") == "generated tests"
+
+    async def test_plan_task_keeps_validation_phase_for_followup_test_generate(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        async def fake_plan(goal: str, context: str | None = None) -> object:
+            _ = goal, context
+            return SimpleNamespace(
+                status="ok",
+                content={"summary": "planned", "steps": ["step-1"]},
+            )
+
+        async def fake_run(task: str) -> object:
+            _ = task
+            return SimpleNamespace(status="ok", content="generated from plan")
+
+        mcp_registry._planner_agent.plan = fake_plan
+        mcp_registry._test_agent.run = fake_run
+
+        plan_result = await mcp_registry.plan_task("generate tests for api")
+
+        assert plan_result.get("status") == "ok"
+        assert mcp_registry._current_execution_phase() == "validation"
+        assert mcp_registry.get_phase_gate_error("test_generate") is None
+
+        test_result = await mcp_registry.test_generate("generate tests for api")
+
+        assert test_result.get("status") == "ok"
+        assert test_result.get("content") == "generated from plan"

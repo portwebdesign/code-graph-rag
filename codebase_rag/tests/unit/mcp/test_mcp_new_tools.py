@@ -113,10 +113,22 @@ class TestMCPNewTools:
         assert "default_flow" in session_contract
         default_flow = cast(list[str], session_contract.get("default_flow", []))
         assert default_flow[:2] == ["list_projects", "select_active_project"]
+        assert "plan_task(for multi-step or backlog-driven work)" in default_flow
         startup_sequence = cast(
             list[str], session_contract.get("mandatory_startup_sequence", [])
         )
         assert startup_sequence == ["list_projects", "select_active_project"]
+        tool_preference_policy = cast(
+            dict[str, object], session_contract.get("tool_preference_policy", {})
+        )
+        assert tool_preference_policy.get("graph_rag_first") is True
+        prefer_tools = cast(list[str], tool_preference_policy.get("prefer_tools", []))
+        defer_tools = cast(list[str], tool_preference_policy.get("defer_tools", []))
+        guidance = cast(list[str], tool_preference_policy.get("guidance", []))
+        assert "query_code_graph" in prefer_tools
+        assert "plan_task" in prefer_tools
+        assert "read_file" in defer_tools
+        assert any("GraphRAG discovery tools" in item for item in guidance)
         scope_rules = cast(dict[str, object], session_contract.get("scope_rules", {}))
         assert "preferred" in scope_rules
         orchestrator_policy = cast(
@@ -307,6 +319,42 @@ class TestMCPNewTools:
         assert "exploration_calibration" in components
         signals = cast(dict[str, object], context_gate.get("signals", {}))
         assert "confidence_calibration" in signals
+
+    def test_get_execution_readiness_is_visible_in_orchestrator_tiering(
+        self,
+        mcp_registry: MCPToolsRegistry,
+    ) -> None:
+        visible, tier = mcp_registry._is_tool_visible_in_orchestrator(
+            "get_execution_readiness"
+        )
+
+        assert tier == "meta"
+        assert visible is True
+
+    def test_core_project_and_workflow_tools_are_visible_in_orchestrator_tiering(
+        self,
+        mcp_registry: MCPToolsRegistry,
+    ) -> None:
+        expected_visible_tools = {
+            "list_projects": "tier1",
+            "select_active_project": "tier1",
+            "query_code_graph": "tier1",
+            "semantic_search": "tier1",
+            "run_cypher": "tier1",
+            "plan_task": "meta",
+            "test_generate": "meta",
+            "memory_query_patterns": "meta",
+            "test_quality_gate": "meta",
+            "validate_done_decision": "meta",
+            "get_execution_readiness": "meta",
+            "orchestrate_realtime_flow": "meta",
+            "get_tool_usefulness_ranking": "meta",
+        }
+
+        for tool_name, expected_tier in expected_visible_tools.items():
+            visible, tier = mcp_registry._is_tool_visible_in_orchestrator(tool_name)
+            assert tier == expected_tier
+            assert visible is True
 
     def test_next_best_action_prefers_graph_before_read_file(self) -> None:
         readiness = {
@@ -1033,6 +1081,8 @@ class TestMCPNewTools:
         assert result.get("memory_injection_mandatory") is True
         assert "Memory pattern injection (mandatory):" in captured_context["value"]
         assert "Chain success-rate candidates:" in captured_context["value"]
+        assert mcp_registry._current_execution_phase() == "validation"
+        assert mcp_registry.get_phase_gate_error("test_generate") is None
         readiness = await mcp_registry.get_execution_readiness()
         signals = cast(dict[str, object], readiness.get("signals", {}))
         assert int(signals.get("memory_pattern_query_count", 0)) >= 1

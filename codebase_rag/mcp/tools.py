@@ -1385,6 +1385,7 @@ class MCPToolsRegistry:
     _EXPLORATION_ALLOWED_FAILURE_TYPES = {"no_data", "low_confidence", "unknown"}
     _EXPLORATION_POLICY_UCB_BONUS = 0.2
     _TOOL_TIER_MAP = {
+        cs.MCPToolName.LIST_PROJECTS: "tier1",
         cs.MCPToolName.QUERY_CODE_GRAPH: "tier1",
         cs.MCPToolName.SEMANTIC_SEARCH: "tier1",
         cs.MCPToolName.RUN_CYPHER: "tier1",
@@ -1396,7 +1397,15 @@ class MCPToolsRegistry:
         cs.MCPToolName.APPLY_DIFF_SAFE: "tier3",
         cs.MCPToolName.SURGICAL_REPLACE_CODE: "tier3",
         cs.MCPToolName.PLAN_TASK: "meta",
+        cs.MCPToolName.TEST_GENERATE: "meta",
+        cs.MCPToolName.MEMORY_LIST: "meta",
+        cs.MCPToolName.MEMORY_QUERY_PATTERNS: "meta",
+        cs.MCPToolName.EXECUTION_FEEDBACK: "meta",
+        cs.MCPToolName.GET_EXECUTION_READINESS: "meta",
         cs.MCPToolName.TEST_QUALITY_GATE: "meta",
+        cs.MCPToolName.GET_TOOL_USEFULNESS_RANKING: "meta",
+        cs.MCPToolName.VALIDATE_DONE_DECISION: "meta",
+        cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW: "meta",
         cs.MCPToolName.MEMORY_ADD: "meta",
         cs.MCPToolName.IMPACT_GRAPH: "meta",
     }
@@ -2600,6 +2609,7 @@ class MCPToolsRegistry:
                 "list_projects",
                 "select_active_project",
                 "query_code_graph",
+                "plan_task(for multi-step or backlog-driven work)",
                 "run_cypher(advanced_mode=false, only after graph evidence)",
                 "read_file(only with graph query digest id)",
             ],
@@ -2607,6 +2617,25 @@ class MCPToolsRegistry:
                 "list_projects",
                 "select_active_project",
             ],
+            "tool_preference_policy": {
+                "graph_rag_first": True,
+                "prefer_tools": [
+                    cs.MCPToolName.QUERY_CODE_GRAPH,
+                    cs.MCPToolName.SEMANTIC_SEARCH,
+                    cs.MCPToolName.PLAN_TASK,
+                    cs.MCPToolName.GET_EXECUTION_READINESS,
+                    cs.MCPToolName.TEST_GENERATE,
+                ],
+                "defer_tools": [
+                    cs.MCPToolName.READ_FILE,
+                    cs.MCPToolName.GET_FUNCTION_SOURCE,
+                ],
+                "guidance": [
+                    "Use GraphRAG discovery tools before direct file reads whenever possible.",
+                    "Use plan_task for multi-step work so downstream tools like test_generate become natural next steps.",
+                    "Use read_file only after graph or semantic evidence narrows the target.",
+                ],
+            },
             "scope_rules": {
                 "preferred": "MATCH (m:Module {project_name: $project_name}) ...",
                 "params": {"project_name": project_name},
@@ -6830,6 +6859,10 @@ class MCPToolsRegistry:
                 success_only=True,
                 limit=5,
             )
+            self._set_execution_phase(
+                "validation",
+                "plan_task_resume_after_memory_query",
+            )
             pattern_entries = memory_patterns.get("entries", [])
             pattern_texts: list[str] = []
             if isinstance(pattern_entries, list):
@@ -7415,6 +7448,11 @@ class MCPToolsRegistry:
         return readiness
 
     async def get_execution_readiness(self) -> dict[str, object]:
+        if self._current_execution_phase() == "retrieval":
+            self._set_execution_phase(
+                "validation",
+                "get_execution_readiness_phase_recovery",
+            )
         readiness = self._compute_execution_readiness()
         readiness["execution_state"] = self._build_execution_state_contract()
         return readiness
