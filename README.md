@@ -570,9 +570,11 @@ claude mcp add --transport stdio code-graph-rag \
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
 | `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. Note: This preserves other projects - only the current project is re-indexed. This tool MUST be called only when the user explicitly asks for re-indexing and requires user_requested=true. A non-empty reason is required; for already indexed projects, drift confirmation is required. |
-| `sync_graph_updates` | Refresh graph state for the active repository without deleting project data first. Uses GraphUpdater and respects incremental/git-delta configuration for faster updates. |
+| `sync_graph_updates` | Refresh graph state for the active repository without deleting project data first. Supports sync_mode='fast' (default, incremental/selective when possible) and sync_mode='full' (force full reparse for maximum consistency). |
 | `query_code_graph` | PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. MUST be used before read_file and before default run_cypher flow. Requires preflight: run list_projects -> select_active_project first. |
+| `multi_hop_analysis` | Build a compressed multi-hop evidence bundle around a symbol or file. Aggregates inbound/outbound relationships across CALLS/IMPORTS/INHERITS/USES, summarizes blast radius, highlights affected symbols/files, and recommends the next retrieval steps. Use this for complex architecture, dependency-chain, and impact analysis in large projects. |
 | `semantic_search` | Perform semantic (vector-based) code search using embeddings. Use this for intent-based discovery such as 'auth flow' or 'error handling'. |
+| `context7_docs` | Fetch Context7 documentation for an external library/framework and persist it into cache/graph/memory when configured. Use this only when repo evidence is insufficient and the task depends on external library behavior. |
 | `get_function_source` | Retrieve source code for a function or method by graph node ID. Typically used after semantic_search returns candidate node IDs. |
 | `get_code_snippet` | Retrieve source code for a function, class, or method by its qualified name. Returns the source code, file path, line numbers, and docstring. |
 | `surgical_replace_code` | Surgically replace an exact code block in a file using diff-match-patch. Only modifies the exact target block, leaving the rest unchanged. |
@@ -595,12 +597,12 @@ claude mcp add --transport stdio code-graph-rag \
 | `apply_diff_safe` | Apply one or more surgical replacements in a single file. Requires 'file_path' and 'chunks', where chunks is a JSON string list of objects with 'target_code' and 'replacement_code'. |
 | `refactor_batch` | Apply multiple diff modifications across several files in a single operation. Requires 'chunks' which is a JSON formatted string containing multiple diffs. |
 | `plan_task` | Ask an agent planner to create a multi-step execution plan for a specified goal. Provide the 'goal' and optional 'context' the planner might need. Mandatory in strict mode for complex/multi-step intents before execution tools. |
-| `test_generate` | Ask a specialized test-generation agent to create test cases for a specific function or class. Provide the 'goal' (e.g. 'Generate tests for codebase_rag.core.constants'). |
+| `test_generate` | Ask a specialized test-generation agent to create test cases for a specific function or class. Supports output_mode='code' (default), 'plan_json', or 'both'. Return code-first, runnable test output when possible; keep assumptions explicit and minimal. |
 | `memory_add` | Add a memory entry (context, decision, or fact) to the persistent memory store. Tags are optional but help categorize memories (e.g. 'architecture', 'auth'). |
 | `memory_list` | List recently added memory entries from the persistent memory store. |
 | `memory_query_patterns` | Query memory for similar successful patterns before planning or refactoring. Supports free-text query, optional tag filters, and success-only filtering. Can be auto-required by workflow gate before non-exempt tools. |
-| `execution_feedback` | Record execution outcome feedback after a tool run. If feedback indicates test failure or low coverage, the session can require replanning. |
-| `test_quality_gate` | Evaluate test quality score from coverage, edge-case, and negative-test dimensions (0..1 each). Blocks completion when total score is below threshold. |
+| `execution_feedback` | Record execution outcome feedback after a tool run. Supports structured failure reasons (e.g. hallucinated_fixture, unverified_assertion, missing_cleanup). If feedback indicates test failure or low coverage, the session can require replanning. |
+| `test_quality_gate` | Evaluate test quality score from coverage, edge-case, and negative-test dimensions (0..1 each). Optionally score repo evidence, layer correctness, cleanup safety, anti-hallucination, and coupling penalty. Blocks completion when total score is below threshold. |
 | `get_tool_usefulness_ranking` | Return tool usefulness telemetry ranking for the current session. Ranks tools by average usefulness score, success rate, and call count. |
 | `validate_done_decision` | Run done decision protocol using readiness gates, feedback signals, and optional validator-agent rationale. Returns done/not_done decision, blockers, and protocol checks. |
 | `orchestrate_realtime_flow` | Execute realtime GraphRAG workflow after code edits: execution_feedback -> sync_graph_updates -> validate_done_decision. Optionally verifies drift and auto-executes validate_done_decision.next_best_action. |
@@ -689,7 +691,7 @@ The knowledge graph uses the following node types and relationships:
 - **Go**: `function_declaration`, `method_declaration`, `type_declaration`
 - **Java**: `annotation_type_declaration`, `class_declaration`, `constructor_declaration`, `enum_declaration`, `interface_declaration`, `method_declaration`, `record_declaration`
 - **JavaScript**: `arrow_function`, `class`, `class_declaration`, `function_declaration`, `function_expression`, `generator_function_declaration`, `method_definition`
-- **Kotlin**: `class_declaration`, `function_declaration`, `interface_declaration`, `object_declaration`
+- **Kotlin**: `class_declaration`, `function_declaration`, `object_declaration`
 - **Lua**: `function_declaration`, `function_definition`
 - **PHP**: `anonymous_function`, `arrow_function`, `class_declaration`, `enum_declaration`, `function_definition`, `function_static_declaration`, `interface_declaration`, `trait_declaration`
 - **Python**: `class_definition`, `function_definition`

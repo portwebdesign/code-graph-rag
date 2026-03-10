@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool
 
 from codebase_rag.agents.mcp_prompt_pack import (
+    LOCAL_MCP_VALIDATOR_PROMPT,
     MCP_VALIDATOR_PROMPT,
-    compose_agent_prompt,
+    compose_agent_prompt_for_provider,
 )
+from codebase_rag.agents.output_parser import extract_json_object
 from codebase_rag.core.config import settings
 from codebase_rag.services.llm import _create_provider_model
 
@@ -30,8 +31,10 @@ class ValidatorAgent:
         model = _create_provider_model(config)
         self.agent = Agent(
             model=model,
-            system_prompt=compose_agent_prompt(
-                MCP_VALIDATOR_PROMPT,
+            system_prompt=compose_agent_prompt_for_provider(
+                provider=str(config.provider),
+                default_agent_prompt=MCP_VALIDATOR_PROMPT,
+                local_agent_prompt=LOCAL_MCP_VALIDATOR_PROMPT,
                 system_prompt=system_prompt,
             ),
             tools=tools or [],
@@ -103,7 +106,7 @@ class ValidatorAgent:
 
     @staticmethod
     def _parse_json_payload(text: str) -> dict[str, object] | None:
-        parsed_text = ValidatorAgent._extract_json_object(text)
+        parsed_text = extract_json_object(text)
         try:
             payload = json.loads(parsed_text)
         except json.JSONDecodeError:
@@ -131,27 +134,6 @@ class ValidatorAgent:
             "rationale": str(payload.get("rationale", "")).strip(),
             "required_actions": required_actions,
         }
-
-    @staticmethod
-    def _extract_json_object(text: str) -> str:
-        stripped = text.strip()
-        if not stripped:
-            return "{}"
-        if stripped.startswith("```"):
-            fence_match = re.search(
-                r"```(?:json)?\s*(\{.*\})\s*```",
-                stripped,
-                flags=re.DOTALL,
-            )
-            if fence_match:
-                return fence_match.group(1).strip()
-        start = stripped.find("{")
-        end = stripped.rfind("}")
-        if start != -1 and end != -1 and end >= start:
-            candidate = stripped[start : end + 1].strip()
-            if candidate:
-                return candidate
-        return stripped
 
     @staticmethod
     def _extract_blockers(payload: dict[str, object]) -> list[str]:

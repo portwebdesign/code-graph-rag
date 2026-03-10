@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from codebase_rag.mcp.server import get_project_root
+from codebase_rag.mcp.server import _format_tool_result_text, get_project_root
 
 
 class TestGetProjectRoot:
@@ -173,3 +173,69 @@ class TestGetProjectRoot:
         assert result == actual_cwd.resolve()
         assert result.exists()
         assert result.is_dir()
+
+
+class TestServerFormatting:
+    def test_formats_query_and_next_actions_for_readability(self) -> None:
+        formatted = _format_tool_result_text(
+            {
+                "ui_summary": "Active project selected",
+                "query_used": "MATCH (m:Module) RETURN m LIMIT 5",
+                "exact_next_calls": [
+                    {
+                        "tool": "query_code_graph",
+                        "copy_paste": 'query_code_graph(natural_language_query="auth flow")',
+                        "why": "graph_first",
+                        "when": "after preflight",
+                    }
+                ],
+                "results": [{"name": "auth"}],
+            },
+            True,
+        )
+
+        assert "```cypher" in formatted
+        assert "Next actions:" in formatted
+        assert "Details:" in formatted
+
+    def test_decodes_escaped_generated_content(self) -> None:
+        formatted = _format_tool_result_text(
+            {
+                "status": "ok",
+                "content": "def test_example():\\n    assert True\\n",
+                "language": "python",
+            },
+            True,
+        )
+
+        assert "```python" in formatted
+        assert "assert True" in formatted
+
+    def test_formats_gate_payloads_without_raw_json_dump(self) -> None:
+        formatted = _format_tool_result_text(
+            {
+                "status": "blocked",
+                "gate": "visibility",
+                "error": "workflow_gate_blocked",
+                "ui_summary": "workflow_gate_blocked: run plan_task first.",
+                "exact_next_calls": [
+                    {
+                        "tool": "plan_task",
+                        "copy_paste": 'plan_task(goal="trace auth flow")',
+                        "why": "complex_task_plan_gate",
+                        "when": "before execution",
+                    }
+                ],
+                "next_best_action": {
+                    "tool": "plan_task",
+                    "why": "Complex work must be planned first.",
+                    "params_hint": {"goal": "trace auth flow"},
+                },
+                "session_contract": {"default_flow": ["list_projects"]},
+            },
+            True,
+        )
+
+        assert "Next actions:" in formatted
+        assert "Next best action:" in formatted
+        assert '"session_contract"' not in formatted

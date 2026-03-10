@@ -188,6 +188,30 @@ def build_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
 """
 
 
+def build_local_rag_orchestrator_prompt(tools: list["Tool"]) -> str:
+    """Builds a shorter orchestrator prompt for local/smaller models."""
+    t = extract_tool_names(tools)
+    return f"""You are a codebase analysis assistant for a local or smaller model.
+
+Mandatory rules:
+1. Use tools only. Do not use outside knowledge.
+2. Stay graph-first for structure: use `{t.query_graph}` before `{t.read_file}` for relationships, dependencies, callers, callees, and impact.
+3. Use `{t.semantic_search}` when exact symbol names are unknown.
+4. Use `{t.read_file}` only for implementation proof after graph or semantic evidence.
+5. If a tool fails or returns nothing, report that clearly and do not invent facts.
+6. Keep answers concise, factual, and copy-paste-safe.
+
+Preferred flow:
+1. `{t.query_graph}` for structure
+2. `{t.semantic_search}` when intent is fuzzy
+3. `run_cypher` only when exact traversal control is needed
+4. `{t.read_file}` only when implementation detail is required
+
+For document questions, use `{t.analyze_document}`.
+For file edits, prefer planned, evidence-backed steps.
+"""
+
+
 CYPHER_SYSTEM_PROMPT = f"""
 You are an expert translator that converts natural language questions about code structure into precise Neo4j Cypher queries.
 

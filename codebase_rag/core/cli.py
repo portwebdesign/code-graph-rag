@@ -475,16 +475,40 @@ def optimize(
 
 
 @app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
-def mcp_server() -> None:
+def mcp_server(
+    transport: Literal["stdio", "http"] = typer.Option(
+        "stdio",
+        "--transport",
+        help="Transport to expose: stdio for MCP clients, http for external tools.",
+        case_sensitive=False,
+    ),
+    host: str = typer.Option(
+        settings.MCP_HTTP_HOST,
+        "--host",
+        help="HTTP host to bind when --transport=http.",
+    ),
+    port: int = typer.Option(
+        settings.MCP_HTTP_PORT,
+        "--port",
+        min=1,
+        max=65535,
+        help="HTTP port to bind when --transport=http.",
+    ),
+) -> None:
     """
     Starts the Model Context Protocol (MCP) server.
 
-    Allows integration with IDEs and other tools that support MCP.
+    Allows integration with IDEs over stdio and external tools over HTTP.
     """
     try:
-        from codebase_rag.mcp import main as mcp_main
+        if transport == "http":
+            from codebase_rag.mcp.http_server import serve_http
 
-        asyncio.run(mcp_main())
+            serve_http(host=host, port=port)
+        else:
+            from codebase_rag.mcp import main as mcp_main
+
+            asyncio.run(mcp_main())
     except KeyboardInterrupt:
         typer.echo(cs.CLI_MSG_APP_TERMINATED.strip(), err=True)
     except ValueError as e:

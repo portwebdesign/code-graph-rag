@@ -10,6 +10,7 @@ or direct instantiation.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -255,9 +256,76 @@ class Context7Client:
         query_lower = query.lower()
         candidates = [item.strip() for item in raw.split(",") if item.strip()]
         for candidate in candidates:
-            if candidate and candidate in query_lower:
-                return candidate
+            if not candidate:
+                continue
+            if not any(
+                re.search(pattern, query_lower)
+                for pattern in self._library_patterns(candidate)
+            ):
+                continue
+            if not self._is_explicit_library_reference(query_lower, candidate):
+                continue
+            return candidate
         return None
+
+    def should_auto_fetch(self, query: str) -> bool:
+        """Returns True when a query explicitly asks for library/framework docs."""
+        library = self.detect_library(query)
+        if not library:
+            return False
+
+        query_lower = query.lower()
+        if any(
+            marker in query_lower
+            for marker in (
+                f"`{library.lower()}`",
+                f"'{library.lower()}'",
+                f'"{library.lower()}"',
+            )
+        ):
+            return True
+
+        technical_keywords = {
+            "api",
+            "app",
+            "auth",
+            "bootstrap",
+            "boot",
+            "component",
+            "config",
+            "context",
+            "decorator",
+            "docs",
+            "endpoint",
+            "error",
+            "framework",
+            "handler",
+            "hook",
+            "import",
+            "injection",
+            "integration",
+            "library",
+            "middleware",
+            "module",
+            "package",
+            "plugin",
+            "provider",
+            "route",
+            "router",
+            "sdk",
+            "schema",
+            "security",
+            "server",
+            "setup",
+            "version",
+        }
+        if not self._contains_any_keyword(query_lower, technical_keywords):
+            return False
+
+        if library.lower() in {"express", "react", "spring"}:
+            return self._has_strong_technical_context(query_lower)
+
+        return True
 
     async def auto_docs(self, query: str) -> dict[str, Any] | None:
         """
@@ -273,6 +341,8 @@ class Context7Client:
         """
         if not settings.CONTEXT7_AUTO_ENABLED:
             return None
+        if not self.should_auto_fetch(query):
+            return None
         library = self.detect_library(query)
         if not library:
             return None
@@ -280,6 +350,73 @@ class Context7Client:
         if isinstance(result, dict) and result.get("error"):
             return None
         return result
+
+    @staticmethod
+    def _library_patterns(candidate: str) -> tuple[str, ...]:
+        normalized = candidate.strip().lower()
+        if not normalized:
+            return ()
+
+        escaped = re.escape(normalized)
+        patterns = [rf"(?<![a-z0-9_]){escaped}(?![a-z0-9_])"]
+        if normalized == "next.js":
+            patterns.append(r"(?<![a-z0-9_])nextjs(?![a-z0-9_])")
+        return tuple(patterns)
+
+    @classmethod
+    def _is_explicit_library_reference(cls, query_lower: str, candidate: str) -> bool:
+        normalized = candidate.strip().lower()
+        if not normalized:
+            return False
+        if normalized not in {"express", "react", "spring"}:
+            return True
+        if any(
+            marker in query_lower
+            for marker in (
+                f"`{normalized}`",
+                f"'{normalized}'",
+                f'"{normalized}"',
+            )
+        ):
+            return True
+        return cls._has_strong_technical_context(query_lower)
+
+    @staticmethod
+    def _has_strong_technical_context(query_lower: str) -> bool:
+        strong_markers = {
+            "app",
+            "auth",
+            "boot",
+            "component",
+            "config",
+            "docs",
+            "framework",
+            "hook",
+            "hooks",
+            "import",
+            "injection",
+            "library",
+            "middleware",
+            "module",
+            "package",
+            "route",
+            "router",
+            "schema",
+            "security",
+            "server",
+            "version",
+        }
+        return Context7Client._contains_any_keyword(query_lower, strong_markers)
+
+    @staticmethod
+    def _contains_any_keyword(query_lower: str, keywords: set[str]) -> bool:
+        return any(
+            re.search(
+                rf"(?<![a-z0-9_]){re.escape(keyword)}(?![a-z0-9_])",
+                query_lower,
+            )
+            for keyword in keywords
+        )
 
     async def _call_api(
         self, path: str, payload: dict[str, Any], allow_get: bool = False

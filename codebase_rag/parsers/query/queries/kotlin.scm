@@ -72,4 +72,5 @@
 
 ; @query: comments
 ; Matches: all comment lines
-(comment) @comment
+(line_comment) @comment
+(block_comment) @comment

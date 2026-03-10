@@ -214,6 +214,8 @@ class AppConfig(BaseSettings):
     MCP_ORCHESTRATE_DEBOUNCE_DEFAULT_SECONDS: int = 0
     MCP_ORCHESTRATE_AUTO_EXECUTE_NEXT_DEFAULT: bool = False
     MCP_ORCHESTRATE_VERIFY_DRIFT_DEFAULT: bool = False
+    MCP_AUTO_SYNC_GRAPH_AFTER_EDITS: bool = True
+    MCP_AUTO_VERIFY_DRIFT_AFTER_EDITS: bool = False
     MCP_ENFORCE_GRAPH_FIRST_READS: bool = True
     MCP_READ_FILE_REQUIRES_QUERY_GRAPH: bool = True
     MCP_REQUIRE_SESSION_PREFLIGHT: bool = True
@@ -226,6 +228,8 @@ class AppConfig(BaseSettings):
     MCP_ENFORCE_MEMORY_PRIMING_GATE: bool = False
     MCP_QUERY_RESULT_MAX_ROWS: int = 80
     MCP_QUERY_RESULT_MAX_CHARS: int = 120000
+    MCP_HTTP_HOST: str = "127.0.0.1"
+    MCP_HTTP_PORT: int = 8765
 
     REALTIME_WATCHER_DEBOUNCE_SECONDS: float = 2.0
 
@@ -331,7 +335,7 @@ class AppConfig(BaseSettings):
     CONTEXT7_API_KEY: str | None = None
     CONTEXT7_API_URL: str | None = None
     CONTEXT7_MCP_URL: str | None = None
-    CONTEXT7_AUTO_ENABLED: bool = True
+    CONTEXT7_AUTO_ENABLED: bool = False
     CONTEXT7_AUTO_LIBRARIES: str = (
         "django,fastapi,flask,react,next.js,nextjs,express,nestjs,spring,rails,laravel"
     )

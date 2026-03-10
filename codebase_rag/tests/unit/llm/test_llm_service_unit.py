@@ -211,8 +211,10 @@ class TestCreateRagOrchestrator:
     @patch("codebase_rag.services.llm.get_provider_from_config")
     @patch("codebase_rag.services.llm.Agent")
     @patch("codebase_rag.services.llm.build_rag_orchestrator_prompt")
+    @patch("codebase_rag.services.llm.build_local_rag_orchestrator_prompt")
     def test_creates_agent_with_tools(
         self,
+        mock_local_prompt: MagicMock,
         mock_build_prompt: MagicMock,
         mock_agent: MagicMock,
         mock_get_provider: MagicMock,
@@ -228,6 +230,7 @@ class TestCreateRagOrchestrator:
         mock_get_provider.return_value = mock_provider
 
         mock_build_prompt.return_value = "System prompt"
+        mock_local_prompt.return_value = "Local prompt"
         mock_agent.return_value = MagicMock()
 
         tools = [MagicMock(), MagicMock()]
@@ -237,6 +240,39 @@ class TestCreateRagOrchestrator:
         call_kwargs = mock_agent.call_args.kwargs
         assert call_kwargs["tools"] == tools
         assert result is not None
+
+    @patch("codebase_rag.services.llm.settings")
+    @patch("codebase_rag.services.llm.get_provider_from_config")
+    @patch("codebase_rag.services.llm.Agent")
+    @patch("codebase_rag.services.llm.build_rag_orchestrator_prompt")
+    @patch("codebase_rag.services.llm.build_local_rag_orchestrator_prompt")
+    def test_create_rag_orchestrator_uses_local_prompt_for_ollama(
+        self,
+        mock_local_prompt: MagicMock,
+        mock_build_prompt: MagicMock,
+        mock_agent: MagicMock,
+        mock_get_provider: MagicMock,
+        mock_settings: MagicMock,
+    ) -> None:
+        mock_config = MagicMock()
+        mock_config.provider = cs.Provider.OLLAMA
+        mock_settings.active_orchestrator_config = mock_config
+        mock_settings.AGENT_RETRIES = 3
+        mock_settings.ORCHESTRATOR_OUTPUT_RETRIES = 2
+
+        mock_provider = MagicMock()
+        mock_provider.create_model.return_value = MagicMock()
+        mock_get_provider.return_value = mock_provider
+
+        mock_local_prompt.return_value = "Local prompt"
+        mock_build_prompt.return_value = "Default prompt"
+        mock_agent.return_value = MagicMock()
+
+        create_rag_orchestrator([MagicMock()])
+
+        call_kwargs = mock_agent.call_args.kwargs
+        assert call_kwargs["system_prompt"] == "Local prompt"
+        mock_build_prompt.assert_not_called()
 
     @patch("codebase_rag.services.llm.settings")
     @patch("codebase_rag.services.llm.get_provider_from_config")

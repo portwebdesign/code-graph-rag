@@ -1003,6 +1003,9 @@ async def _resolve_context7_auto_docs(
         return None
     if not runtime.client.is_configured():
         return None
+    should_auto_fetch = getattr(runtime.client, "should_auto_fetch", None)
+    if callable(should_auto_fetch) and not bool(should_auto_fetch(question)):
+        return None
 
     library_name = runtime.client.detect_library(question)
     if not library_name:

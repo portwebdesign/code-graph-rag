@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, Tool
 
-from codebase_rag.agents.mcp_prompt_pack import MCP_TEST_PROMPT, compose_agent_prompt
+from codebase_rag.agents.mcp_prompt_pack import (
+    LOCAL_MCP_TEST_PROMPT,
+    MCP_TEST_PROMPT,
+    compose_agent_prompt_for_provider,
+)
 from codebase_rag.core.config import settings
 from codebase_rag.services.llm import _create_provider_model
 
@@ -25,8 +29,10 @@ class TestAgent:
         model = _create_provider_model(config)
         self.agent = Agent(
             model=model,
-            system_prompt=compose_agent_prompt(
-                MCP_TEST_PROMPT,
+            system_prompt=compose_agent_prompt_for_provider(
+                provider=str(config.provider),
+                default_agent_prompt=MCP_TEST_PROMPT,
+                local_agent_prompt=LOCAL_MCP_TEST_PROMPT,
                 system_prompt=system_prompt,
             ),
             tools=tools or [],

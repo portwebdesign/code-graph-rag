@@ -114,3 +114,34 @@ async def test_auto_docs_returns_none_when_feature_disabled(
     result = await client.auto_docs("fastapi auth")
 
     assert result is None
+
+
+def test_detect_library_requires_token_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "codebase_rag.services.context7_client.settings.CONTEXT7_AUTO_LIBRARIES",
+        "express,react,spring,fastapi",
+    )
+    client = Context7Client(
+        api_key="k", api_url="https://context7.example", mcp_url=None
+    )
+
+    assert client.detect_library("how can I express this cleanly?") is None
+    assert client.detect_library("react hooks auth flow") == "react"
+
+
+def test_should_auto_fetch_blocks_ambiguous_english_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "codebase_rag.services.context7_client.settings.CONTEXT7_AUTO_LIBRARIES",
+        "express,react,spring",
+    )
+    client = Context7Client(
+        api_key="k", api_url="https://context7.example", mcp_url=None
+    )
+
+    assert client.should_auto_fetch("best way to react to file changes") is False
+    assert client.should_auto_fetch("spring cleaning for old branches") is False
+    assert client.should_auto_fetch("express router middleware auth") is True

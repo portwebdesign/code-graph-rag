@@ -17,6 +17,7 @@ from pydantic_ai import Agent, DeferredToolRequests, Tool
 from codebase_rag.ai.prompts import (
     CYPHER_SYSTEM_PROMPT,
     LOCAL_CYPHER_SYSTEM_PROMPT,
+    build_local_rag_orchestrator_prompt,
     build_rag_orchestrator_prompt,
 )
 from codebase_rag.core.config import ModelConfig, settings
@@ -162,10 +163,15 @@ def create_rag_orchestrator(tools: list[Tool]) -> Agent:
     try:
         config = settings.active_orchestrator_config
         llm = _create_provider_model(config)
+        system_prompt = (
+            build_local_rag_orchestrator_prompt(tools)
+            if config.provider == cs.Provider.OLLAMA
+            else build_rag_orchestrator_prompt(tools)
+        )
 
         return Agent(
             model=llm,
-            system_prompt=build_rag_orchestrator_prompt(tools),
+            system_prompt=system_prompt,
             tools=tools,
             retries=settings.AGENT_RETRIES,
             output_retries=settings.ORCHESTRATOR_OUTPUT_RETRIES,

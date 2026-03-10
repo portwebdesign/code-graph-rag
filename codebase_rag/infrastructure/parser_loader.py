@@ -1,5 +1,7 @@
+import ctypes
 import importlib
 import os
+import shutil
 import subprocess
 import sys
 from copy import deepcopy
@@ -19,6 +21,10 @@ from codebase_rag.parsers.query.query_engine_adapter import apply_scm_query_over
 
 from . import exceptions as ex
 from .language_spec import LANGUAGE_SPECS, LanguageSpec
+
+_PY_CAPSULE_NEW = ctypes.pythonapi.PyCapsule_New
+_PY_CAPSULE_NEW.restype = ctypes.py_object
+_PY_CAPSULE_NEW.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
 
 
 def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
@@ -42,10 +48,41 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
     if not python_bindings_path.exists():
         return None
 
-    python_bindings_str = str(python_bindings_path)
+    def _binding_search_paths() -> list[str]:
+        paths = [str(python_bindings_path)]
+        build_root = submodule_path / "build"
+        if build_root.exists():
+            build_paths = sorted(
+                (path for path in build_root.glob("lib.*") if path.is_dir()),
+                key=lambda path: path.name,
+                reverse=True,
+            )
+            paths.extend(str(path) for path in build_paths)
+        return paths
+
+    def _materialize_built_extension() -> None:
+        package_dir = (
+            python_bindings_path
+            / f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
+        )
+        if not package_dir.exists():
+            return
+        build_root = submodule_path / "build"
+        if not build_root.exists():
+            return
+        for build_lib in build_root.glob("lib.*"):
+            built_package_dir = build_lib / package_dir.name
+            if not built_package_dir.exists():
+                continue
+            for built_extension in built_package_dir.glob("_binding*"):
+                shutil.copy2(built_extension, package_dir / built_extension.name)
+
+    inserted_paths: list[str] = []
     try:
-        if python_bindings_str not in sys.path:
-            sys.path.insert(0, python_bindings_str)
+        for candidate_path in _binding_search_paths():
+            if candidate_path not in sys.path:
+                sys.path.insert(0, candidate_path)
+                inserted_paths.append(candidate_path)
 
         try:
             module_name = f"{cs.TREE_SITTER_MODULE_PREFIX}{lang_name.replace('-', '_')}"
@@ -57,8 +94,14 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
 
             def _load_from_module() -> LanguageLoader | None:
                 logger.debug(ls.IMPORTING_MODULE.format(module=module_name))
-                sys.modules.pop(module_name, None)
-                module = importlib.import_module(module_name)
+                try:
+                    sys.modules.pop(module_name, None)
+                    module = importlib.import_module(module_name)
+                except (ImportError, AttributeError) as exc:
+                    logger.debug(
+                        "Submodule import for {} not ready yet: {}", module_name, exc
+                    )
+                    return None
 
                 for attr_name in language_attrs:
                     if hasattr(module, attr_name):
@@ -100,14 +143,21 @@ def _try_load_from_submodule(lang_name: cs.SupportedLanguage) -> LanguageLoader:
                     )
                     return None
                 logger.debug(ls.BUILD_SUCCESS.format(lang=lang_name))
+                _materialize_built_extension()
+
+                for candidate_path in _binding_search_paths():
+                    if candidate_path not in sys.path:
+                        sys.path.insert(0, candidate_path)
+                        inserted_paths.append(candidate_path)
 
             rebuilt_loader = _load_from_module()
             if rebuilt_loader is not None:
                 return rebuilt_loader
 
         finally:
-            if python_bindings_str in sys.path:
-                sys.path.remove(python_bindings_str)
+            for candidate_path in inserted_paths:
+                if candidate_path in sys.path:
+                    sys.path.remove(candidate_path)
 
     except Exception as e:
         logger.debug(ls.SUBMODULE_LOAD_FAILED.format(lang=lang_name, error=e))
@@ -305,6 +355,13 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
         if lang_name not in loaders or loaders[lang_name] is None:
             loaders[lang_name] = _try_load_from_submodule(lang_name)
 
+    if (
+        loaders.get(cs.SupportedLanguage.VUE) is None
+        and loaders.get(cs.SupportedLanguage.HTML) is not None
+    ):
+        loaders[cs.SupportedLanguage.VUE] = loaders[cs.SupportedLanguage.HTML]
+        logger.info("Using html grammar fallback for vue files.")
+
     return loaders
 
 
@@ -447,6 +504,24 @@ def _create_language_queries(
     )
 
 
+def _capsule_from_language_ptr(raw_ptr: int) -> object:
+    if raw_ptr <= 0:
+        raise ValueError("tree_sitter_language_pointer_invalid")
+    return _PY_CAPSULE_NEW(
+        ctypes.c_void_p(raw_ptr),
+        b"tree_sitter.Language",
+        None,
+    )
+
+
+def _coerce_language(lang_obj: object) -> Language:
+    if isinstance(lang_obj, Language):
+        return lang_obj
+    if isinstance(lang_obj, int):
+        return Language(_capsule_from_language_ptr(lang_obj))
+    return Language(lang_obj)
+
+
 def _process_language(
     lang_name: cs.SupportedLanguage,
     lang_config: LanguageSpec,
@@ -476,13 +551,7 @@ def _process_language(
         return False
 
     try:
-        lang_obj = lang_lib()
-        if isinstance(lang_obj, Language):
-            language = lang_obj
-        elif isinstance(lang_obj, int):
-            language = Language(lang_obj)
-        else:
-            language = Language(lang_obj)
+        language = _coerce_language(lang_lib())
         parser = Parser(language)
         parsers[lang_name] = parser
         queries[lang_name] = _create_language_queries(
@@ -499,18 +568,16 @@ def _is_windows_unsupported(lang_name: cs.SupportedLanguage) -> bool:
     if os.name != "nt":
         return False
 
-    allow_unsupported = os.getenv(
-        "CODEGRAPH_WINDOWS_ALLOW_UNSUPPORTED", ""
-    ).lower() in {"1", "true", "yes"}
-
-    if allow_unsupported:
+    raw_blocklist = os.getenv("CODEGRAPH_WINDOWS_BLOCK_LANGS", "").strip()
+    if not raw_blocklist:
         return False
 
-    return lang_name in {
-        cs.SupportedLanguage.VUE,
-        cs.SupportedLanguage.KOTLIN,
-        cs.SupportedLanguage.SCSS,
+    blocked = {
+        item.strip().lower().replace("_", "-")
+        for item in raw_blocklist.split(",")
+        if item.strip()
     }
+    return str(lang_name).lower() in blocked
 
 
 def load_parsers() -> tuple[
@@ -533,11 +600,14 @@ def load_parsers() -> tuple[
     parsers: dict[cs.SupportedLanguage, Parser] = {}
     queries: dict[cs.SupportedLanguage, LanguageQueries] = {}
     available_languages: list[cs.SupportedLanguage] = []
+    unavailable_languages: list[cs.SupportedLanguage] = []
 
     for lang_key, lang_config in deepcopy(LANGUAGE_SPECS).items():
         lang_name = cs.SupportedLanguage(lang_key)
         if _process_language(lang_name, lang_config, parsers, queries):
             available_languages.append(lang_name)
+        else:
+            unavailable_languages.append(lang_name)
 
     if not available_languages:
         raise RuntimeError(ex.NO_LANGUAGES)
@@ -545,6 +615,11 @@ def load_parsers() -> tuple[
     queries = apply_scm_query_overrides(parsers, queries)
 
     logger.info(ls.INITIALIZED_PARSERS.format(languages=", ".join(available_languages)))
+    if unavailable_languages:
+        logger.warning(
+            "Unavailable parsers: {}",
+            ", ".join(str(language) for language in unavailable_languages),
+        )
     return parsers, queries
 
 
@@ -565,7 +640,7 @@ def get_parser_and_language(
         return None, None
 
     try:
-        lang_obj = Language(lang_loader())
+        lang_obj = _coerce_language(lang_loader())
         parser = Parser(lang_obj)
         return parser, lang_obj
     except Exception:

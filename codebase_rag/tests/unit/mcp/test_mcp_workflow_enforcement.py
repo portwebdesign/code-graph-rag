@@ -83,6 +83,41 @@ class TestMCPWorkflowEnforcement:
         )
         assert exact_next_calls[0].get("tool") == "plan_task"
 
+    def test_workflow_gate_requires_repo_evidence_before_context7(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["memory_primed"] = True
+
+        payload = mcp_registry.get_workflow_gate_payload(
+            "context7_docs",
+            {
+                "library": "fastapi",
+                "query": "dependency injection lifecycle",
+            },
+        )
+
+        assert payload is not None
+        assert "context7_repo_evidence_required" in str(payload.get("error", ""))
+        exact_next_calls = cast(
+            list[dict[str, object]], payload.get("exact_next_calls", [])
+        )
+        assert exact_next_calls[0].get("tool") == "query_code_graph"
+
+    def test_visibility_gate_blocks_context7_until_session_stage_unlocks(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["memory_primed"] = True
+
+        payload = mcp_registry.get_visibility_gate_payload(
+            "context7_docs",
+            {"library": "fastapi", "query": "routing"},
+        )
+
+        assert payload is not None
+        assert payload.get("gate") == "visibility"
+        assert payload.get("blocked_tool") == "context7_docs"
+        assert "query_code_graph" in cast(list[str], payload.get("visible_tools", []))
+
     async def test_run_cypher_parameterizes_literal_scope(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
@@ -121,3 +156,20 @@ class TestMCPWorkflowEnforcement:
 
         assert "error" in result
         assert "must use parameterized project scope" in str(result.get("error", ""))
+
+    async def test_impact_graph_passes_project_scope_to_query_layer(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = []
+
+        _ = await mcp_registry.impact_graph(qualified_name="pkg.Service.run")
+
+        query_args = ingestor.fetch_all.call_args
+        assert query_args is not None
+        cypher = str(query_args.args[0])
+        params = cast(dict[str, object], query_args.args[1])
+        assert "all(node IN nodes(p)" in cypher
+        assert (
+            params.get("project_name") == Path(mcp_registry.project_root).resolve().name
+        )

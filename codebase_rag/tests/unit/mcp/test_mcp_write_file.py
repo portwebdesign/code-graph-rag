@@ -91,6 +91,26 @@ class TestWriteFileBasic:
         assert file_path.exists()
         assert file_path.read_text(encoding="utf-8") == ""
 
+    async def test_write_file_reports_graph_sync_after_preflight(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        async def fake_sync_graph_updates(
+            user_requested: bool,
+            reason: str,
+            sync_mode: str = "fast",
+        ) -> dict[str, object]:
+            assert user_requested is True
+            assert "write_file" in reason
+            assert sync_mode == "fast"
+            return {"status": "ok"}
+
+        mcp_registry._session_state["preflight_project_selected"] = True
+        mcp_registry.sync_graph_updates = fake_sync_graph_updates
+
+        result = await mcp_registry.write_file("synced.txt", "content")
+
+        assert "Graph sync: ok" in result
+
 
 class TestWriteFileContent:
     """Test writing various content types."""

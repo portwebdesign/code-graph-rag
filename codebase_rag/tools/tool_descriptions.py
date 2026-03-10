@@ -113,7 +113,8 @@ MCP_INDEX_REPOSITORY = (
 
 MCP_SYNC_GRAPH_UPDATES = (
     "Refresh graph state for the active repository without deleting project data first. "
-    "Uses GraphUpdater and respects incremental/git-delta configuration for faster updates."
+    "Supports sync_mode='fast' (default, incremental/selective when possible) and "
+    "sync_mode='full' (force full reparse for maximum consistency)."
 )
 
 MCP_QUERY_CODE_GRAPH = (
@@ -124,9 +125,21 @@ MCP_QUERY_CODE_GRAPH = (
     "Requires preflight: run list_projects -> select_active_project first."
 )
 
+MCP_MULTI_HOP_ANALYSIS = (
+    "Build a compressed multi-hop evidence bundle around a symbol or file. "
+    "Aggregates inbound/outbound relationships across CALLS/IMPORTS/INHERITS/USES, summarizes blast radius, "
+    "highlights affected symbols/files, and recommends the next retrieval steps. "
+    "Use this for complex architecture, dependency-chain, and impact analysis in large projects."
+)
+
 MCP_SEMANTIC_SEARCH = (
     "Perform semantic (vector-based) code search using embeddings. "
     "Use this for intent-based discovery such as 'auth flow' or 'error handling'."
+)
+
+MCP_CONTEXT7_DOCS = (
+    "Fetch Context7 documentation for an external library/framework and persist it into cache/graph/memory when configured. "
+    "Use this only when repo evidence is insufficient and the task depends on external library behavior."
 )
 
 MCP_GET_FUNCTION_SOURCE = (
@@ -161,8 +174,14 @@ MCP_PARAM_DRIFT_CONFIRMED = (
     "Set true only after proving filesystem↔graph drift for the target project"
 )
 MCP_PARAM_NATURAL_LANGUAGE_QUERY = "Your question in plain English about the codebase"
+MCP_PARAM_INCLUDE_CONTEXT7 = "When true, multi-hop analysis may enrich results with Context7 docs for relevant external libraries"
+MCP_PARAM_CONTEXT7_QUERY = (
+    "Optional Context7 query string to use for external framework/library enrichment"
+)
 MCP_PARAM_QUERY = "Natural language semantic search query"
+MCP_PARAM_LIBRARY = "External library or framework name for Context7 lookup"
 MCP_PARAM_TOP_K = "Maximum number of semantic matches to return"
+MCP_PARAM_VERSION = "Optional library/framework version for Context7 lookup"
 MCP_PARAM_NODE_ID = "Graph node ID of the target function/method"
 MCP_PARAM_QUALIFIED_NAME = (
     "Fully qualified name (e.g., 'app.services.UserService.create_user')"
@@ -282,7 +301,8 @@ MCP_PLAN_TASK = (
 
 MCP_TEST_GENERATE = (
     "Ask a specialized test-generation agent to create test cases for a specific function or class. "
-    "Provide the 'goal' (e.g. 'Generate tests for codebase_rag.core.constants')."
+    "Supports output_mode='code' (default), 'plan_json', or 'both'. "
+    "Return code-first, runnable test output when possible; keep assumptions explicit and minimal."
 )
 
 MCP_MEMORY_ADD = (
@@ -300,11 +320,13 @@ MCP_MEMORY_QUERY_PATTERNS = (
 
 MCP_EXECUTION_FEEDBACK = (
     "Record execution outcome feedback after a tool run. "
+    "Supports structured failure reasons (e.g. hallucinated_fixture, unverified_assertion, missing_cleanup). "
     "If feedback indicates test failure or low coverage, the session can require replanning."
 )
 
 MCP_TEST_QUALITY_GATE = (
     "Evaluate test quality score from coverage, edge-case, and negative-test dimensions (0..1 each). "
+    "Optionally score repo evidence, layer correctness, cleanup safety, anti-hallucination, and coupling penalty. "
     "Blocks completion when total score is below threshold."
 )
 
@@ -336,6 +358,9 @@ MCP_PARAM_CHUNKS = (
 )
 MCP_PARAM_GOAL = "The objective or goal for the agent to achieve"
 MCP_PARAM_CONTEXT = "Optional additional context or instructions"
+MCP_PARAM_OUTPUT_MODE = (
+    "Output mode for test generation: 'code' (default), 'plan_json', or 'both'"
+)
 MCP_PARAM_ENTRY = "The memory text to save"
 MCP_PARAM_TAGS = "Comma-separated list of tags for the memory entry (optional)"
 MCP_PARAM_FILTER_TAGS = (
@@ -345,10 +370,20 @@ MCP_PARAM_SUCCESS_ONLY = "When true, returns only successful pattern memories"
 MCP_PARAM_ACTION = "Action name to attach feedback to (e.g. refactor_batch)"
 MCP_PARAM_RESULT = "Execution result label (e.g. success, partial_success, failed)"
 MCP_PARAM_ISSUES = "Comma-separated issue labels (e.g. test failure, low coverage)"
+MCP_PARAM_FAILURE_REASONS = (
+    "Optional JSON array or comma-separated structured failure reasons "
+    "(e.g. hallucinated_fixture, unverified_assertion, missing_cleanup)"
+)
 MCP_PARAM_COVERAGE = "Coverage quality score between 0 and 1"
 MCP_PARAM_EDGE_CASES = "Edge-case quality score between 0 and 1"
 MCP_PARAM_NEGATIVE_TESTS = "Negative-test quality score between 0 and 1"
+MCP_PARAM_REPO_EVIDENCE = "Repo-evidence quality score between 0 and 1"
+MCP_PARAM_LAYER_CORRECTNESS = "Layer-correctness quality score between 0 and 1"
+MCP_PARAM_CLEANUP_SAFETY = "Cleanup-safety quality score between 0 and 1"
+MCP_PARAM_ANTI_HALLUCINATION = "Anti-hallucination quality score between 0 and 1"
+MCP_PARAM_IMPLEMENTATION_COUPLING_PENALTY = "Implementation-coupling penalty between 0 and 1; higher means the test is over-coupled"
 MCP_PARAM_SYNC_REASON = "Reason for graph synchronization after code edits"
+MCP_PARAM_SYNC_MODE = "Sync mode for graph refresh: 'fast' (default incremental/selective) or 'full' (force full reparse)"
 MCP_PARAM_AUTO_EXECUTE_NEXT = "When true, automatically executes next_best_action returned by validate_done_decision"
 MCP_PARAM_VERIFY_DRIFT = "When true, runs detect_project_drift after sync_graph_updates for instant validation"
 MCP_PARAM_DEBOUNCE_SECONDS = (
@@ -365,7 +400,9 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.INDEX_REPOSITORY: MCP_INDEX_REPOSITORY,
     MCPToolName.SYNC_GRAPH_UPDATES: MCP_SYNC_GRAPH_UPDATES,
     MCPToolName.QUERY_CODE_GRAPH: MCP_QUERY_CODE_GRAPH,
+    MCPToolName.MULTI_HOP_ANALYSIS: MCP_MULTI_HOP_ANALYSIS,
     MCPToolName.SEMANTIC_SEARCH: MCP_SEMANTIC_SEARCH,
+    MCPToolName.CONTEXT7_DOCS: MCP_CONTEXT7_DOCS,
     MCPToolName.GET_FUNCTION_SOURCE: MCP_GET_FUNCTION_SOURCE,
     MCPToolName.GET_CODE_SNIPPET: MCP_GET_CODE_SNIPPET,
     MCPToolName.SURGICAL_REPLACE_CODE: MCP_SURGICAL_REPLACE_CODE,

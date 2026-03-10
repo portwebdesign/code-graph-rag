@@ -2744,7 +2744,9 @@ class MCPToolName(StrEnum):
     INDEX_REPOSITORY = "index_repository"
     SYNC_GRAPH_UPDATES = "sync_graph_updates"
     QUERY_CODE_GRAPH = "query_code_graph"
+    MULTI_HOP_ANALYSIS = "multi_hop_analysis"
     SEMANTIC_SEARCH = "semantic_search"
+    CONTEXT7_DOCS = "context7_docs"
     GET_FUNCTION_SOURCE = "get_function_source"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
@@ -2817,10 +2819,14 @@ class MCPParamName(StrEnum):
     USER_REQUESTED = "user_requested"
     DRIFT_CONFIRMED = "drift_confirmed"
     QUERY = "query"
+    LIBRARY = "library"
     TOP_K = "top_k"
+    VERSION = "version"
     NODE_ID = "node_id"
     CONFIRM = "confirm"
     NATURAL_LANGUAGE_QUERY = "natural_language_query"
+    INCLUDE_CONTEXT7 = "include_context7"
+    CONTEXT7_QUERY = "context7_query"
     QUALIFIED_NAME = "qualified_name"
     FILE_PATH = "file_path"
     TARGET_CODE = "target_code"
@@ -2844,6 +2850,7 @@ class MCPParamName(StrEnum):
     CHUNKS = "chunks"
     GOAL = "goal"
     CONTEXT = "context"
+    OUTPUT_MODE = "output_mode"
     ENTRY = "entry"
     TAGS = "tags"
     FILTER_TAGS = "filter_tags"
@@ -2851,10 +2858,17 @@ class MCPParamName(StrEnum):
     ACTION = "action"
     RESULT = "result"
     ISSUES = "issues"
+    FAILURE_REASONS = "failure_reasons"
     COVERAGE = "coverage"
     EDGE_CASES = "edge_cases"
     NEGATIVE_TESTS = "negative_tests"
+    REPO_EVIDENCE = "repo_evidence"
+    LAYER_CORRECTNESS = "layer_correctness"
+    CLEANUP_SAFETY = "cleanup_safety"
+    ANTI_HALLUCINATION = "anti_hallucination"
+    IMPLEMENTATION_COUPLING_PENALTY = "implementation_coupling_penalty"
     SYNC_REASON = "sync_reason"
+    SYNC_MODE = "sync_mode"
     AUTO_EXECUTE_NEXT = "auto_execute_next"
     VERIFY_DRIFT = "verify_drift"
     DEBOUNCE_SECONDS = "debounce_seconds"
@@ -3275,7 +3289,6 @@ SPEC_RUBY_IMPORT_TYPES = ("call",)
 SPEC_KOTLIN_FUNCTION_TYPES = ("function_declaration",)
 SPEC_KOTLIN_CLASS_TYPES = (
     "class_declaration",
-    "interface_declaration",
     "object_declaration",
 )
 SPEC_KOTLIN_MODULE_TYPES = ("source_file",)

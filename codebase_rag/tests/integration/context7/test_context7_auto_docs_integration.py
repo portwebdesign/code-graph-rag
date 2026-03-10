@@ -61,6 +61,9 @@ class FakeClient:
     def detect_library(self, query: str) -> str | None:
         return self._detected_library
 
+    def should_auto_fetch(self, query: str) -> bool:
+        return self._detected_library is not None
+
     async def auto_docs(self, query: str) -> dict[str, Any] | None:
         return self._auto_result
 
@@ -134,3 +137,24 @@ def test_inject_context7_auto_docs_adds_reference_block() -> None:
     assert "Library: /tiangolo/fastapi" in injected
     assert "Use OAuth2PasswordBearer." in injected
     assert question in injected
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_resolve_context7_auto_docs_skips_non_explicit_queries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main_module.settings, "CONTEXT7_AUTO_ENABLED", True)
+    runtime = main_module.Context7AutoDocsRuntime(
+        client=cast(Context7Client, FakeClient(detected_library=None)),
+        knowledge_store=cast(Context7KnowledgeStore, FakeKnowledgeStore(None)),
+        memory_store=cast(Context7MemoryStore, FakeMemoryStore(None)),
+        persistence=cast(Context7Persistence, FakePersistence([])),
+    )
+
+    result = await main_module._resolve_context7_auto_docs(
+        "best way to react to file changes",
+        runtime,
+    )
+
+    assert result is None

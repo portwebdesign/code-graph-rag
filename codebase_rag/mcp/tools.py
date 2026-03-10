@@ -17,6 +17,11 @@ from codebase_rag.agents import (
     ValidatorAgent,
     normalize_orchestrator_prompt,
 )
+from codebase_rag.agents.output_parser import (
+    JSONOutputParser,
+    decode_escaped_text,
+    extract_code_block,
+)
 from codebase_rag.analysis.analysis_runner import AnalysisRunner
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as lg
@@ -47,6 +52,12 @@ from codebase_rag.infrastructure import tool_errors as te
 from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.policy.engine import MCPPolicyEngine
 from codebase_rag.services.cleanup_service import CleanupService
+from codebase_rag.services.context7_client import Context7Client
+from codebase_rag.services.context7_persistence import (
+    Context7KnowledgeStore,
+    Context7MemoryStore,
+    Context7Persistence,
+)
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
 from codebase_rag.tools import tool_descriptions as td
@@ -419,6 +430,7 @@ class MCPImpactGraphService:
         self,
         qualified_name: str | None = None,
         file_path: str | None = None,
+        project_name: str | None = None,
         depth: int = 3,
         limit: int = 200,
     ) -> dict[str, object]:
@@ -427,20 +439,30 @@ class MCPImpactGraphService:
         query = f"""
 MATCH (start)
 WHERE (
-    $qualified_name IS NOT NULL
-    AND start.qualified_name = $qualified_name
-) OR (
-    $file_path IS NOT NULL
-    AND (
-        start.path = $file_path
-        OR start.file_path = $file_path
-        OR start.path ENDS WITH $file_path
-        OR start.file_path ENDS WITH $file_path
+    (
+        $qualified_name IS NOT NULL
+        AND start.qualified_name = $qualified_name
+    ) OR (
+        $file_path IS NOT NULL
+        AND (
+            start.path = $file_path
+            OR start.file_path = $file_path
+            OR start.path ENDS WITH $file_path
+            OR start.file_path ENDS WITH $file_path
+        )
     )
+)
+AND (
+    $project_name IS NULL
+    OR coalesce(start.project_name, $project_name) = $project_name
 )
 WITH collect(DISTINCT start) AS seeds
 UNWIND seeds AS seed
 MATCH p=(seed)-[:{self._IMPACT_REL_TYPES}*1..{bounded_depth}]->(target)
+WHERE (
+    $project_name IS NULL
+    OR all(node IN nodes(p) WHERE coalesce(node.project_name, $project_name) = $project_name)
+)
 WITH seed, target, relationships(p) AS rels, length(p) AS hop_count
 RETURN DISTINCT
     coalesce(seed.qualified_name, seed.path, seed.file_path, seed.name, toString(id(seed))) AS source,
@@ -454,6 +476,7 @@ LIMIT $limit
         params = {
             "qualified_name": qualified_name,
             "file_path": file_path,
+            "project_name": project_name,
             "limit": bounded_limit,
         }
         results = self._ingestor.fetch_all(query, params)
@@ -591,6 +614,11 @@ def _build_tool_metadata_catalog(
                         type=cs.MCPSchemaType.STRING,
                         description=td.MCP_PARAM_REASON,
                     ),
+                    cs.MCPParamName.SYNC_MODE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_SYNC_MODE,
+                        default="fast",
+                    ),
                 },
                 required=[cs.MCPParamName.USER_REQUESTED, cs.MCPParamName.REASON],
             ),
@@ -618,6 +646,45 @@ def _build_tool_metadata_catalog(
             handler=registry.query_code_graph,
             returns_json=True,
         ),
+        cs.MCPToolName.MULTI_HOP_ANALYSIS: ToolMetadata(
+            name=cs.MCPToolName.MULTI_HOP_ANALYSIS,
+            description=td.MCP_TOOLS[cs.MCPToolName.MULTI_HOP_ANALYSIS],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUALIFIED_NAME,
+                    ),
+                    cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FILE_PATH,
+                    ),
+                    cs.MCPParamName.DEPTH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.INTEGER,
+                        description=td.MCP_PARAM_DEPTH,
+                        default=3,
+                    ),
+                    cs.MCPParamName.LIMIT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.INTEGER,
+                        description=td.MCP_PARAM_LIMIT,
+                        default=80,
+                    ),
+                    cs.MCPParamName.INCLUDE_CONTEXT7: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.BOOLEAN,
+                        description=td.MCP_PARAM_INCLUDE_CONTEXT7,
+                        default=False,
+                    ),
+                    cs.MCPParamName.CONTEXT7_QUERY: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CONTEXT7_QUERY,
+                    ),
+                },
+                required=[],
+            ),
+            handler=registry.multi_hop_analysis,
+            returns_json=True,
+        ),
         cs.MCPToolName.SEMANTIC_SEARCH: ToolMetadata(
             name=cs.MCPToolName.SEMANTIC_SEARCH,
             description=td.MCP_TOOLS[cs.MCPToolName.SEMANTIC_SEARCH],
@@ -637,6 +704,30 @@ def _build_tool_metadata_catalog(
                 required=[cs.MCPParamName.QUERY],
             ),
             handler=registry.semantic_search,
+            returns_json=True,
+        ),
+        cs.MCPToolName.CONTEXT7_DOCS: ToolMetadata(
+            name=cs.MCPToolName.CONTEXT7_DOCS,
+            description=td.MCP_TOOLS[cs.MCPToolName.CONTEXT7_DOCS],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.LIBRARY: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_LIBRARY,
+                    ),
+                    cs.MCPParamName.QUERY: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUERY,
+                    ),
+                    cs.MCPParamName.VERSION: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_VERSION,
+                    ),
+                },
+                required=[cs.MCPParamName.LIBRARY, cs.MCPParamName.QUERY],
+            ),
+            handler=registry.context7_docs,
             returns_json=True,
         ),
         cs.MCPToolName.GET_FUNCTION_SOURCE: ToolMetadata(
@@ -1051,6 +1142,11 @@ def _build_tool_metadata_catalog(
                         type=cs.MCPSchemaType.STRING,
                         description=td.MCP_PARAM_CONTEXT,
                     ),
+                    cs.MCPParamName.OUTPUT_MODE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_OUTPUT_MODE,
+                        default="code",
+                    ),
                 },
                 required=[cs.MCPParamName.GOAL],
             ),
@@ -1142,6 +1238,10 @@ def _build_tool_metadata_catalog(
                         type=cs.MCPSchemaType.STRING,
                         description=td.MCP_PARAM_ISSUES,
                     ),
+                    cs.MCPParamName.FAILURE_REASONS: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FAILURE_REASONS,
+                    ),
                 },
                 required=[cs.MCPParamName.ACTION, cs.MCPParamName.RESULT],
             ),
@@ -1165,6 +1265,26 @@ def _build_tool_metadata_catalog(
                     cs.MCPParamName.NEGATIVE_TESTS: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
                         description=td.MCP_PARAM_NEGATIVE_TESTS,
+                    ),
+                    cs.MCPParamName.REPO_EVIDENCE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_REPO_EVIDENCE,
+                    ),
+                    cs.MCPParamName.LAYER_CORRECTNESS: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_LAYER_CORRECTNESS,
+                    ),
+                    cs.MCPParamName.CLEANUP_SAFETY: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CLEANUP_SAFETY,
+                    ),
+                    cs.MCPParamName.ANTI_HALLUCINATION: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_ANTI_HALLUCINATION,
+                    ),
+                    cs.MCPParamName.IMPLEMENTATION_COUPLING_PENALTY: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_IMPLEMENTATION_COUPLING_PENALTY,
                     ),
                 },
                 required=[
@@ -1299,6 +1419,7 @@ _TOOL_DOMAIN_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "graph": (
         cs.MCPToolName.QUERY_CODE_GRAPH,
+        cs.MCPToolName.MULTI_HOP_ANALYSIS,
         cs.MCPToolName.RUN_CYPHER,
         cs.MCPToolName.IMPACT_GRAPH,
         cs.MCPToolName.GET_GRAPH_STATS,
@@ -1306,6 +1427,7 @@ _TOOL_DOMAIN_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "retrieval": (
         cs.MCPToolName.SEMANTIC_SEARCH,
+        cs.MCPToolName.CONTEXT7_DOCS,
         cs.MCPToolName.GET_FUNCTION_SOURCE,
         cs.MCPToolName.GET_CODE_SNIPPET,
         cs.MCPToolName.READ_FILE,
@@ -1387,9 +1509,11 @@ class MCPToolsRegistry:
     _TOOL_TIER_MAP = {
         cs.MCPToolName.LIST_PROJECTS: "tier1",
         cs.MCPToolName.QUERY_CODE_GRAPH: "tier1",
+        cs.MCPToolName.MULTI_HOP_ANALYSIS: "tier1",
         cs.MCPToolName.SEMANTIC_SEARCH: "tier1",
         cs.MCPToolName.RUN_CYPHER: "tier1",
         cs.MCPToolName.SELECT_ACTIVE_PROJECT: "tier1",
+        cs.MCPToolName.CONTEXT7_DOCS: "tier2",
         cs.MCPToolName.GET_FUNCTION_SOURCE: "tier2",
         cs.MCPToolName.READ_FILE: "tier2",
         cs.MCPToolName.WRITE_FILE: "tier3",
@@ -1430,7 +1554,9 @@ class MCPToolsRegistry:
         },
         "retrieval": {
             cs.MCPToolName.QUERY_CODE_GRAPH,
+            cs.MCPToolName.MULTI_HOP_ANALYSIS,
             cs.MCPToolName.SEMANTIC_SEARCH,
+            cs.MCPToolName.CONTEXT7_DOCS,
             cs.MCPToolName.GET_FUNCTION_SOURCE,
             cs.MCPToolName.GET_CODE_SNIPPET,
             cs.MCPToolName.READ_FILE,
@@ -1457,7 +1583,9 @@ class MCPToolsRegistry:
         },
         "validation": {
             cs.MCPToolName.QUERY_CODE_GRAPH,
+            cs.MCPToolName.MULTI_HOP_ANALYSIS,
             cs.MCPToolName.SEMANTIC_SEARCH,
+            cs.MCPToolName.CONTEXT7_DOCS,
             cs.MCPToolName.GET_FUNCTION_SOURCE,
             cs.MCPToolName.GET_CODE_SNIPPET,
             cs.MCPToolName.READ_FILE,
@@ -1567,6 +1695,320 @@ class MCPToolsRegistry:
             "phase_history": self._session_state.get("execution_phase_history", []),
         }
 
+    def _visible_tool_names(self, *, allow_phase_bypass: bool = False) -> set[str]:
+        phase = self._current_execution_phase()
+        visible: set[str] = {
+            cs.MCPToolName.LIST_PROJECTS,
+            cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+        }
+        if allow_phase_bypass and phase != "preflight":
+            visible.update(self._PHASE_ALLOWED_TOOLS.get(phase, set()))
+        if not bool(self._session_state.get("preflight_project_selected", False)):
+            return visible
+        if not bool(self._session_state.get("preflight_schema_summary_loaded", False)):
+            visible.add(cs.MCPToolName.GET_EXECUTION_READINESS)
+            return visible
+
+        visible.update(
+            {
+                cs.MCPToolName.GET_EXECUTION_READINESS,
+                cs.MCPToolName.GET_TOOL_USEFULNESS_RANKING,
+                cs.MCPToolName.MEMORY_QUERY_PATTERNS,
+                cs.MCPToolName.MEMORY_LIST,
+                cs.MCPToolName.PLAN_TASK,
+                cs.MCPToolName.QUERY_CODE_GRAPH,
+                cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                cs.MCPToolName.GET_GRAPH_STATS,
+                cs.MCPToolName.GET_DEPENDENCY_STATS,
+            }
+        )
+
+        graph_evidence = self._coerce_int(
+            self._session_state.get("graph_evidence_count", 0)
+        )
+        code_evidence = self._coerce_int(
+            self._session_state.get("code_evidence_count", 0)
+        )
+        semantic_hits = self._coerce_int(
+            self._session_state.get("semantic_success_count", 0)
+        )
+        impact_called = bool(self._session_state.get("impact_graph_called", False))
+        plan_done = bool(self._session_state.get("plan_task_completed", False))
+        graph_dirty = bool(self._session_state.get("graph_dirty", False))
+        edit_success = self._coerce_int(
+            self._session_state.get("edit_success_count", 0)
+        )
+
+        if graph_evidence > 0 or semantic_hits > 0 or impact_called:
+            visible.update(
+                {
+                    cs.MCPToolName.SEMANTIC_SEARCH,
+                    cs.MCPToolName.IMPACT_GRAPH,
+                    cs.MCPToolName.RUN_CYPHER,
+                    cs.MCPToolName.GET_CODE_SNIPPET,
+                    cs.MCPToolName.GET_FUNCTION_SOURCE,
+                    cs.MCPToolName.LIST_DIRECTORY,
+                    cs.MCPToolName.GET_ANALYSIS_REPORT,
+                    cs.MCPToolName.GET_ANALYSIS_METRIC,
+                    cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
+                    cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+                    cs.MCPToolName.RUN_ANALYSIS,
+                    cs.MCPToolName.RUN_ANALYSIS_SUBSET,
+                    cs.MCPToolName.SECURITY_SCAN,
+                    cs.MCPToolName.PERFORMANCE_HOTSPOTS,
+                    cs.MCPToolName.EXPORT_MERMAID,
+                }
+            )
+
+        if graph_evidence > 0 or semantic_hits > 0 or code_evidence > 0:
+            visible.add(cs.MCPToolName.READ_FILE)
+            visible.add(cs.MCPToolName.CONTEXT7_DOCS)
+
+        if graph_evidence > 0 or impact_called or code_evidence > 0 or plan_done:
+            visible.update(
+                {
+                    cs.MCPToolName.TEST_GENERATE,
+                    cs.MCPToolName.TEST_QUALITY_GATE,
+                    cs.MCPToolName.EXECUTION_FEEDBACK,
+                    cs.MCPToolName.VALIDATE_DONE_DECISION,
+                    cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
+                }
+            )
+
+        if code_evidence > 0 or edit_success > 0 or graph_dirty:
+            visible.update(
+                {
+                    cs.MCPToolName.WRITE_FILE,
+                    cs.MCPToolName.SURGICAL_REPLACE_CODE,
+                    cs.MCPToolName.APPLY_DIFF_SAFE,
+                    cs.MCPToolName.REFACTOR_BATCH,
+                    cs.MCPToolName.SYNC_GRAPH_UPDATES,
+                }
+            )
+
+        if plan_done or graph_evidence > 0 or code_evidence > 0:
+            visible.add(cs.MCPToolName.MEMORY_ADD)
+
+        return visible
+
+    def _staged_tool_visibility_contract(self) -> dict[str, object]:
+        visible = sorted(self._visible_tool_names())
+        hidden = sorted(
+            tool_name for tool_name in self._tools if tool_name not in visible
+        )
+        return {
+            "active_stage": self._current_execution_phase(),
+            "visible_tools": visible,
+            "hidden_tools": hidden,
+            "stages": [
+                {
+                    "name": "startup",
+                    "tools": [
+                        cs.MCPToolName.LIST_PROJECTS,
+                        cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                    ],
+                },
+                {
+                    "name": "graph_bootstrap",
+                    "tools": [
+                        cs.MCPToolName.QUERY_CODE_GRAPH,
+                        cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                        cs.MCPToolName.PLAN_TASK,
+                        cs.MCPToolName.GET_EXECUTION_READINESS,
+                    ],
+                },
+                {
+                    "name": "evidence_enrichment",
+                    "tools": [
+                        cs.MCPToolName.RUN_CYPHER,
+                        cs.MCPToolName.IMPACT_GRAPH,
+                        cs.MCPToolName.SEMANTIC_SEARCH,
+                        cs.MCPToolName.GET_CODE_SNIPPET,
+                        cs.MCPToolName.GET_FUNCTION_SOURCE,
+                        cs.MCPToolName.CONTEXT7_DOCS,
+                    ],
+                },
+                {
+                    "name": "implementation_confirmation",
+                    "tools": [cs.MCPToolName.READ_FILE],
+                },
+                {
+                    "name": "mutation_and_sync",
+                    "tools": [
+                        cs.MCPToolName.APPLY_DIFF_SAFE,
+                        cs.MCPToolName.SURGICAL_REPLACE_CODE,
+                        cs.MCPToolName.WRITE_FILE,
+                        cs.MCPToolName.REFACTOR_BATCH,
+                        cs.MCPToolName.SYNC_GRAPH_UPDATES,
+                    ],
+                },
+                {
+                    "name": "validation_and_tests",
+                    "tools": [
+                        cs.MCPToolName.TEST_GENERATE,
+                        cs.MCPToolName.TEST_QUALITY_GATE,
+                        cs.MCPToolName.EXECUTION_FEEDBACK,
+                        cs.MCPToolName.VALIDATE_DONE_DECISION,
+                    ],
+                },
+            ],
+        }
+
+    def _is_tool_visible_for_session(self, tool_name: str) -> tuple[bool, str]:
+        visible_names = self._visible_tool_names(allow_phase_bypass=True)
+        return tool_name in visible_names, self._tool_tier(tool_name)
+
+    def _tool_stage_name(self, tool_name: str) -> str:
+        stages = self._staged_tool_visibility_contract().get("stages")
+        if not isinstance(stages, list):
+            return "always_available"
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            stage_payload = cast(dict[str, object], stage)
+            tools = stage_payload.get("tools", [])
+            if isinstance(tools, list) and tool_name in tools:
+                return str(stage_payload.get("name", "unknown"))
+        return "always_available"
+
+    def _has_graph_read_prerequisite(self) -> bool:
+        graph_evidence_count = self._coerce_int(
+            self._session_state.get("graph_evidence_count", 0)
+        )
+        return graph_evidence_count > 0 and self._has_graph_query_digest()
+
+    def _has_repo_evidence_for_external_docs(self) -> bool:
+        graph_evidence_count = self._coerce_int(
+            self._session_state.get("graph_evidence_count", 0)
+        )
+        code_evidence_count = self._coerce_int(
+            self._session_state.get("code_evidence_count", 0)
+        )
+        semantic_success_count = self._coerce_int(
+            self._session_state.get("semantic_success_count", 0)
+        )
+        return (
+            graph_evidence_count > 0
+            or code_evidence_count > 0
+            or semantic_success_count > 0
+        )
+
+    def get_visibility_gate_payload(
+        self,
+        tool_name: str,
+        arguments: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        visible_names = self._visible_tool_names()
+        if tool_name in visible_names or self._is_preflight_exempt_tool(tool_name):
+            return None
+
+        args = arguments if isinstance(arguments, dict) else {}
+        query_text = self._extract_gate_query_text(tool_name, args)
+        exact_next_calls: list[dict[str, object]] = []
+
+        if tool_name in {
+            cs.MCPToolName.RUN_CYPHER,
+            cs.MCPToolName.CONTEXT7_DOCS,
+            cs.MCPToolName.READ_FILE,
+            cs.MCPToolName.GET_CODE_SNIPPET,
+            cs.MCPToolName.GET_FUNCTION_SOURCE,
+        }:
+            bootstrap_query = query_text or (
+                "Locate the relevant symbol, file, and dependencies for this task"
+            )
+            if tool_name == cs.MCPToolName.CONTEXT7_DOCS:
+                library_name = str(args.get(cs.MCPParamName.LIBRARY, "")).strip()
+                docs_query = str(args.get(cs.MCPParamName.QUERY, "")).strip()
+                if library_name:
+                    bootstrap_query = f"Find files, imports, modules, and symbols that use {library_name}."
+                    if docs_query:
+                        bootstrap_query += f" Focus on: {docs_query}"
+            escaped_query = bootstrap_query.replace("\\", "\\\\").replace('"', '\\"')
+            exact_next_calls.append(
+                {
+                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                    "args": {
+                        "natural_language_query": bootstrap_query,
+                        "output_format": "json",
+                    },
+                    "priority": 1,
+                    "when": "graph-first evidence is missing for this tool",
+                    "copy_paste": (
+                        "query_code_graph("
+                        f'natural_language_query="{escaped_query}", output_format="json")'
+                    ),
+                    "why": "unlock_graph_evidence_stage",
+                }
+            )
+        elif tool_name in {
+            cs.MCPToolName.WRITE_FILE,
+            cs.MCPToolName.SURGICAL_REPLACE_CODE,
+            cs.MCPToolName.APPLY_DIFF_SAFE,
+            cs.MCPToolName.REFACTOR_BATCH,
+        }:
+            exact_next_calls.extend(
+                [
+                    {
+                        "tool": cs.MCPToolName.IMPACT_GRAPH,
+                        "args": {"depth": 3},
+                        "priority": 1,
+                        "when": "mutation requested before impact evidence",
+                        "copy_paste": "impact_graph(depth=3)",
+                        "why": "collect_blast_radius_before_edit",
+                    },
+                    {
+                        "tool": cs.MCPToolName.READ_FILE,
+                        "args": {},
+                        "priority": 2,
+                        "when": "after graph evidence narrows implementation target",
+                        "copy_paste": "read_file(...)",
+                        "why": "confirm_implementation_before_edit",
+                    },
+                ]
+            )
+        else:
+            exact_next_calls.append(
+                {
+                    "tool": cs.MCPToolName.PLAN_TASK,
+                    "args": {
+                        "goal": query_text
+                        or f"Prepare deterministic sequence for {tool_name}",
+                        "context": "Stage visibility blocked the requested tool. Build the next safe GraphRAG-first sequence.",
+                    },
+                    "priority": 1,
+                    "when": "session stage has not unlocked the requested tool",
+                    "copy_paste": (
+                        "plan_task("
+                        f'goal="{(query_text or f"Prepare deterministic sequence for {tool_name}").replace(chr(34), '\\"')}", '
+                        'context="Stage visibility blocked the requested tool. Build the next safe GraphRAG-first sequence.")'
+                    ),
+                    "why": "re-enter_visible_stage_safely",
+                }
+            )
+
+        exact_next_calls = self._normalize_exact_next_calls(exact_next_calls)
+        return {
+            "status": "blocked",
+            "gate": "visibility",
+            "error": (
+                f"session_visibility_blocked: tool '{tool_name}' is not unlocked in the current session stage."
+            ),
+            "blocked_tool": tool_name,
+            "active_project": self._active_project_name(),
+            "tool_stage": self._tool_stage_name(tool_name),
+            "visible_tools": sorted(visible_names),
+            "staged_tool_visibility": self._staged_tool_visibility_contract(),
+            "exact_next_calls": exact_next_calls,
+            "next_best_action": self._project_next_best_action_from_exact_calls(
+                exact_next_calls
+            ),
+            "session_contract": self._session_state.get("session_contract", {}),
+            "ui_summary": (
+                f"Tool '{tool_name}' is published for client compatibility, but not yet unlocked. "
+                "Follow the recommended graph-first next action."
+            ),
+        }
+
     def get_phase_gate_error(self, tool_name: str) -> str | None:
         if tool_name in self._PHASE_EXEMPT_TOOLS:
             return None
@@ -1590,6 +2032,7 @@ class MCPToolsRegistry:
     }
     _PLAN_GATE_TOOLS: set[str] = {
         cs.MCPToolName.QUERY_CODE_GRAPH,
+        cs.MCPToolName.MULTI_HOP_ANALYSIS,
         cs.MCPToolName.RUN_CYPHER,
         cs.MCPToolName.SEMANTIC_SEARCH,
         cs.MCPToolName.READ_FILE,
@@ -1645,12 +2088,10 @@ class MCPToolsRegistry:
         query_text = self._extract_gate_query_text(tool_name, args)
         escaped_query = query_text.replace("\\", "\\\\").replace('"', '\\"')
 
-        if bool(settings.MCP_READ_FILE_REQUIRES_QUERY_GRAPH) and (
-            tool_name == cs.MCPToolName.READ_FILE
-            and self._coerce_int(
-                self._session_state.get("query_code_graph_success_count", 0)
-            )
-            <= 0
+        if (
+            bool(settings.MCP_READ_FILE_REQUIRES_QUERY_GRAPH)
+            and tool_name == cs.MCPToolName.READ_FILE
+            and not self._has_graph_read_prerequisite()
         ):
             exact_next_calls: list[dict[str, object]] = [
                 {
@@ -1662,7 +2103,7 @@ class MCPToolsRegistry:
                         "output_format": "json",
                     },
                     "priority": 1,
-                    "when": "read_file requested without query_code_graph evidence",
+                    "when": "read_file requested without graph-first evidence and digest",
                     "copy_paste": (
                         "query_code_graph("
                         f'natural_language_query="Locate implementation context for file: {str(args.get("file_path", "")).replace("\\", "\\\\").replace('"', '\\"')}", '
@@ -1682,7 +2123,10 @@ class MCPToolsRegistry:
             return {
                 "status": "blocked",
                 "gate": "workflow",
-                "error": cs.MCP_READ_FILE_QUERY_GRAPH_REQUIRED,
+                "error": (
+                    "graph_read_prerequisite_required: run query_code_graph, multi_hop_analysis, "
+                    "or run_cypher after graph-first flow before read_file."
+                ),
                 "blocked_tool": tool_name,
                 "active_project": self._active_project_name(),
                 "exact_next_calls": exact_next_calls,
@@ -1691,6 +2135,62 @@ class MCPToolsRegistry:
                 ),
                 "session_contract": self._session_state.get("session_contract", {}),
                 "ui_summary": "workflow_gate_blocked: run query_code_graph before read_file.",
+            }
+
+        if (
+            tool_name == cs.MCPToolName.CONTEXT7_DOCS
+            and not self._has_repo_evidence_for_external_docs()
+        ):
+            library = str(args.get("library", "")).strip()
+            query = str(args.get("query", "")).strip()
+            repo_query = (
+                f"How is {library} used in this repository? {query}".strip()
+                if library
+                else (
+                    query
+                    or "Find the relevant repo evidence before external documentation lookup"
+                )
+            )
+            escaped_repo_query = repo_query.replace("\\", "\\\\").replace('"', '\\"')
+            exact_next_calls = [
+                {
+                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                    "args": {
+                        "natural_language_query": repo_query,
+                        "output_format": "json",
+                    },
+                    "priority": 1,
+                    "when": "Context7 requested before repository evidence exists",
+                    "copy_paste": (
+                        "query_code_graph("
+                        f'natural_language_query="{escaped_repo_query}", output_format="json")'
+                    ),
+                    "why": "repo_evidence_first_for_external_docs",
+                },
+                {
+                    "tool": cs.MCPToolName.CONTEXT7_DOCS,
+                    "args": dict(args),
+                    "priority": 2,
+                    "when": "after repository evidence confirms the external library gap",
+                    "copy_paste": "context7_docs(...)",
+                    "why": "resume_external_doc_enrichment",
+                },
+            ]
+            return {
+                "status": "blocked",
+                "gate": "workflow",
+                "error": (
+                    "context7_repo_evidence_required: collect repository evidence before "
+                    "querying external documentation."
+                ),
+                "blocked_tool": tool_name,
+                "active_project": self._active_project_name(),
+                "exact_next_calls": exact_next_calls,
+                "next_best_action": self._project_next_best_action_from_exact_calls(
+                    exact_next_calls
+                ),
+                "session_contract": self._session_state.get("session_contract", {}),
+                "ui_summary": "workflow_gate_blocked: collect repo evidence before context7_docs.",
             }
 
         if bool(settings.MCP_ENFORCE_MEMORY_PRIMING_GATE) and not bool(
@@ -1825,6 +2325,10 @@ class MCPToolsRegistry:
         )
         self._semantic_search_tool = create_semantic_search_tool()
         self._get_function_source_tool = create_get_function_source_tool()
+        self._context7_client = Context7Client()
+        self._context7_knowledge_store = Context7KnowledgeStore(ingestor)
+        self._context7_memory_store = Context7MemoryStore(project_root)
+        self._context7_persistence = Context7Persistence(ingestor, project_root)
 
         async def _default_plan(goal: str, context: str | None = None) -> object:
             _ = goal
@@ -1908,6 +2412,11 @@ class MCPToolsRegistry:
             "policy_allow_count": 0,
             "policy_deny_count": 0,
             "pattern_reuse_score": 0.0,
+            "graph_dirty": False,
+            "last_graph_sync_status": "not_needed",
+            "last_graph_sync_timestamp": 0,
+            "last_graph_sync_error": "",
+            "last_graph_sync_paths": [],
             "orchestrate_circuit": {
                 "state": "closed",
                 "failure_count": 0,
@@ -1924,6 +2433,7 @@ class MCPToolsRegistry:
         self._tools = _build_tool_metadata(self)
         for tool_name in self._tools.keys():
             self._ensure_tool_telemetry_bucket(tool_name)
+        self._json_output_parser = JSONOutputParser()
 
     @staticmethod
     def _is_preflight_exempt_tool(tool_name: str) -> bool:
@@ -2276,6 +2786,18 @@ class MCPToolsRegistry:
             self._session_state.get("auto_plan_attempted", False)
         )
         self._session_state["auto_plan_attempted"] = True
+        preserved_graph_evidence_count = self._coerce_int(
+            self._session_state.get("graph_evidence_count", 0)
+        )
+        preserved_query_success_count = self._coerce_int(
+            self._session_state.get("query_success_count", 0)
+        )
+        preserved_graph_digest = str(
+            self._session_state.get("last_graph_result_digest", "")
+        )
+        preserved_graph_query_digest_id = str(
+            self._session_state.get("last_graph_query_digest_id", "")
+        )
         try:
             cypher_result = await self.run_cypher(
                 cypher=schema_query,
@@ -2290,6 +2812,12 @@ class MCPToolsRegistry:
             # on the first genuine query after select_active_project returns.
             if not _auto_plan_was_attempted:
                 self._session_state["auto_plan_attempted"] = False
+            self._session_state["graph_evidence_count"] = preserved_graph_evidence_count
+            self._session_state["query_success_count"] = preserved_query_success_count
+            self._session_state["last_graph_result_digest"] = preserved_graph_digest
+            self._session_state["last_graph_query_digest_id"] = (
+                preserved_graph_query_digest_id
+            )
         # ── End auto-plan guard ──────────────────────────────────────────────
         if not isinstance(cypher_result, dict):
             self._session_state["preflight_schema_summary_loaded"] = False
@@ -2496,6 +3024,10 @@ class MCPToolsRegistry:
             directory_lister=self.directory_lister
         )
         self._memory_store = MCPMemoryStore(project_root=resolved_repo_str)
+        self._context7_memory_store = Context7MemoryStore(resolved_repo_str)
+        self._context7_persistence = Context7Persistence(
+            self.ingestor, resolved_repo_str
+        )
         self._session_state["preflight_project_selected"] = False
         self._session_state["preflight_schema_summary_loaded"] = False
         self._session_state["preflight_schema_summary_rows"] = 0
@@ -2527,13 +3059,14 @@ class MCPToolsRegistry:
 
     def _build_session_contract(self, project_name: str) -> dict[str, object]:
         orchestrator_policy = {
-            "version": "2026-03-04",
+            "version": "2026-03-10",
             "published_on_first_call": "select_active_project",
             "tool_tiering": {
                 "visible_tiers": sorted(self._ORCHESTRATOR_VISIBLE_TIERS),
                 "tier_map": dict(self._TOOL_TIER_MAP),
                 "enforcement": "auto_execution_strict_visibility",
             },
+            "staged_tool_visibility": self._staged_tool_visibility_contract(),
             "registry_domains": {
                 domain: list(tool_names)
                 for domain, tool_names in _TOOL_DOMAIN_GROUPS.items()
@@ -2617,10 +3150,23 @@ class MCPToolsRegistry:
                 "list_projects",
                 "select_active_project",
             ],
+            "startup_playbook": [
+                {
+                    "priority": 1,
+                    "tool": cs.MCPToolName.LIST_PROJECTS,
+                    "why": "discover indexed projects before any scoped retrieval",
+                },
+                {
+                    "priority": 2,
+                    "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                    "why": "lock active project and publish session/tool policy",
+                },
+            ],
             "tool_preference_policy": {
                 "graph_rag_first": True,
                 "prefer_tools": [
                     cs.MCPToolName.QUERY_CODE_GRAPH,
+                    cs.MCPToolName.MULTI_HOP_ANALYSIS,
                     cs.MCPToolName.SEMANTIC_SEARCH,
                     cs.MCPToolName.PLAN_TASK,
                     cs.MCPToolName.GET_EXECUTION_READINESS,
@@ -2632,8 +3178,57 @@ class MCPToolsRegistry:
                 ],
                 "guidance": [
                     "Use GraphRAG discovery tools before direct file reads whenever possible.",
+                    "For architecture, dependency-chain, or blast-radius questions, prefer multi_hop_analysis before deep file inspection.",
                     "Use plan_task for multi-step work so downstream tools like test_generate become natural next steps.",
                     "Use read_file only after graph or semantic evidence narrows the target.",
+                    "After successful source edits, refresh the graph before trusting GraphRAG answers for changed code.",
+                    "Use context7_docs only when repository evidence is insufficient and external library behavior matters.",
+                ],
+            },
+            "tool_choice_heuristics": {
+                "relationship_questions": [
+                    cs.MCPToolName.QUERY_CODE_GRAPH,
+                    cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                    cs.MCPToolName.RUN_CYPHER,
+                ],
+                "implementation_questions": [
+                    cs.MCPToolName.QUERY_CODE_GRAPH,
+                    cs.MCPToolName.READ_FILE,
+                ],
+                "external_library_questions": [
+                    cs.MCPToolName.QUERY_CODE_GRAPH,
+                    cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                    cs.MCPToolName.CONTEXT7_DOCS,
+                ],
+                "edit_flow": [
+                    cs.MCPToolName.IMPACT_GRAPH,
+                    cs.MCPToolName.APPLY_DIFF_SAFE,
+                    cs.MCPToolName.SYNC_GRAPH_UPDATES,
+                    cs.MCPToolName.VALIDATE_DONE_DECISION,
+                ],
+            },
+            "response_profiles": {
+                "query_code_graph": "summary + cypher + compact details",
+                "multi_hop_analysis": "compressed evidence bundle + recommended reads + exact next calls",
+                "test_generate": {
+                    "default_output_mode": "code",
+                    "supported_output_modes": ["code", "plan_json", "both"],
+                },
+                "run_cypher": "compact json with readable cypher and params",
+                "context7_docs": "summary + doc excerpts + persistence source",
+            },
+            "graph_sync_policy": {
+                "after_edits": "sync_graph_updates",
+                "default_mode": "fast",
+                "consistency_mode": "full",
+                "readiness_gate": "graph_sync_gate",
+            },
+            "context7_policy": {
+                "usage": "external_library_gap_only",
+                "prerequisite": "repo_evidence_first",
+                "preferred_after": [
+                    cs.MCPToolName.QUERY_CODE_GRAPH,
+                    cs.MCPToolName.MULTI_HOP_ANALYSIS,
                 ],
             },
             "scope_rules": {
@@ -2652,6 +3247,7 @@ class MCPToolsRegistry:
                 ),
             },
             "orchestrator_policy": orchestrator_policy,
+            "staged_tool_visibility": self._staged_tool_visibility_contract(),
         }
 
     @staticmethod
@@ -2975,7 +3571,82 @@ class MCPToolsRegistry:
             "planner_usage_rate": self._planner_usage_rate(),
         }
 
+    @staticmethod
+    def _normalize_sync_mode(sync_mode: str | None) -> str:
+        normalized = str(sync_mode or "fast").strip().lower()
+        if normalized not in {"fast", "full"}:
+            return "fast"
+        return normalized
+
+    def _build_select_active_project_next_calls(
+        self,
+        *,
+        project_name: str,
+        project_root: str,
+        active_indexed: bool,
+    ) -> list[dict[str, object]]:
+        repo_root_escaped = project_root.replace("\\", "\\\\").replace('"', '\\"')
+        if not active_indexed:
+            return [
+                {
+                    "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                    "args": {"repo_path": project_root},
+                    "priority": 1,
+                    "when": "active project must stay pinned for this session",
+                    "copy_paste": (
+                        f'select_active_project(repo_path="{repo_root_escaped}")'
+                    ),
+                    "why": "confirm_active_project_scope",
+                }
+            ]
+
+        return [
+            {
+                "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                "args": {
+                    "natural_language_query": (
+                        f"Summarize the main modules, entry points, and dependency hotspots in {project_name}"
+                    ),
+                    "output_format": "json",
+                },
+                "priority": 1,
+                "when": "first scoped GraphRAG exploration after project selection",
+                "copy_paste": (
+                    "query_code_graph("
+                    f'natural_language_query="Summarize the main modules, entry points, and dependency hotspots in {project_name}", '
+                    'output_format="json")'
+                ),
+                "why": "graph_first_bootstrap",
+            },
+            {
+                "tool": cs.MCPToolName.PLAN_TASK,
+                "args": {
+                    "goal": f"Create a GraphRAG-first exploration plan for {project_name}",
+                    "context": (
+                        "Use select_active_project policy, prefer query_code_graph before read_file, "
+                        "and prepare an edit-safe workflow with sync_graph_updates."
+                    ),
+                },
+                "priority": 2,
+                "when": "task is multi-step, refactor-oriented, or architecture-heavy",
+                "copy_paste": (
+                    "plan_task("
+                    f'goal="Create a GraphRAG-first exploration plan for {project_name}", '
+                    'context="Use select_active_project policy, prefer query_code_graph before read_file, and prepare an edit-safe workflow with sync_graph_updates.")'
+                ),
+                "why": "planner_first_for_complex_work",
+            },
+        ]
+
     def _refresh_internal_agents(self) -> None:
+        provider_name = (
+            str(settings.active_orchestrator_config.provider).strip().lower()
+        )
+        agent_system_prompt: str | None = self._orchestrator_prompt
+        if provider_name == "ollama":
+            from codebase_rag.agents.mcp_prompt_pack import LOCAL_MCP_SYSTEM_PROMPT
+
+            agent_system_prompt = LOCAL_MCP_SYSTEM_PROMPT
         agent_tools = [
             self._query_tool,
             self._code_tool,
@@ -2987,21 +3658,21 @@ class MCPToolsRegistry:
         try:
             self._planner_agent = PlannerAgent(
                 agent_tools,
-                system_prompt=self._orchestrator_prompt,
+                system_prompt=agent_system_prompt,
             )
         except Exception as exc:
             logger.warning(lg.MCP_SERVER_TOOL_ERROR.format(name="planner", error=exc))
         try:
             self._test_agent = TestAgent(
                 agent_tools,
-                system_prompt=self._orchestrator_prompt,
+                system_prompt=agent_system_prompt,
             )
         except Exception as exc:
             logger.warning(lg.MCP_SERVER_TOOL_ERROR.format(name="test", error=exc))
         try:
             self._validator_agent = ValidatorAgent(
                 agent_tools,
-                system_prompt=self._orchestrator_prompt,
+                system_prompt=agent_system_prompt,
             )
         except Exception as exc:
             logger.warning(lg.MCP_SERVER_TOOL_ERROR.format(name="validator", error=exc))
@@ -3129,10 +3800,19 @@ class MCPToolsRegistry:
             preview_text = self._schema_summary_preview_text(preview_rows, max_items=5)
             session_contract = self._build_session_contract(project_name)
             self._session_state["session_contract"] = session_contract
+            exact_next_calls = self._build_select_active_project_next_calls(
+                project_name=project_name,
+                project_root=project_root,
+                active_indexed=active_indexed,
+            )
+            next_best_action = self._project_next_best_action_from_exact_calls(
+                exact_next_calls
+            )
             ui_summary = (
                 f"Active project: {project_name} | indexed={active_indexed} | "
                 f"preflight={preflight_status} | schema_rows={preflight_rows}\n"
-                f"Schema preview: {preview_text}"
+                f"Schema preview: {preview_text}\n"
+                f"Recommended next tool: {next_best_action.get('tool', 'query_code_graph')}"
             )
 
             return {
@@ -3167,7 +3847,26 @@ class MCPToolsRegistry:
                     dict[str, object],
                     session_contract.get("orchestrator_policy", {}),
                 ),
+                "bootstrap_playbook": {
+                    "summary": "Startup sequence complete. Stay graph-first.",
+                    "mandatory_sequence": ["list_projects", "select_active_project"],
+                    "next_focus": (
+                        "Use query_code_graph for first scoped exploration; use plan_task when the request is multi-step."
+                    ),
+                    "edit_rule": (
+                        "After source edits, refresh graph state before relying on GraphRAG answers for changed code."
+                    ),
+                },
+                "recommended_next_queries": [
+                    f"Summarize the main modules, entry points, and dependency hotspots in {project_name}",
+                    f"Which files or symbols in {project_name} have the highest blast radius?",
+                    f"Show me the most central classes and functions in {project_name}",
+                    "After identifying a target symbol or file, run multi_hop_analysis for compressed dependency traversal.",
+                ],
+                "exact_next_calls": exact_next_calls,
+                "next_best_action": next_best_action,
                 "execution_state": self._build_execution_state_contract(),
+                "staged_tool_visibility": self._staged_tool_visibility_contract(),
                 "policy": {
                     "query_code_graph_scope_enforced": True,
                     "run_cypher_scope_enforced": True,
@@ -3458,20 +4157,137 @@ class MCPToolsRegistry:
             )
             return cs.MCP_INDEX_ERROR.format(error=e)
 
+    def _mark_graph_dirty(self, action: str, file_paths: list[str]) -> None:
+        normalized_paths = sorted({path.strip() for path in file_paths if path.strip()})
+        self._session_state["graph_dirty"] = True
+        self._session_state["last_graph_sync_status"] = "pending"
+        self._session_state["last_graph_sync_error"] = ""
+        self._session_state["last_graph_sync_paths"] = normalized_paths
+        self._session_state["last_graph_sync_action"] = action
+
+    def _record_graph_sync_result(
+        self,
+        *,
+        status: str,
+        error: str | None = None,
+        file_paths: list[str] | None = None,
+    ) -> None:
+        raw_paths = (
+            file_paths
+            if file_paths is not None
+            else self._session_state.get("last_graph_sync_paths", [])
+        )
+        normalized_paths: list[str] = []
+        if isinstance(raw_paths, list):
+            normalized_paths = sorted(
+                {
+                    path.strip()
+                    for path in raw_paths
+                    if isinstance(path, str) and path.strip()
+                }
+            )
+        success = status == "ok"
+        self._session_state["graph_dirty"] = not success
+        self._session_state["last_graph_sync_status"] = status
+        self._session_state["last_graph_sync_timestamp"] = int(time.time())
+        self._session_state["last_graph_sync_error"] = (error or "").strip()
+        self._session_state["last_graph_sync_paths"] = normalized_paths
+
+    async def _maybe_auto_sync_graph_after_edit(
+        self,
+        *,
+        action: str,
+        file_paths: list[str],
+    ) -> dict[str, object]:
+        normalized_paths = sorted({path.strip() for path in file_paths if path.strip()})
+        self._mark_graph_dirty(action, normalized_paths)
+
+        if not bool(self._session_state.get("preflight_project_selected", False)):
+            return {
+                "status": "skipped_no_preflight",
+                "graph_dirty": True,
+                "reason": "preflight_not_initialized",
+                "paths": normalized_paths,
+            }
+
+        if not bool(settings.MCP_AUTO_SYNC_GRAPH_AFTER_EDITS):
+            return {
+                "status": "pending_manual_sync",
+                "graph_dirty": True,
+                "reason": "auto_sync_disabled",
+                "paths": normalized_paths,
+            }
+
+        sync_reason = f"Auto sync after {action}"
+        if normalized_paths:
+            sync_reason += ": " + ", ".join(normalized_paths[:5])
+
+        sync_result = await self.sync_graph_updates(
+            user_requested=True,
+            reason=sync_reason,
+            sync_mode="fast",
+        )
+        if sync_result.get("status") == "ok":
+            payload: dict[str, object] = {
+                "status": "ok",
+                "graph_dirty": False,
+                "sync": sync_result,
+            }
+            if bool(settings.MCP_AUTO_VERIFY_DRIFT_AFTER_EDITS):
+                payload["drift"] = await self.detect_project_drift()
+            return payload
+
+        error_text = str(sync_result.get("error", "graph_sync_failed"))
+        self._record_graph_sync_result(
+            status="error",
+            error=error_text,
+            file_paths=normalized_paths,
+        )
+        return {
+            "status": "error",
+            "graph_dirty": True,
+            "error": error_text,
+            "sync": sync_result,
+        }
+
+    @staticmethod
+    def _append_graph_sync_status_to_message(
+        message: str,
+        graph_sync: dict[str, object],
+    ) -> str:
+        status = str(graph_sync.get("status", "")).strip()
+        if not status:
+            return message
+        if status == "ok":
+            return f"{message}\nGraph sync: ok"
+        reason = str(
+            graph_sync.get("error")
+            or graph_sync.get("reason")
+            or graph_sync.get("status")
+        ).strip()
+        return f"{message}\nGraph sync: {status}" + (f" ({reason})" if reason else "")
+
     async def sync_graph_updates(
         self,
         user_requested: bool,
         reason: str,
+        sync_mode: str = "fast",
     ) -> dict[str, object]:
+        normalized_sync_mode = self._normalize_sync_mode(sync_mode)
         policy_result = self._policy_engine.validate_operation(
             tool_name=cs.MCPToolName.SYNC_GRAPH_UPDATES,
             params={
                 "user_requested": user_requested,
                 "reason": reason,
+                "sync_mode": normalized_sync_mode,
             },
             context={},
         )
         if not policy_result.allowed:
+            self._record_graph_sync_result(
+                status="error",
+                error=str(policy_result.error),
+            )
             self._record_policy_event(
                 action="sync_graph_updates",
                 allowed=False,
@@ -3491,6 +4307,7 @@ class MCPToolsRegistry:
                 repo_path=Path(self.project_root).resolve(),
                 parsers=self.parsers,
                 queries=self.queries,
+                force_full_reparse=normalized_sync_mode == "full",
             )
 
             timeout_seconds = max(60.0, float(settings.MCP_SYNC_GRAPH_TIMEOUT_SECONDS))
@@ -3516,6 +4333,7 @@ class MCPToolsRegistry:
                     "project": self._active_project_name(),
                     "git_delta_enabled": config.git_delta_enabled,
                     "selective_update_enabled": config.selective_update_enabled,
+                    "sync_mode": normalized_sync_mode,
                 },
             )
             self._record_tool_usefulness(
@@ -3523,10 +4341,13 @@ class MCPToolsRegistry:
                 success=True,
                 usefulness_score=1.0,
             )
+            self._record_graph_sync_result(status="ok")
             return {
                 "status": "ok",
                 "project": self._active_project_name(),
                 "sync_mode": {
+                    "requested": normalized_sync_mode,
+                    "force_full_reparse": normalized_sync_mode == "full",
                     "git_delta_enabled": config.git_delta_enabled,
                     "selective_update_enabled": config.selective_update_enabled,
                     "incremental_cache_enabled": config.incremental_cache_enabled,
@@ -3536,6 +4357,10 @@ class MCPToolsRegistry:
             }
         except TimeoutError:
             timeout_seconds = max(60.0, float(settings.MCP_SYNC_GRAPH_TIMEOUT_SECONDS))
+            self._record_graph_sync_result(
+                status="error",
+                error=f"sync_graph_updates_timed_out_after_{int(timeout_seconds)}s",
+            )
             self._record_tool_usefulness(
                 cs.MCPToolName.SYNC_GRAPH_UPDATES,
                 success=False,
@@ -3545,6 +4370,7 @@ class MCPToolsRegistry:
                 "error": f"sync_graph_updates_timed_out_after_{int(timeout_seconds)}s"
             }
         except Exception as exc:
+            self._record_graph_sync_result(status="error", error=str(exc))
             self._record_tool_usefulness(
                 cs.MCPToolName.SYNC_GRAPH_UPDATES,
                 success=False,
@@ -3566,14 +4392,14 @@ class MCPToolsRegistry:
         if not tool_name:
             return {"executed": False, "reason": "missing_tool_name"}
 
-        visible, tier = self._is_tool_visible_in_orchestrator(tool_name)
+        visible, tier = self._is_tool_visible_for_session(tool_name)
         if not visible:
             return {
                 "executed": False,
-                "reason": "tool_not_visible_in_orchestrator_tiering",
+                "reason": "tool_not_visible_in_current_session_stage",
                 "tool": tool_name,
                 "tier": tier,
-                "visible_tiers": sorted(self._ORCHESTRATOR_VISIBLE_TIERS),
+                "visible_tools": sorted(self._visible_tool_names()),
             }
 
         params_hint = next_best_action.get("params_hint", {})
@@ -3598,11 +4424,39 @@ class MCPToolsRegistry:
             result = await self.query_code_graph(natural_language_query=nl_query)
             return {"executed": True, "tool": tool_name, "result": result}
 
+        if tool_name == cs.MCPToolName.MULTI_HOP_ANALYSIS:
+            qualified_name = params_hint_dict.get("qualified_name")
+            file_path = params_hint_dict.get("file_path")
+            if not isinstance(qualified_name, str):
+                qualified_name = None
+            if not isinstance(file_path, str):
+                file_path = None
+            result = await self.multi_hop_analysis(
+                qualified_name=qualified_name,
+                file_path=file_path,
+                depth=self._coerce_int(params_hint_dict.get("depth", 3), default=3),
+                limit=self._coerce_int(params_hint_dict.get("limit", 80), default=80),
+                include_context7=bool(params_hint_dict.get("include_context7", False)),
+                context7_query=cast(str | None, params_hint_dict.get("context7_query")),
+            )
+            return {"executed": True, "tool": tool_name, "result": result}
+
         if tool_name == cs.MCPToolName.SELECT_ACTIVE_PROJECT:
             repo_path = params_hint_dict.get("repo_path")
             if not isinstance(repo_path, str):
                 repo_path = None
             result = await self.select_active_project(repo_path=repo_path)
+            return {"executed": True, "tool": tool_name, "result": result}
+
+        if tool_name == cs.MCPToolName.SYNC_GRAPH_UPDATES:
+            reason = str(params_hint_dict.get("reason", "")).strip()
+            if not reason:
+                reason = "refresh graph after code edits"
+            result = await self.sync_graph_updates(
+                user_requested=bool(params_hint_dict.get("user_requested", True)),
+                reason=reason,
+                sync_mode=str(params_hint_dict.get("sync_mode", "fast")),
+            )
             return {"executed": True, "tool": tool_name, "result": result}
 
         if tool_name == cs.MCPToolName.RUN_CYPHER:
@@ -3655,11 +4509,51 @@ class MCPToolsRegistry:
             result = await self.plan_task(goal=goal, context=context)
             return {"executed": True, "tool": tool_name, "result": result}
 
+        if tool_name == cs.MCPToolName.TEST_GENERATE:
+            goal = str(params_hint_dict.get("goal", "")).strip()
+            if not goal:
+                return {"executed": False, "reason": "missing_goal"}
+            context = params_hint_dict.get("context")
+            if not isinstance(context, str):
+                context = None
+            result = await self.test_generate(
+                goal=goal,
+                context=context,
+                output_mode=str(params_hint_dict.get("output_mode", "code")),
+            )
+            return {"executed": True, "tool": tool_name, "result": result}
+
+        if tool_name == cs.MCPToolName.CONTEXT7_DOCS:
+            library = str(params_hint_dict.get("library", "")).strip()
+            query = str(params_hint_dict.get("query", "")).strip()
+            if not library:
+                return {"executed": False, "reason": "missing_library"}
+            if not query:
+                return {"executed": False, "reason": "missing_query"}
+            result = await self.context7_docs(
+                library=library,
+                query=query,
+                version=cast(str | None, params_hint_dict.get("version")),
+            )
+            return {"executed": True, "tool": tool_name, "result": result}
+
         if tool_name == cs.MCPToolName.TEST_QUALITY_GATE:
             result = await self.test_quality_gate(
                 coverage=str(params_hint_dict.get("coverage", "0")),
                 edge_cases=str(params_hint_dict.get("edge_cases", "0")),
                 negative_tests=str(params_hint_dict.get("negative_tests", "0")),
+                repo_evidence=cast(str | None, params_hint_dict.get("repo_evidence")),
+                layer_correctness=cast(
+                    str | None, params_hint_dict.get("layer_correctness")
+                ),
+                cleanup_safety=cast(str | None, params_hint_dict.get("cleanup_safety")),
+                anti_hallucination=cast(
+                    str | None, params_hint_dict.get("anti_hallucination")
+                ),
+                implementation_coupling_penalty=cast(
+                    str | None,
+                    params_hint_dict.get("implementation_coupling_penalty"),
+                ),
             )
             return {"executed": True, "tool": tool_name, "result": result}
 
@@ -3966,6 +4860,7 @@ class MCPToolsRegistry:
             operation=lambda: self.sync_graph_updates(
                 user_requested=user_requested,
                 reason=sync_reason,
+                sync_mode="fast",
             ),
             attempts=max(1, int(settings.MCP_ORCHESTRATE_SYNC_RETRY_ATTEMPTS)),
             base_delay_seconds=max(
@@ -5735,8 +6630,14 @@ class MCPToolsRegistry:
                 target_code=target_code,
                 replacement_code=replacement_code,
             )
+            if "successfully" not in str(result).lower():
+                return str(result)
             self._session_bump("edit_success_count")
-            return str(result)
+            graph_sync = await self._maybe_auto_sync_graph_after_edit(
+                action=cs.MCPToolName.SURGICAL_REPLACE_CODE,
+                file_paths=[file_path],
+            )
+            return self._append_graph_sync_status_to_message(str(result), graph_sync)
         except Exception as e:
             logger.error(lg.MCP_ERROR_REPLACE.format(error=e))
             return te.ERROR_WRAPPER.format(message=e)
@@ -5749,10 +6650,7 @@ class MCPToolsRegistry:
         try:
             if (
                 bool(settings.MCP_READ_FILE_REQUIRES_QUERY_GRAPH)
-                and self._coerce_int(
-                    self._session_state.get("query_code_graph_success_count", 0)
-                )
-                <= 0
+                and not self._has_graph_read_prerequisite()
             ):
                 self._record_tool_usefulness(
                     cs.MCPToolName.READ_FILE,
@@ -5761,7 +6659,8 @@ class MCPToolsRegistry:
                 )
                 return te.ERROR_WRAPPER.format(
                     message=(
-                        "query_code_graph_required: call query_code_graph first and obtain graph evidence before read_file"
+                        "graph_read_prerequisite_required: call query_code_graph, multi_hop_analysis, "
+                        "or run_cypher after graph-first flow and obtain a successful query digest before read_file"
                     )
                 )
 
@@ -5786,7 +6685,7 @@ class MCPToolsRegistry:
 
             if (
                 bool(settings.MCP_ENFORCE_GRAPH_FIRST_READS)
-                and not self._has_graph_query_digest()
+                and not self._has_graph_read_prerequisite()
             ):
                 self._record_tool_usefulness(
                     cs.MCPToolName.READ_FILE,
@@ -5876,7 +6775,14 @@ class MCPToolsRegistry:
             )
             if result.success:
                 self._session_bump("edit_success_count")
-                return cs.MCP_WRITE_SUCCESS.format(path=file_path)
+                graph_sync = await self._maybe_auto_sync_graph_after_edit(
+                    action=cs.MCPToolName.WRITE_FILE,
+                    file_paths=[file_path],
+                )
+                return self._append_graph_sync_status_to_message(
+                    cs.MCP_WRITE_SUCCESS.format(path=file_path),
+                    graph_sync,
+                )
             return te.ERROR_WRAPPER.format(message=result.error_message)
         except Exception as e:
             logger.error(lg.MCP_ERROR_WRITE.format(error=e))
@@ -6588,7 +7494,13 @@ class MCPToolsRegistry:
             return {"error": "invalid_chunks_json"}
         if not isinstance(payload, list) or not payload:
             return {"error": "chunks_must_be_list"}
-        return await self._apply_diff_chunks(file_path, payload)
+        result = await self._apply_diff_chunks(file_path, payload)
+        if result.get("status") == "ok":
+            result["graph_sync"] = await self._maybe_auto_sync_graph_after_edit(
+                action=cs.MCPToolName.APPLY_DIFF_SAFE,
+                file_paths=[file_path],
+            )
+        return result
 
     async def refactor_batch(self, chunks: str) -> dict[str, object]:
         self._set_execution_phase("execution", "refactor_batch")
@@ -6662,10 +7574,23 @@ class MCPToolsRegistry:
             success=True,
             usefulness_score=1.0,
         )
-        return {"status": "ok", "results": results}
+        response = {"status": "ok", "results": results}
+        file_paths = [
+            str(entry.get("file_path", "")).strip()
+            for entry in payload
+            if isinstance(entry, dict)
+        ]
+        response["graph_sync"] = await self._maybe_auto_sync_graph_after_edit(
+            action=cs.MCPToolName.REFACTOR_BATCH,
+            file_paths=file_paths,
+        )
+        return response
 
     async def test_generate(
-        self, goal: str, context: str | None = None
+        self,
+        goal: str,
+        context: str | None = None,
+        output_mode: str = "code",
     ) -> dict[str, object]:
         self._set_execution_phase("post_validation", "test_generate")
         prompt = goal if context is None else f"{goal}\nContext: {context}"
@@ -6674,13 +7599,20 @@ class MCPToolsRegistry:
                 self._test_agent.run(prompt),
                 timeout=max(30.0, float(settings.MCP_AGENT_TIMEOUT_SECONDS)),
             )
+            normalized_output = self._normalize_test_generation_output(
+                result.content,
+                output_mode=output_mode,
+            )
             self._session_state["test_generate_completed"] = True
+            self._session_state["last_test_generation"] = normalized_output
             self._record_tool_usefulness(
                 cs.MCPToolName.TEST_GENERATE,
                 success=True,
-                usefulness_score=1.0 if str(result.content).strip() else 0.4,
+                usefulness_score=1.0
+                if str(normalized_output.get("content", "")).strip()
+                else 0.4,
             )
-            return {"status": result.status, "content": result.content}
+            return {"status": result.status, **normalized_output}
         except TimeoutError:
             self._record_tool_usefulness(
                 cs.MCPToolName.TEST_GENERATE,
@@ -6756,6 +7688,7 @@ class MCPToolsRegistry:
         action: str,
         result: str,
         issues: str | None = None,
+        failure_reasons: str | None = None,
     ) -> dict[str, object]:
         self._set_execution_phase("post_validation", "execution_feedback")
         parsed_issues = (
@@ -6765,7 +7698,11 @@ class MCPToolsRegistry:
         )
         normalized_result = result.strip().lower()
         normalized_issues = [item.lower() for item in parsed_issues]
-        replan_reasons: list[str] = []
+        structured_reasons = self._parse_failure_reasons(
+            failure_reasons,
+            normalized_issues,
+        )
+        replan_reasons: list[str] = list(structured_reasons)
 
         if normalized_result in {"partial_success", "failed", "error"}:
             replan_reasons.append(f"result={normalized_result}")
@@ -6795,6 +7732,7 @@ class MCPToolsRegistry:
             "issues": parsed_issues,
             "replan_required": replan_required,
             "reasons": replan_reasons,
+            "structured_reasons": structured_reasons,
             "timestamp": int(time.time()),
         }
         self._memory_store.add_entry(
@@ -6810,6 +7748,7 @@ class MCPToolsRegistry:
             "status": "ok",
             "replan_required": replan_required,
             "reasons": replan_reasons,
+            "structured_reasons": structured_reasons,
             "feedback": payload,
         }
 
@@ -6818,17 +7757,68 @@ class MCPToolsRegistry:
         coverage: str,
         edge_cases: str,
         negative_tests: str,
+        repo_evidence: str | None = None,
+        layer_correctness: str | None = None,
+        cleanup_safety: str | None = None,
+        anti_hallucination: str | None = None,
+        implementation_coupling_penalty: str | None = None,
     ) -> dict[str, object]:
         self._set_execution_phase("validation", "test_quality_gate")
         coverage_score = self._normalize_quality_score(coverage)
         edge_cases_score = self._normalize_quality_score(edge_cases)
         negative_tests_score = self._normalize_quality_score(negative_tests)
-        total_score = coverage_score + edge_cases_score + negative_tests_score
-        required = 2.0
-        gate_pass = total_score >= required
+        repo_evidence_score = self._normalize_optional_quality_score(repo_evidence)
+        layer_correctness_score = self._normalize_optional_quality_score(
+            layer_correctness
+        )
+        cleanup_safety_score = self._normalize_optional_quality_score(cleanup_safety)
+        anti_hallucination_score = self._normalize_optional_quality_score(
+            anti_hallucination
+        )
+        coupling_penalty = self._normalize_optional_quality_score(
+            implementation_coupling_penalty
+        )
+        optional_scores = {
+            "repo_evidence": repo_evidence_score,
+            "layer_correctness": layer_correctness_score,
+            "cleanup_safety": cleanup_safety_score,
+            "anti_hallucination": anti_hallucination_score,
+        }
+        active_optional_scores = {
+            key: value for key, value in optional_scores.items() if value is not None
+        }
+        total_score = (
+            coverage_score
+            + edge_cases_score
+            + negative_tests_score
+            + sum(active_optional_scores.values())
+            - (coupling_penalty or 0.0)
+        )
+        required = (
+            4.0 if active_optional_scores or coupling_penalty is not None else 2.0
+        )
+        hard_failures: list[str] = []
+        if coverage_score < 0.5:
+            hard_failures.append("coverage_below_threshold")
+        if negative_tests_score < 0.5:
+            hard_failures.append("negative_tests_below_threshold")
+        if repo_evidence_score is not None and repo_evidence_score < 0.6:
+            hard_failures.append("repo_evidence_below_threshold")
+        if anti_hallucination_score is not None and anti_hallucination_score < 0.6:
+            hard_failures.append("anti_hallucination_below_threshold")
+        gate_pass = total_score >= required and not hard_failures
 
         self._session_state["test_quality_total"] = round(total_score, 3)
         self._session_state["test_quality_pass"] = gate_pass
+        self._session_state["test_quality_breakdown"] = {
+            "coverage": coverage_score,
+            "edge_cases": edge_cases_score,
+            "negative_tests": negative_tests_score,
+            **active_optional_scores,
+            "implementation_coupling_penalty": coupling_penalty or 0.0,
+            "required": required,
+            "hard_failures": hard_failures,
+        }
         self._record_tool_usefulness(
             cs.MCPToolName.TEST_QUALITY_GATE,
             success=True,
@@ -6841,10 +7831,95 @@ class MCPToolsRegistry:
                 "coverage": coverage_score,
                 "edge_cases": edge_cases_score,
                 "negative_tests": negative_tests_score,
+                **active_optional_scores,
+                "implementation_coupling_penalty": coupling_penalty or 0.0,
                 "total": round(total_score, 3),
                 "required": required,
             },
+            "hard_failures": hard_failures,
             "pass": gate_pass,
+            "ui_summary": (
+                f"Test quality: {'pass' if gate_pass else 'block'} | "
+                f"score={round(total_score, 3)}/{required}"
+            ),
+        }
+
+    @staticmethod
+    def _planner_payload_has_substance(payload: dict[str, object]) -> bool:
+        actionable_list_fields = (
+            "steps",
+            "required_evidence",
+            "evidence_priority",
+            "multi_hop_plan",
+            "recommended_tool_chain",
+            "copy_paste_calls",
+        )
+
+        for key in actionable_list_fields:
+            value = payload.get(key, [])
+            if isinstance(value, list) and any(str(item).strip() for item in value):
+                return True
+
+        return False
+
+    def _build_plan_task_failure_payload(
+        self,
+        *,
+        reason: str,
+        goal: str,
+        context: str | None,
+        pattern_texts: list[str],
+        chain_success_rates: list[dict[str, object]],
+    ) -> dict[str, object]:
+        normalized_goal = str(goal).strip() or "Create deterministic task plan"
+        retry_context = (
+            "Planner returned no actionable output. Collect graph evidence first, "
+            "then retry with a shorter, deterministic tool chain."
+        )
+        escaped_goal = normalized_goal.replace("\\", "\\\\").replace('"', '\\"')
+        escaped_context = retry_context.replace("\\", "\\\\").replace('"', '\\"')
+        exact_next_calls = [
+            {
+                "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                "args": {
+                    "natural_language_query": normalized_goal,
+                    "output_format": "json",
+                },
+                "priority": 1,
+                "when": "planner output is empty or non-actionable",
+                "copy_paste": (
+                    "query_code_graph("
+                    f'natural_language_query="{escaped_goal}", output_format="json")'
+                ),
+                "why": "collect_graph_evidence_before_retrying_plan",
+            },
+            {
+                "tool": cs.MCPToolName.PLAN_TASK,
+                "args": {"goal": normalized_goal, "context": retry_context},
+                "priority": 2,
+                "when": "after graph evidence is available",
+                "copy_paste": (
+                    f'plan_task(goal="{escaped_goal}", context="{escaped_context}")'
+                ),
+                "why": "retry_planner_with_tighter_context",
+            },
+        ]
+        return {
+            "status": "error",
+            "error": reason,
+            "ui_summary": (
+                "Planner returned no actionable steps. Plan gate remains closed."
+            ),
+            "goal": normalized_goal,
+            "exact_next_calls": exact_next_calls,
+            "next_best_action": self._project_next_best_action_from_exact_calls(
+                exact_next_calls
+            ),
+            "retrieved_patterns": pattern_texts[:5],
+            "chain_success_rates": chain_success_rates[:5],
+            "memory_injection_mandatory": True,
+            "retry_context": retry_context,
+            "previous_context": str(context or "").strip(),
         }
 
     async def plan_task(
@@ -6913,16 +7988,39 @@ class MCPToolsRegistry:
                 self._planner_agent.plan(goal, context=augmented_context),
                 timeout=max(30.0, float(settings.MCP_AGENT_TIMEOUT_SECONDS)),
             )
+            planner_content = (
+                result.content
+                if hasattr(result, "content") and isinstance(result.content, dict)
+                else {}
+            )
+            planner_status = str(getattr(result, "status", "")).strip().lower()
+            if planner_status != "ok" or not self._planner_payload_has_substance(
+                planner_content
+            ):
+                self._session_state["plan_task_completed"] = False
+                self._record_tool_usefulness(
+                    cs.MCPToolName.PLAN_TASK,
+                    success=False,
+                    usefulness_score=0.0,
+                )
+                return self._build_plan_task_failure_payload(
+                    reason="planner_empty_output",
+                    goal=goal,
+                    context=context,
+                    pattern_texts=pattern_texts,
+                    chain_success_rates=chain_success_rates,
+                )
+
             self._session_state["plan_task_completed"] = True
             self._record_tool_usefulness(
                 cs.MCPToolName.PLAN_TASK,
                 success=True,
                 usefulness_score=1.0,
             )
-            if hasattr(result, "content") and isinstance(result.content, dict):
+            if planner_content:
                 return {
                     "status": result.status,
-                    **result.content,
+                    **planner_content,
                     "retrieved_patterns": pattern_texts[:5],
                     "chain_success_rates": chain_success_rates[:5],
                     "memory_injection_mandatory": True,
@@ -6935,6 +8033,7 @@ class MCPToolsRegistry:
                 "memory_injection_mandatory": True,
             }
         except TimeoutError:
+            self._session_state["plan_task_completed"] = False
             self._record_tool_usefulness(
                 cs.MCPToolName.PLAN_TASK,
                 success=False,
@@ -6942,6 +8041,7 @@ class MCPToolsRegistry:
             )
             return {"error": "plan_task_timed_out_after_300s"}
         except Exception as exc:
+            self._session_state["plan_task_completed"] = False
             self._record_tool_usefulness(
                 cs.MCPToolName.PLAN_TASK,
                 success=False,
@@ -6962,6 +8062,7 @@ class MCPToolsRegistry:
             result = self._impact_service.query(
                 qualified_name=qualified_name,
                 file_path=file_path,
+                project_name=self._active_project_name(),
                 depth=depth,
                 limit=limit,
             )
@@ -6983,12 +8084,620 @@ class MCPToolsRegistry:
             return {"error": str(exc), "results": []}
 
     @staticmethod
+    def _compact_text(value: object, *, limit: int = 280) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3].rstrip() + "..."
+
+    @staticmethod
+    def _normalize_path_value(value: object) -> str:
+        candidate = str(value or "").strip()
+        if not candidate:
+            return ""
+        return candidate.replace("\\", "/")
+
+    def _build_multi_hop_exact_next_calls(
+        self,
+        *,
+        qualified_name: str | None,
+        affected_files: list[str],
+        include_context7: bool,
+        context7_query: str | None,
+    ) -> list[dict[str, object]]:
+        exact_next_calls: list[dict[str, object]] = []
+        if qualified_name:
+            qualified_name_escaped = qualified_name.replace('"', '\\"')
+            exact_next_calls.append(
+                {
+                    "tool": cs.MCPToolName.GET_CODE_SNIPPET,
+                    "args": {"qualified_name": qualified_name},
+                    "priority": 1,
+                    "when": "implementation confirmation is needed for the analyzed symbol",
+                    "copy_paste": (
+                        f'get_code_snippet(qualified_name="{qualified_name_escaped}")'
+                    ),
+                    "why": "inspect_target_symbol_source",
+                }
+            )
+        if affected_files:
+            target_path = affected_files[0]
+            path_escaped = target_path.replace("\\", "\\\\").replace('"', '\\"')
+            exact_next_calls.append(
+                {
+                    "tool": cs.MCPToolName.READ_FILE,
+                    "args": {"file_path": target_path},
+                    "priority": 2,
+                    "when": "graph evidence narrowed the implementation to a concrete file",
+                    "copy_paste": f'read_file(file_path="{path_escaped}")',
+                    "why": "inspect_highest_priority_affected_file",
+                }
+            )
+        if include_context7 and context7_query:
+            library = self._context7_client.detect_library(context7_query)
+            if library:
+                exact_next_calls.append(
+                    {
+                        "tool": cs.MCPToolName.CONTEXT7_DOCS,
+                        "args": {"library": library, "query": context7_query},
+                        "priority": 3,
+                        "when": "external framework behavior must be verified after repo evidence",
+                        "copy_paste": (
+                            "context7_docs("
+                            f'library="{library}", query="{context7_query.replace(chr(34), '\\"')}")'
+                        ),
+                        "why": "external_library_enrichment",
+                    }
+                )
+        return self._normalize_exact_next_calls(exact_next_calls)
+
+    def _summarize_context7_docs(self, docs: object) -> list[str]:
+        lines: list[str] = []
+        if isinstance(docs, list):
+            normalized_docs = cast(list[object], docs)
+            for item in normalized_docs[:3]:
+                if not isinstance(item, dict):
+                    lines.append(self._compact_text(item, limit=180))
+                    continue
+                doc_payload = cast(dict[str, object], item)
+                title = self._compact_text(
+                    doc_payload.get("title") or doc_payload.get("topic") or ""
+                )
+                content = self._compact_text(
+                    doc_payload.get("content") or doc_payload.get("summary") or ""
+                )
+                if title and content:
+                    lines.append(f"{title}: {content}")
+                elif title:
+                    lines.append(title)
+                elif content:
+                    lines.append(content)
+        elif isinstance(docs, dict):
+            doc_payload = cast(dict[str, object], docs)
+            content = (
+                doc_payload.get("content")
+                or doc_payload.get("summary")
+                or doc_payload.get("docs")
+            )
+            if content:
+                lines.append(self._compact_text(content, limit=180))
+        elif docs:
+            lines.append(self._compact_text(docs, limit=180))
+        return lines[:3]
+
+    async def context7_docs(
+        self,
+        library: str,
+        query: str,
+        version: str | None = None,
+    ) -> dict[str, object]:
+        normalized_library = str(library or "").strip()
+        normalized_query = str(query or "").strip()
+        normalized_version = str(version or "").strip() or None
+        if not normalized_library:
+            return {"error": "library_required"}
+        if not normalized_query:
+            return {"error": "query_required"}
+
+        self._set_execution_phase("retrieval", "context7_docs")
+        cached = self._context7_knowledge_store.lookup(
+            normalized_library, normalized_query
+        )
+        cache_source = "graph"
+        if cached is None:
+            cached = self._context7_memory_store.lookup(
+                normalized_library, normalized_query
+            )
+            cache_source = "memory"
+        if cached is not None:
+            docs = cached.get("docs", [])
+            highlights = self._summarize_context7_docs(docs)
+            self._record_tool_usefulness(
+                cs.MCPToolName.CONTEXT7_DOCS,
+                success=True,
+                usefulness_score=0.9,
+            )
+            return {
+                "status": "ok",
+                "library": normalized_library,
+                "query": normalized_query,
+                "version": normalized_version,
+                "source": cache_source,
+                "docs": docs,
+                "highlights": highlights,
+                "ui_summary": (
+                    f"Context7 cache hit for {normalized_library}. "
+                    f"Returned {len(docs) if isinstance(docs, list) else 1} documentation items."
+                ),
+            }
+
+        result = await self._context7_client.get_docs(
+            normalized_library,
+            normalized_query,
+            normalized_version,
+        )
+        if isinstance(result, dict) and result.get("error"):
+            self._record_tool_usefulness(
+                cs.MCPToolName.CONTEXT7_DOCS,
+                success=False,
+                usefulness_score=0.0,
+            )
+            return {
+                "error": str(result.get("error")),
+                "library": normalized_library,
+                "query": normalized_query,
+                "version": normalized_version,
+            }
+
+        if isinstance(result, dict):
+            self._context7_persistence.persist(
+                str(result.get("library_id", normalized_library)),
+                normalized_library,
+                normalized_query,
+                result.get("docs"),
+            )
+        docs = result.get("docs", []) if isinstance(result, dict) else []
+        highlights = self._summarize_context7_docs(docs)
+        self._record_tool_usefulness(
+            cs.MCPToolName.CONTEXT7_DOCS,
+            success=True,
+            usefulness_score=1.0 if highlights else 0.7,
+        )
+        return {
+            "status": "ok",
+            "library": normalized_library,
+            "query": normalized_query,
+            "version": normalized_version,
+            "source": "context7_api",
+            "library_id": result.get("library_id")
+            if isinstance(result, dict)
+            else None,
+            "docs": docs,
+            "highlights": highlights,
+            "ui_summary": (
+                f"Context7 retrieved external documentation for {normalized_library}."
+            ),
+        }
+
+    async def multi_hop_analysis(
+        self,
+        qualified_name: str | None = None,
+        file_path: str | None = None,
+        depth: int = 3,
+        limit: int = 80,
+        include_context7: bool = False,
+        context7_query: str | None = None,
+    ) -> dict[str, object]:
+        normalized_qualified_name = str(qualified_name or "").strip() or None
+        normalized_file_path = str(file_path or "").strip() or None
+        if not normalized_qualified_name and not normalized_file_path:
+            return {"error": "missing_target"}
+
+        self._set_execution_phase("retrieval", "multi_hop_analysis")
+        bounded_depth = min(max(1, int(depth)), 6)
+        bounded_limit = min(max(5, int(limit)), 200)
+        project_name = self._active_project_name()
+        hop_pattern = MCPImpactGraphService._IMPACT_REL_TYPES
+        seed_filter = """
+WHERE (
+    (
+        $qualified_name IS NOT NULL
+        AND start.qualified_name = $qualified_name
+    ) OR (
+        $file_path IS NOT NULL
+        AND (
+            start.path = $file_path
+            OR start.file_path = $file_path
+            OR start.path ENDS WITH $file_path
+            OR start.file_path ENDS WITH $file_path
+        )
+    )
+)
+AND (
+    coalesce(start.project_name, $project_name) = $project_name
+)
+"""
+        outbound_query = f"""
+MATCH (start)
+{seed_filter}
+WITH collect(DISTINCT start) AS seeds
+UNWIND seeds AS seed
+MATCH p=(seed)-[:{hop_pattern}*1..{bounded_depth}]->(target)
+WHERE all(node IN nodes(p) WHERE coalesce(node.project_name, $project_name) = $project_name)
+RETURN DISTINCT
+    'outbound' AS direction,
+    coalesce(seed.qualified_name, seed.path, seed.file_path, seed.name, toString(id(seed))) AS seed_ref,
+    coalesce(seed.path, seed.file_path, '') AS seed_path,
+    coalesce(target.qualified_name, target.path, target.file_path, target.name, toString(id(target))) AS node_ref,
+    coalesce(target.path, target.file_path, '') AS node_path,
+    labels(target) AS node_labels,
+    type(last(relationships(p))) AS relation,
+    length(p) AS hop_count
+LIMIT $limit
+"""
+        inbound_query = f"""
+MATCH (start)
+{seed_filter}
+WITH collect(DISTINCT start) AS seeds
+UNWIND seeds AS seed
+MATCH p=(source)-[:{hop_pattern}*1..{bounded_depth}]->(seed)
+WHERE all(node IN nodes(p) WHERE coalesce(node.project_name, $project_name) = $project_name)
+RETURN DISTINCT
+    'inbound' AS direction,
+    coalesce(seed.qualified_name, seed.path, seed.file_path, seed.name, toString(id(seed))) AS seed_ref,
+    coalesce(seed.path, seed.file_path, '') AS seed_path,
+    coalesce(source.qualified_name, source.path, source.file_path, source.name, toString(id(source))) AS node_ref,
+    coalesce(source.path, source.file_path, '') AS node_path,
+    labels(source) AS node_labels,
+    type(last(relationships(p))) AS relation,
+    length(p) AS hop_count
+LIMIT $limit
+"""
+        params = {
+            "qualified_name": normalized_qualified_name,
+            "file_path": normalized_file_path,
+            "project_name": project_name,
+            "limit": bounded_limit,
+        }
+        try:
+            outbound_rows = await asyncio.wait_for(
+                asyncio.to_thread(self.ingestor.fetch_all, outbound_query, params),
+                timeout=45.0,
+            )
+            inbound_rows = await asyncio.wait_for(
+                asyncio.to_thread(self.ingestor.fetch_all, inbound_query, params),
+                timeout=45.0,
+            )
+        except Exception as exc:
+            self._record_tool_usefulness(
+                cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                success=False,
+                usefulness_score=0.0,
+            )
+            return {"error": str(exc), "results": []}
+
+        combined_rows = [
+            cast(dict[str, object], row)
+            for row in [*outbound_rows, *inbound_rows]
+            if isinstance(row, dict)
+        ]
+        if combined_rows:
+            self._session_bump("graph_evidence_count")
+            self._session_bump("query_success_count")
+            self._session_state["last_graph_query_digest_id"] = (
+                self._mint_query_digest_id(
+                    normalized_qualified_name
+                    or normalized_file_path
+                    or "multi_hop_analysis",
+                    len(combined_rows),
+                )
+            )
+            self._session_state["last_graph_result_digest"] = (
+                self._build_graph_result_digest(combined_rows)
+            )
+            self._session_state["query_result_chunks"] = self._split_rows_into_chunks(
+                combined_rows
+            )
+
+        symbol_counts: dict[str, int] = {}
+        file_counts: dict[str, int] = {}
+        relation_counts: dict[str, int] = {}
+        direction_counts = {"outbound": 0, "inbound": 0}
+        critical_paths: list[dict[str, object]] = []
+        for row in combined_rows:
+            direction = str(row.get("direction", "")).strip().lower()
+            if direction in direction_counts:
+                direction_counts[direction] += 1
+            relation = str(row.get("relation", "")).strip()
+            if relation:
+                relation_counts[relation] = relation_counts.get(relation, 0) + 1
+            node_ref = str(row.get("node_ref", "")).strip()
+            if node_ref:
+                symbol_counts[node_ref] = symbol_counts.get(node_ref, 0) + 1
+            node_path = self._normalize_path_value(row.get("node_path"))
+            if node_path:
+                file_counts[node_path] = file_counts.get(node_path, 0) + 1
+            critical_paths.append(
+                {
+                    "direction": direction,
+                    "relation": relation,
+                    "hop_count": self._coerce_int(row.get("hop_count", 0)),
+                    "node_ref": node_ref,
+                    "node_path": node_path,
+                    "node_labels": row.get("node_labels", []),
+                }
+            )
+
+        affected_symbols = [
+            key
+            for key, _ in sorted(
+                symbol_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:15]
+        ]
+        affected_files = [
+            key
+            for key, _ in sorted(
+                file_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:12]
+        ]
+        critical_paths.sort(
+            key=lambda row: (
+                -self._coerce_int(row.get("hop_count", 0)),
+                str(row.get("direction", "")),
+                str(row.get("node_ref", "")),
+            )
+        )
+        recommended_reads = affected_files[:5]
+        context7_enrichment: dict[str, object] | None = None
+        normalized_context7_query = str(context7_query or "").strip() or None
+        if include_context7 and normalized_context7_query:
+            detected_library = self._context7_client.detect_library(
+                normalized_context7_query
+            )
+            if detected_library:
+                context7_enrichment = await self.context7_docs(
+                    library=detected_library,
+                    query=normalized_context7_query,
+                )
+
+        exact_next_calls = self._build_multi_hop_exact_next_calls(
+            qualified_name=normalized_qualified_name,
+            affected_files=recommended_reads,
+            include_context7=include_context7,
+            context7_query=normalized_context7_query,
+        )
+        next_best_action = self._project_next_best_action_from_exact_calls(
+            exact_next_calls
+        )
+        hop_summary = {
+            "depth": bounded_depth,
+            "limit": bounded_limit,
+            "total_edges": len(combined_rows),
+            "directions": direction_counts,
+            "relation_counts": relation_counts,
+        }
+        summary = (
+            f"Multi-hop analysis for {normalized_qualified_name or normalized_file_path} "
+            f"found {len(combined_rows)} traversed edges, {len(affected_symbols)} key symbols, "
+            f"and {len(affected_files)} affected files."
+        )
+        self._record_tool_usefulness(
+            cs.MCPToolName.MULTI_HOP_ANALYSIS,
+            success=True,
+            usefulness_score=1.0 if combined_rows else 0.6,
+        )
+        response: dict[str, object] = {
+            "status": "ok",
+            "target": {
+                "qualified_name": normalized_qualified_name,
+                "file_path": normalized_file_path,
+                "project_name": project_name,
+            },
+            "summary": summary,
+            "ui_summary": summary,
+            "hop_summary": hop_summary,
+            "affected_symbols": affected_symbols,
+            "affected_files": affected_files,
+            "recommended_reads": recommended_reads,
+            "critical_paths": critical_paths[:12],
+            "exact_next_calls": exact_next_calls,
+            "next_best_action": next_best_action,
+            "execution_state": self._build_execution_state_contract(),
+        }
+        if context7_enrichment is not None:
+            response["context7_enrichment"] = context7_enrichment
+        return response
+
+    def _normalize_test_generation_output(
+        self,
+        content: str,
+        *,
+        output_mode: str = "code",
+    ) -> dict[str, object]:
+        normalized_mode = str(output_mode or "code").strip().lower()
+        if normalized_mode not in {"code", "plan_json", "both"}:
+            normalized_mode = "code"
+        raw_cleaned = content.strip()
+        cleaned = decode_escaped_text(content).strip()
+        output: dict[str, object] = {
+            "format": "text",
+            "content": cleaned,
+            "output_mode": normalized_mode,
+            "raw_content": cleaned,
+            "ui_summary": "Generated test output is available.",
+        }
+
+        try:
+            direct_payload = json.loads(raw_cleaned)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            direct_payload = None
+        if isinstance(direct_payload, dict):
+            parsed_payload = direct_payload
+        else:
+            try:
+                parsed_payload = self._json_output_parser.parse(raw_cleaned)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                parsed_payload = {}
+
+        if parsed_payload:
+            code = decode_escaped_text(str(parsed_payload.get("code", "")).strip())
+            metadata = {
+                key: value for key, value in parsed_payload.items() if key != "code"
+            }
+            if code:
+                output.update(
+                    {
+                        "format": "code",
+                        "content": code,
+                        "code": code,
+                        "language": str(
+                            parsed_payload.get("language", "python")
+                        ).strip()
+                        or "python",
+                        "metadata": metadata,
+                        "ui_summary": "Generated runnable test code.",
+                    }
+                )
+                if normalized_mode == "plan_json":
+                    return {
+                        "format": "json",
+                        "output_mode": normalized_mode,
+                        "content": json.dumps(
+                            {
+                                "language": output.get("language", "python"),
+                                "code": code,
+                                "metadata": metadata,
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        "metadata": metadata,
+                        "raw_content": cleaned,
+                        "ui_summary": "Generated structured test payload.",
+                    }
+                if normalized_mode == "both":
+                    output["plan_json"] = {
+                        "language": output.get("language", "python"),
+                        "code": code,
+                        "metadata": metadata,
+                    }
+                return output
+            output.update(
+                {
+                    "format": "json",
+                    "content": json.dumps(
+                        parsed_payload,
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    "metadata": parsed_payload,
+                    "ui_summary": "Generated structured test plan.",
+                }
+            )
+            return output
+
+        language, code_block = extract_code_block(
+            cleaned,
+            preferred_languages={"python", "pytest"},
+        )
+        if code_block:
+            output.update(
+                {
+                    "format": "code",
+                    "content": code_block,
+                    "code": code_block,
+                    "language": language or "python",
+                    "ui_summary": "Generated runnable test code.",
+                }
+            )
+            if normalized_mode == "plan_json":
+                return {
+                    "format": "json",
+                    "output_mode": normalized_mode,
+                    "content": json.dumps(
+                        {
+                            "language": language or "python",
+                            "code": code_block,
+                            "metadata": {"source": "fenced_code"},
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    "metadata": {"source": "fenced_code"},
+                    "raw_content": cleaned,
+                    "ui_summary": "Generated structured test payload.",
+                }
+            if normalized_mode == "both":
+                output["plan_json"] = {
+                    "language": language or "python",
+                    "code": code_block,
+                    "metadata": {"source": "fenced_code"},
+                }
+        return output
+
+    @staticmethod
+    def _parse_failure_reasons(
+        failure_reasons: str | None,
+        normalized_issues: list[str],
+    ) -> list[str]:
+        parsed: list[str] = []
+        if isinstance(failure_reasons, str) and failure_reasons.strip():
+            raw = failure_reasons.strip()
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, list):
+                parsed.extend(
+                    str(item).strip().lower() for item in payload if str(item).strip()
+                )
+            else:
+                parsed.extend(
+                    item.strip().lower() for item in raw.split(",") if item.strip()
+                )
+
+        heuristics = {
+            "hallucinated_fixture": (
+                "hallucinated fixture",
+                "unknown fixture",
+                "fixture not found",
+            ),
+            "unverified_assertion": (
+                "unverified assertion",
+                "unverified status code",
+                "exact string assert",
+            ),
+            "missing_cleanup": ("missing cleanup", "cleanup missing", "no cleanup"),
+            "layer_mismatch": ("layer mismatch", "wrong layer"),
+            "overcoupled_test": ("overcoupled", "coupling", "too many behaviors"),
+            "graph_sync_failed": ("graph sync failed", "stale graph"),
+        }
+        for reason, markers in heuristics.items():
+            if any(
+                marker in issue for issue in normalized_issues for marker in markers
+            ):
+                parsed.append(reason)
+
+        return sorted(set(parsed))
+
+    @staticmethod
     def _normalize_quality_score(raw_value: str) -> float:
         try:
             parsed = float(raw_value)
         except (TypeError, ValueError):
             parsed = 0.0
         return round(max(0.0, min(1.0, parsed)), 3)
+
+    @classmethod
+    def _normalize_optional_quality_score(cls, raw_value: str | None) -> float | None:
+        if raw_value is None:
+            return None
+        candidate = str(raw_value).strip()
+        if not candidate:
+            return None
+        return cls._normalize_quality_score(candidate)
 
     @staticmethod
     def _coerce_int(value: object, default: int = 0) -> int:
@@ -7210,7 +8919,10 @@ class MCPToolsRegistry:
                 target_code=target_code,
                 replacement_code=replacement_code,
             )
-            results.append(str(result))
+            result_text = str(result)
+            if "successfully" not in result_text.lower():
+                return {"error": f"chunk_apply_failed_{idx}", "result": result_text}
+            results.append(result_text)
         self._session_bump("edit_success_count")
         return {"status": "ok", "results": results}
 
@@ -7307,6 +9019,17 @@ class MCPToolsRegistry:
         manual_memory_add_count = self._coerce_int(
             self._session_state.get("manual_memory_add_count", 0)
         )
+        edit_success_count = self._coerce_int(
+            self._session_state.get("edit_success_count", 0)
+        )
+        graph_dirty = bool(self._session_state.get("graph_dirty", False))
+        last_graph_sync_status = str(
+            self._session_state.get("last_graph_sync_status", "not_needed")
+        ).strip()
+        graph_sync_required = (
+            bool(self._session_state.get("preflight_project_selected", False))
+            and edit_success_count > 0
+        )
         semantic_similarity_mean = self._coerce_float(
             self._session_state.get("semantic_similarity_mean", 0.0)
         )
@@ -7331,6 +9054,10 @@ class MCPToolsRegistry:
             "memory_add": manual_memory_add_count > 0,
             "impact_graph": impact_graph_called,
         }
+        if graph_sync_required:
+            completion_requirements["graph_sync"] = (
+                not graph_dirty and last_graph_sync_status == "ok"
+            )
         completion_missing = [
             name for name, satisfied in completion_requirements.items() if not satisfied
         ]
@@ -7380,15 +9107,7 @@ class MCPToolsRegistry:
                 "pass": pattern_reuse_score >= pattern_required,
             },
             "completion_gate": {
-                "required": [
-                    "semantic",
-                    "code_source",
-                    "graph_read",
-                    "test_generate",
-                    "test_quality",
-                    "memory_add",
-                    "impact_graph",
-                ],
+                "required": list(completion_requirements.keys()),
                 "missing": completion_missing,
                 "pass": not completion_missing,
             },
@@ -7396,6 +9115,13 @@ class MCPToolsRegistry:
                 "score": round(test_quality_total, 3),
                 "required": 2.0,
                 "pass": test_quality_pass,
+            },
+            "graph_sync_gate": {
+                "required": graph_sync_required,
+                "dirty": graph_dirty,
+                "status": last_graph_sync_status,
+                "pass": (not graph_sync_required)
+                or (not graph_dirty and last_graph_sync_status == "ok"),
             },
             "impact_graph_gate": {
                 "called": impact_graph_called,
@@ -7423,6 +9149,11 @@ class MCPToolsRegistry:
                 "semantic_similarity_mean": round(semantic_similarity_mean, 3),
                 "pattern_reuse_score": round(pattern_reuse_score, 3),
                 "context_confidence_score": round(context_score, 3),
+                "graph_dirty": graph_dirty,
+                "last_graph_sync_status": last_graph_sync_status,
+                "last_graph_sync_timestamp": self._coerce_int(
+                    self._session_state.get("last_graph_sync_timestamp", 0)
+                ),
                 "execution_feedback_count": self._coerce_int(
                     self._session_state.get("execution_feedback_count", 0)
                 ),
@@ -7432,9 +9163,7 @@ class MCPToolsRegistry:
                 "tool_usefulness_ranking": self._compute_tool_usefulness_ranking(
                     limit=5
                 ),
-                "edit_success_count": self._coerce_int(
-                    self._session_state.get("edit_success_count", 0)
-                ),
+                "edit_success_count": edit_success_count,
                 "policy_allow_count": self._coerce_int(
                     self._session_state.get("policy_allow_count", 0)
                 ),
@@ -7468,6 +9197,7 @@ class MCPToolsRegistry:
             ("pattern_reuse_gate", "pattern reuse score is below required threshold"),
             ("completion_gate", "required completion evidence is missing"),
             ("test_quality_gate", "test quality gate did not pass"),
+            ("graph_sync_gate", "graph sync gate did not pass"),
             ("impact_graph_gate", "impact graph gate did not pass"),
             ("replan_gate", "replan is required before completion"),
         ]
@@ -7597,6 +9327,17 @@ class MCPToolsRegistry:
                 "tool": "impact_graph",
                 "why": "Impact graph gate requires dependency impact data.",
                 "params_hint": {"qualified_name": "module.Class.method", "depth": 3},
+            }
+        if "graph_sync" in missing:
+            return {
+                "action": "refresh_graph_after_edits",
+                "tool": "sync_graph_updates",
+                "why": "Source edits require a fresh graph sync before completion.",
+                "params_hint": {
+                    "user_requested": True,
+                    "reason": "refresh graph after code edits",
+                    "sync_mode": "fast",
+                },
             }
         if "test_generate" in missing or "test_quality" in missing:
             return {
@@ -7744,7 +9485,10 @@ class MCPToolsRegistry:
         return [
             MCPToolSchema(
                 name=metadata.name,
-                description=metadata.description,
+                description=(
+                    f"{metadata.description} "
+                    f"[Session stage: {self._tool_stage_name(metadata.name)}]"
+                ).strip(),
                 inputSchema=metadata.input_schema,
             )
             for metadata in self._tools.values()

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from codebase_rag.agents.mcp_prompt_pack import (
+    LOCAL_MCP_PLANNER_PROMPT,
+    LOCAL_MCP_SYSTEM_PROMPT,
     MCP_PLANNER_PROMPT,
     MCP_SYSTEM_PROMPT,
     compose_agent_prompt,
+    compose_agent_prompt_for_provider,
     normalize_orchestrator_prompt,
 )
 
@@ -36,3 +39,21 @@ class TestMcpPromptPack:
 
         assert composed.startswith(MCP_SYSTEM_PROMPT.strip())
         assert composed.endswith("Agent instructions")
+
+    def test_normalize_orchestrator_prompt_accepts_local_variant(self) -> None:
+        normalized = normalize_orchestrator_prompt(LOCAL_MCP_SYSTEM_PROMPT)
+
+        assert normalized == LOCAL_MCP_SYSTEM_PROMPT.strip()
+
+    def test_compose_agent_prompt_for_provider_uses_local_prompt_for_ollama(
+        self,
+    ) -> None:
+        composed = compose_agent_prompt_for_provider(
+            provider="ollama",
+            default_agent_prompt=MCP_PLANNER_PROMPT,
+            local_agent_prompt=LOCAL_MCP_PLANNER_PROMPT,
+            system_prompt=LOCAL_MCP_SYSTEM_PROMPT,
+        )
+
+        assert composed.startswith(LOCAL_MCP_SYSTEM_PROMPT.strip())
+        assert LOCAL_MCP_PLANNER_PROMPT.strip() in composed
