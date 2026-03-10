@@ -23,6 +23,8 @@ class CLICommandName(StrEnum):
     EXPORT = "export"
     OPTIMIZE = "optimize"
     MCP_SERVER = "mcp-server"
+    WATCH = "watch"
+    BENCHMARK = "benchmark"
     GRAPH_LOADER = "graph-loader"
     LANGUAGE = "language"
     DOCTOR = "doctor"
@@ -41,6 +43,8 @@ CMD_INDEX = "Index codebase to protobuf files for offline use"
 CMD_EXPORT = "Export knowledge graph from Memgraph to JSON file"
 CMD_OPTIMIZE = "AI-guided codebase optimization session"
 CMD_MCP_SERVER = "Start the MCP server (stdio or HTTP transport)"
+CMD_WATCH = "Watch the repository and keep the graph fresh during live edits"
+CMD_BENCHMARK = "Benchmark MCP client profiles and Cypher generation readiness"
 CMD_GRAPH_LOADER = "Load and display summary of exported graph JSON"
 CMD_LANGUAGE = "Manage language grammars (add, remove, list)"
 CMD_DOCTOR = "Verify that all dependencies and configurations are properly set up"
@@ -70,6 +74,7 @@ HELP_REPO_PATH_RETRIEVAL = "Path to the target repository for code retrieval"
 HELP_REPO_PATH_INDEX = "Path to the target repository to index."
 HELP_REPO_PATH_OPTIMIZE = "Path to the repository to optimize"
 HELP_REPO_PATH_WATCH = "Path to the repository to watch."
+HELP_REPO_PATH_BENCHMARK = "Path to the repository to benchmark."
 
 HELP_UPDATE_GRAPH = "Update the knowledge graph by parsing the repository"
 HELP_CLEAN_DB = "Clean the database before updating (use when adding first repo)"
@@ -90,6 +95,14 @@ HELP_LANGUAGE_ARG = (
 HELP_REFERENCE_DOC = "Path to reference document/book for optimization guidance"
 HELP_GRAPH_FILE = "Path to the exported graph JSON file"
 HELP_EXPORTED_GRAPH_FILE = "Path to the exported_graph.json file."
+HELP_BENCHMARK_OUTPUT = "Optional JSON file path for benchmark results."
+HELP_LIVE_LLM = "Also run live Cypher generation through the configured Cypher model."
+HELP_REFRESH_EMBEDDINGS = (
+    "Regenerate semantic embeddings after each realtime graph update."
+)
+HELP_DEBOUNCE_SECONDS = (
+    "Debounce delay for frequent file events (recommended 2-5 seconds)."
+)
 
 HELP_GRAMMAR_URL = (
     "URL to the tree-sitter grammar repository. If not provided, "
@@ -111,6 +124,8 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.EXPORT: CMD_EXPORT,
     CLICommandName.OPTIMIZE: CMD_OPTIMIZE,
     CLICommandName.MCP_SERVER: CMD_MCP_SERVER,
+    CLICommandName.WATCH: CMD_WATCH,
+    CLICommandName.BENCHMARK: CMD_BENCHMARK,
     CLICommandName.GRAPH_LOADER: CMD_GRAPH_LOADER,
     CLICommandName.LANGUAGE: CMD_LANGUAGE,
     CLICommandName.DOCTOR: CMD_DOCTOR,

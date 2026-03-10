@@ -11,11 +11,36 @@ from .base_module import AnalysisContext, AnalysisModule
 
 
 class ApiComplianceModule(AnalysisModule):
+    _SKIP_DIRS = {
+        ".git",
+        ".idea",
+        ".next",
+        ".venv",
+        "__pycache__",
+        "build",
+        "coverage",
+        "dist",
+        "generated",
+        "node_modules",
+        "site-packages",
+        "vendor",
+        "venv",
+    }
+    _SKIP_PATH_MARKERS = {
+        "spec",
+        "tests",
+        "test",
+        "testdata",
+        "__tests__",
+    }
+
     def get_name(self) -> str:
         return "api_compliance"
 
     def run(self, context: AnalysisContext) -> dict[str, Any]:
         endpoints = self._fetch_graph_endpoints(context)
+        ignored_paths: set[str] = set()
+        source_mode = "graph"
 
         if not endpoints:
             repo_path = context.runner.repo_path
@@ -29,6 +54,28 @@ class ApiComplianceModule(AnalysisModule):
                 except Exception:
                     continue
                 endpoints.extend(self._extract_endpoints(source, file_path))
+            source_mode = "source_scan"
+
+        filtered_endpoints: list[dict[str, str]] = []
+        seen_endpoint_keys: set[tuple[str, str, str]] = set()
+        for endpoint in endpoints:
+            file_path = str(endpoint.get("file", "")).replace("\\", "/")
+            if self._should_ignore_path(file_path):
+                if file_path:
+                    ignored_paths.add(file_path)
+                continue
+            endpoint_key = (
+                str(endpoint.get("method", "")).strip().upper(),
+                str(endpoint.get("path", "")).strip(),
+                file_path,
+            )
+            if endpoint_key in seen_endpoint_keys:
+                continue
+            seen_endpoint_keys.add(endpoint_key)
+            normalized = dict(endpoint)
+            normalized["file"] = file_path
+            filtered_endpoints.append(normalized)
+        endpoints = filtered_endpoints
 
         violations: list[dict[str, object]] = []
         for endpoint in endpoints:
@@ -42,9 +89,22 @@ class ApiComplianceModule(AnalysisModule):
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
         report = {
+            "summary": {
+                "endpoints": len(endpoints),
+                "violations": len(violations),
+                "ignored_paths": len(ignored_paths),
+                "source_mode": source_mode,
+            },
             "endpoints": endpoints,
             "violations": violations,
             "reason_counts": reason_counts,
+            "ignored_paths": sorted(ignored_paths),
+            "confidence": 0.92 if source_mode == "graph" else 0.76,
+            "next_actions": [
+                "architecture_bundle",
+                "multi_hop_analysis",
+                "risk_bundle" if violations else "query_code_graph",
+            ],
         }
         context.runner._write_json_report("api_compliance_report.json", report)
 
@@ -58,7 +118,19 @@ class ApiComplianceModule(AnalysisModule):
     @staticmethod
     def _iter_files(repo_path: Path, module_paths: list[str] | None) -> list[Path]:
         if module_paths:
-            return [repo_path / path for path in module_paths if path]
+            resolved_paths: list[Path] = []
+            for path in module_paths:
+                if not path:
+                    continue
+                candidate = repo_path / path
+                if not candidate.exists() or not candidate.is_file():
+                    continue
+                if ApiComplianceModule._should_ignore_path(
+                    candidate.relative_to(repo_path).as_posix()
+                ):
+                    continue
+                resolved_paths.append(candidate)
+            return resolved_paths
 
         extensions = {
             *cs.PY_EXTENSIONS,
@@ -73,9 +145,15 @@ class ApiComplianceModule(AnalysisModule):
         }
         collected: list[Path] = []
         for path in repo_path.rglob("*"):
-            if len(collected) >= 300:
+            if len(collected) >= 500:
                 break
             if not path.is_file():
+                continue
+            try:
+                relative = path.relative_to(repo_path).as_posix()
+            except ValueError:
+                continue
+            if ApiComplianceModule._should_ignore_path(relative):
                 continue
             if path.suffix.lower() not in extensions:
                 continue
@@ -114,8 +192,7 @@ class ApiComplianceModule(AnalysisModule):
             re.IGNORECASE,
         )
         go_web_pattern = re.compile(
-            r"\.(GET|POST|PUT|DELETE|PATCH|Any)\s*\(\s*['\"]([^'\"]+)['\"]",
-            re.IGNORECASE,
+            r"\b(?:app|router|group|engine|mux|r)\.(GET|POST|PUT|DELETE|PATCH|Any)\s*\(\s*['\"]([^'\"]+)['\"]"
         )
         nest_pattern = re.compile(
             r"@(Get|Post|Put|Delete|Patch)\s*\(\s*['\"]([^'\"]*)['\"]\s*\)",
@@ -181,7 +258,31 @@ class ApiComplianceModule(AnalysisModule):
             path = match.group(2)
             results.append({"method": method, "path": path, "file": str(file_path)})
 
-        return results
+        deduped: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for endpoint in results:
+            endpoint_key = (
+                str(endpoint.get("method", "")).strip().upper(),
+                str(endpoint.get("path", "")).strip(),
+                str(endpoint.get("file", "")).replace("\\", "/").strip(),
+            )
+            if endpoint_key in seen:
+                continue
+            seen.add(endpoint_key)
+            normalized = dict(endpoint)
+            normalized["file"] = endpoint_key[2]
+            deduped.append(normalized)
+        return deduped
+
+    @classmethod
+    def _should_ignore_path(cls, path: str) -> bool:
+        normalized = str(path or "").replace("\\", "/").strip().lower()
+        if not normalized:
+            return False
+        parts = set(normalized.split("/"))
+        return not cls._SKIP_DIRS.isdisjoint(
+            parts
+        ) or not cls._SKIP_PATH_MARKERS.isdisjoint(parts)
 
     @staticmethod
     def _fetch_graph_endpoints(context: AnalysisContext) -> list[dict[str, str]]:
@@ -207,8 +308,10 @@ class ApiComplianceModule(AnalysisModule):
         module_paths = set(context.module_paths or [])
         endpoints: list[dict[str, str]] = []
         for row in rows:
-            file_path = str(row.get("file", ""))
+            file_path = str(row.get("file", "")).replace("\\", "/")
             if module_paths and file_path and file_path not in module_paths:
+                continue
+            if ApiComplianceModule._should_ignore_path(file_path):
                 continue
             endpoints.append(
                 {

@@ -2,7 +2,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -519,6 +519,153 @@ def mcp_server(
     except Exception as e:
         typer.echo(cs.CLI_ERR_MCP_SERVER.format(error=e), err=True)
         raise typer.Exit(1) from e
+
+
+@app.command(name=ch.CLICommandName.WATCH, help=ch.CMD_WATCH)
+def watch(
+    repo_path: str | None = typer.Option(
+        None, "--repo-path", help=ch.HELP_REPO_PATH_WATCH
+    ),
+    host: str = typer.Option(
+        settings.MEMGRAPH_HOST,
+        "--host",
+        help=ch.HELP_MEMGRAPH_HOST,
+    ),
+    port: int = typer.Option(
+        settings.MEMGRAPH_PORT,
+        "--port",
+        min=1,
+        max=65535,
+        help=ch.HELP_MEMGRAPH_PORT,
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help=ch.HELP_BATCH_SIZE,
+    ),
+    refresh_embeddings: bool = typer.Option(
+        False,
+        "--refresh-embeddings",
+        help=ch.HELP_REFRESH_EMBEDDINGS,
+    ),
+    debounce_seconds: float = typer.Option(
+        settings.REALTIME_WATCHER_DEBOUNCE_SECONDS,
+        "--debounce-seconds",
+        min=0.0,
+        max=5.0,
+        help=ch.HELP_DEBOUNCE_SECONDS,
+    ),
+) -> None:
+    """
+    Watches a repository and incrementally refreshes the graph after file edits.
+    """
+    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    if not target_repo_path:
+        typer.echo(cs.CLI_MSG_HINT_TARGET_REPO, err=True)
+        raise typer.Exit(1)
+
+    from codebase_rag.services.realtime_watcher import start_watcher
+
+    try:
+        start_watcher(
+            repo_path=target_repo_path,
+            host=host,
+            port=port,
+            batch_size=batch_size,
+            refresh_embeddings=refresh_embeddings,
+            debounce_seconds=debounce_seconds,
+        )
+    except KeyboardInterrupt:
+        typer.echo(cs.CLI_MSG_APP_TERMINATED.strip(), err=True)
+    except Exception as e:
+        typer.echo(f"Watch command failed: {e}", err=True)
+        raise typer.Exit(1) from e
+
+
+@app.command(name=ch.CLICommandName.BENCHMARK, help=ch.CMD_BENCHMARK)
+def benchmark(
+    repo_path: str | None = typer.Option(
+        None, "--repo-path", help=ch.HELP_REPO_PATH_BENCHMARK
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help=ch.HELP_BENCHMARK_OUTPUT,
+    ),
+    live_llm: bool = typer.Option(
+        False,
+        "--live-llm",
+        help=ch.HELP_LIVE_LLM,
+    ),
+    orchestrator: str | None = typer.Option(
+        None,
+        "--orchestrator",
+        help=ch.HELP_ORCHESTRATOR,
+    ),
+    cypher: str | None = typer.Option(
+        None,
+        "--cypher",
+        help=ch.HELP_CYPHER_MODEL,
+    ),
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help=ch.HELP_BATCH_SIZE,
+    ),
+) -> None:
+    """
+    Benchmarks MCP client profiles and Cypher generation readiness for a repository.
+    """
+    target_repo_path = repo_path or settings.TARGET_REPO_PATH
+    if not target_repo_path:
+        typer.echo(cs.CLI_MSG_HINT_TARGET_REPO, err=True)
+        raise typer.Exit(1)
+
+    if live_llm:
+        _update_and_validate_models(orchestrator, cypher)
+    elif orchestrator or cypher:
+        try:
+            update_model_settings(orchestrator, cypher)
+        except ValueError as e:
+            typer.echo(str(e), err=True)
+            raise typer.Exit(1) from e
+
+    from codebase_rag.services.mcp_benchmark import run_mcp_benchmarks
+
+    effective_batch_size = settings.resolve_batch_size(batch_size)
+    try:
+        with connect_memgraph(effective_batch_size) as ingestor:
+            report = asyncio.run(
+                run_mcp_benchmarks(
+                    target_repo_path,
+                    ingestor,
+                    output_path=output,
+                    live_llm=live_llm,
+                )
+            )
+    except Exception as e:
+        typer.echo(f"Benchmark command failed: {e}", err=True)
+        raise typer.Exit(1) from e
+
+    summary = report.get("summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
+    summary_dict = cast(dict[str, object], summary)
+    app_context.console.print(
+        style("MCP benchmark completed.", cs.Color.GREEN, cs.StyleModifier.NONE)
+    )
+    repo_path_val = report.get("repo_path", target_repo_path)
+    app_context.console.print(f"  Repo: {repo_path_val}")
+    client_profile_average = summary_dict.get("client_profile_average", 0.0)
+    app_context.console.print(f"  Client profile average: {client_profile_average}")
+    cypher_average = summary_dict.get("cypher_average", 0.0)
+    app_context.console.print(f"  Cypher average: {cypher_average}")
+    output_path = report.get("output_path")
+    if isinstance(output_path, str) and output_path.strip():
+        app_context.console.print(f"  Output: {output_path}")
 
 
 @app.command(name=ch.CLICommandName.GRAPH_LOADER, help=ch.CMD_GRAPH_LOADER)

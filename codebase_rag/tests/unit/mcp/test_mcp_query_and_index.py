@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -64,6 +65,19 @@ class TestQueryCodeGraph:
     """Test query_code_graph functionality."""
 
     @staticmethod
+    def _generate_mock(mcp_registry: MCPToolsRegistry) -> AsyncMock:
+        return cast(AsyncMock, cast(Any, mcp_registry).cypher_gen.generate)
+
+    @staticmethod
+    def _ingestor_mock(mcp_registry: MCPToolsRegistry) -> MagicMock:
+        return cast(MagicMock, cast(Any, mcp_registry).ingestor)
+
+    @staticmethod
+    def _result_payload(result: object) -> dict[str, object]:
+        assert isinstance(result, dict)
+        return cast(dict[str, object], result)
+
+    @staticmethod
     def _scoped_cypher(mcp_registry: MCPToolsRegistry) -> str:
         project_name = Path(mcp_registry.project_root).resolve().name
         return (
@@ -73,70 +87,83 @@ class TestQueryCodeGraph:
 
     async def test_query_finds_functions(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for functions in the code graph."""
-        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+        self._generate_mock(mcp_registry).return_value = self._scoped_cypher(
             mcp_registry
-        )  # type: ignore[attr-defined]
-        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+        )
+        self._ingestor_mock(mcp_registry).fetch_all.return_value = [
             {"name": "add"},
             {"name": "multiply"},
         ]
 
-        result = await mcp_registry.query_code_graph("Find all functions")
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("Find all functions")
+        )
 
-        assert "results" in result
-        assert len(result["results"]) == 2
-        assert result["results"][0]["name"] == "add"
-        assert result["results"][1]["name"] == "multiply"
-        assert "query_used" in result
-        assert "summary" in result
+        assert "results" in payload
+        rows = cast(list[dict[str, object]], payload["results"])
+        assert len(rows) == 2
+        assert rows[0]["name"] == "add"
+        assert rows[1]["name"] == "multiply"
+        assert "query_used" in payload
+        assert "summary" in payload
 
     async def test_query_finds_classes(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test querying for classes in the code graph."""
-        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+        self._generate_mock(mcp_registry).return_value = self._scoped_cypher(
             mcp_registry
-        )  # type: ignore[attr-defined]
-        mcp_registry.ingestor.fetch_all.return_value = [{"name": "Calculator"}]  # type: ignore[attr-defined]
+        )
+        self._ingestor_mock(mcp_registry).fetch_all.return_value = [
+            {"name": "Calculator"}
+        ]
 
-        result = await mcp_registry.query_code_graph("Find all classes")
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("Find all classes")
+        )
 
-        assert len(result["results"]) == 1
-        assert result["results"][0]["name"] == "Calculator"
+        rows = cast(list[dict[str, object]], payload["results"])
+        assert len(rows) == 1
+        assert rows[0]["name"] == "Calculator"
 
     async def test_query_finds_function_calls(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test querying for function call relationships."""
-        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+        self._generate_mock(mcp_registry).return_value = self._scoped_cypher(
             mcp_registry
-        )  # type: ignore[attr-defined]
-        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+        )
+        self._ingestor_mock(mcp_registry).fetch_all.return_value = [
             {"f.name": "main", "g.name": "add"},
             {"f.name": "main", "g.name": "multiply"},
         ]
 
-        result = await mcp_registry.query_code_graph("What functions does main call?")
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("What functions does main call?")
+        )
 
-        assert len(result["results"]) == 2
-        assert "Returned 2 rows" in result["summary"]
+        rows = cast(list[dict[str, object]], payload["results"])
+        assert len(rows) == 2
+        assert "Returned 2 rows" in str(payload["summary"])
 
     async def test_query_with_no_results(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query that returns no results."""
-        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+        self._generate_mock(mcp_registry).return_value = self._scoped_cypher(
             mcp_registry
-        )  # type: ignore[attr-defined]
-        mcp_registry.ingestor.fetch_all.return_value = []  # type: ignore[attr-defined]
+        )
+        self._ingestor_mock(mcp_registry).fetch_all.return_value = []
 
-        result = await mcp_registry.query_code_graph("Find nonexistent nodes")
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("Find nonexistent nodes")
+        )
 
-        assert result["results"] == []
-        assert "Returned 0 rows" in result["summary"]
+        assert payload["results"] == []
+        assert "Returned 0 rows" in str(payload["summary"])
 
     async def test_query_uses_deterministic_second_pass_on_zero_rows(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+        self._generate_mock(mcp_registry).return_value = self._scoped_cypher(
             mcp_registry
-        )  # type: ignore[attr-defined]
+        )
 
         def fetch_all_side_effect(
             cypher: str, params: dict | None = None
@@ -146,65 +173,74 @@ class TestQueryCodeGraph:
                 return [{"source": "main", "target": "add"}]
             return []
 
-        mcp_registry.ingestor.fetch_all.side_effect = fetch_all_side_effect  # type: ignore[attr-defined]
+        self._ingestor_mock(mcp_registry).fetch_all.side_effect = fetch_all_side_effect
 
-        result = await mcp_registry.query_code_graph("What functions does main call?")
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("What functions does main call?")
+        )
 
-        assert len(result["results"]) == 1
-        assert result["results"][0]["source"] == "main"
-        assert "-[:CALLS]->" in result["query_used"]
+        rows = cast(list[dict[str, object]], payload["results"])
+        assert len(rows) == 1
+        assert rows[0]["source"] == "main"
+        assert "-[:CALLS]->" in str(payload["query_used"])
 
     async def test_query_with_complex_natural_language(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test complex natural language query."""
-        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+        self._generate_mock(mcp_registry).return_value = self._scoped_cypher(
             mcp_registry
-        )  # type: ignore[attr-defined]
-        mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+        )
+        self._ingestor_mock(mcp_registry).fetch_all.return_value = [
             {"name": "add"},
             {"name": "multiply"},
         ]
 
-        result = await mcp_registry.query_code_graph(
-            "What functions are defined in the calculator module?"
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph(
+                "What functions are defined in the calculator module?"
+            )
         )
 
-        assert len(result["results"]) == 2
-        assert "query_used" in result
+        rows = cast(list[dict[str, object]], payload["results"])
+        assert len(rows) == 2
+        assert "query_used" in payload
 
     async def test_query_handles_unicode(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test query with unicode characters."""
-        mcp_registry.cypher_gen.generate.return_value = self._scoped_cypher(
+        self._generate_mock(mcp_registry).return_value = self._scoped_cypher(
             mcp_registry
-        )  # type: ignore[attr-defined]
-        mcp_registry.ingestor.fetch_all.return_value = [{"name": "你好"}]  # type: ignore[attr-defined]
+        )
+        self._ingestor_mock(mcp_registry).fetch_all.return_value = [{"name": "你好"}]
 
-        result = await mcp_registry.query_code_graph("Find function 你好")
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("Find function 你好")
+        )
 
-        assert len(result["results"]) == 1
+        rows = cast(list[dict[str, object]], payload["results"])
+        assert len(rows) == 1
 
     async def test_query_error_handling(self, mcp_registry: MCPToolsRegistry) -> None:
         """Test error handling during query execution."""
-        mcp_registry.cypher_gen.generate.side_effect = Exception(  # type: ignore[attr-defined]
-            "Database error"
+        self._generate_mock(mcp_registry).side_effect = Exception("Database error")
+
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("Find all nodes")
         )
 
-        result = await mcp_registry.query_code_graph("Find all nodes")
-
-        assert "error" in result
-        assert "results" in result
-        assert isinstance(result["results"], list)
-        assert len(result["results"]) == 0
+        assert "error" in payload
+        assert "results" in payload
+        rows = cast(list[dict[str, object]], payload["results"])
+        assert len(rows) == 0
 
     async def test_query_verifies_parameter_passed(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Test that query parameter is correctly passed."""
-        mock_func = mcp_registry.cypher_gen.generate  # type: ignore[attr-defined]
+        mock_func = self._generate_mock(mcp_registry)
         assert isinstance(mock_func, AsyncMock)
         mock_func.return_value = self._scoped_cypher(mcp_registry)
-        mcp_registry.ingestor.fetch_all.return_value = []  # type: ignore[attr-defined]
+        self._ingestor_mock(mcp_registry).fetch_all.return_value = []
 
         query = "Find all nodes"
         await mcp_registry.query_code_graph(query)
@@ -215,12 +251,14 @@ class TestQueryCodeGraph:
     async def test_query_rejects_unscoped_generated_cypher(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        mcp_registry.cypher_gen.generate.return_value = "MATCH (n) RETURN n LIMIT 50"  # type: ignore[attr-defined]
+        self._generate_mock(mcp_registry).return_value = "MATCH (n) RETURN n LIMIT 50"
 
-        result = await mcp_registry.query_code_graph("Find all nodes")
+        payload = self._result_payload(
+            await mcp_registry.query_code_graph("Find all nodes")
+        )
 
-        assert "error" in result
-        assert result["results"] == []
+        assert "error" in payload
+        assert payload["results"] == []
 
 
 class TestIndexRepository:
@@ -364,9 +402,8 @@ class TestIndexRepository:
             if call_count["delete"] == 1:
                 raise Exception("Cannot resolve conflicting transactions")
 
-        mcp_registry.ingestor.delete_project = MagicMock(
-            side_effect=_delete_with_conflict
-        )  # type: ignore[method-assign]
+        ingestor = cast(MagicMock, cast(Any, mcp_registry).ingestor)
+        ingestor.delete_project = MagicMock(side_effect=_delete_with_conflict)
 
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -394,7 +431,8 @@ class TestIndexRepository:
         def mock_run() -> None:
             call_order.append("run")
 
-        mcp_registry.ingestor.delete_project = MagicMock(side_effect=mock_delete)  # type: ignore[method-assign]
+        ingestor = cast(MagicMock, cast(Any, mcp_registry).ingestor)
+        ingestor.delete_project = MagicMock(side_effect=mock_delete)
 
         with patch("codebase_rag.mcp.tools.GraphUpdater") as mock_updater_class:
             mock_updater = MagicMock()
@@ -473,13 +511,18 @@ class TestQueryAndIndexIntegration:
             assert "Error:" not in index_result
 
             project_name = Path(mcp_registry.project_root).resolve().name
-            mcp_registry.cypher_gen.generate.return_value = (  # type: ignore[attr-defined]
-                f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m.name AS name LIMIT 50"
-            )
-            mcp_registry.ingestor.fetch_all.return_value = [{"name": "add"}]  # type: ignore[attr-defined]
+            TestQueryCodeGraph._generate_mock(
+                mcp_registry
+            ).return_value = f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m.name AS name LIMIT 50"
+            TestQueryCodeGraph._ingestor_mock(mcp_registry).fetch_all.return_value = [
+                {"name": "add"}
+            ]
 
-            query_result = await mcp_registry.query_code_graph("Find all functions")
-            assert len(query_result["results"]) >= 0
+            query_payload = TestQueryCodeGraph._result_payload(
+                await mcp_registry.query_code_graph("Find all functions")
+            )
+            rows = cast(list[dict[str, object]], query_payload["results"])
+            assert len(rows) >= 0
 
     async def test_index_and_query_workflow(
         self, mcp_registry: MCPToolsRegistry, temp_project_root: Path
@@ -497,19 +540,27 @@ class TestQueryAndIndexIntegration:
             )
 
             project_name = Path(mcp_registry.project_root).resolve().name
-            mcp_registry.cypher_gen.generate.return_value = (  # type: ignore[attr-defined]
-                f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m.name AS name LIMIT 50"
-            )
-            mcp_registry.ingestor.fetch_all.return_value = [  # type: ignore[attr-defined]
+            TestQueryCodeGraph._generate_mock(
+                mcp_registry
+            ).return_value = f"MATCH (m:Module {{project_name: '{project_name}'}}) RETURN m.name AS name LIMIT 50"
+            TestQueryCodeGraph._ingestor_mock(mcp_registry).fetch_all.return_value = [
                 {"name": "add"},
                 {"name": "multiply"},
             ]
-            result = await mcp_registry.query_code_graph("Find all functions")
-            assert len(result["results"]) == 2
+            result_payload = TestQueryCodeGraph._result_payload(
+                await mcp_registry.query_code_graph("Find all functions")
+            )
+            rows = cast(list[dict[str, object]], result_payload["results"])
+            assert len(rows) == 2
 
-            mcp_registry.ingestor.fetch_all.return_value = [{"name": "Calculator"}]  # type: ignore[attr-defined]
-            result = await mcp_registry.query_code_graph("Find all classes")
-            assert len(result["results"]) == 1
+            TestQueryCodeGraph._ingestor_mock(mcp_registry).fetch_all.return_value = [
+                {"name": "Calculator"}
+            ]
+            result_payload = TestQueryCodeGraph._result_payload(
+                await mcp_registry.query_code_graph("Find all classes")
+            )
+            rows = cast(list[dict[str, object]], result_payload["results"])
+            assert len(rows) == 1
 
 
 class TestListProjects:

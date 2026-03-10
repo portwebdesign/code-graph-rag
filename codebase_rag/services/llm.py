@@ -21,6 +21,8 @@ from codebase_rag.ai.prompts import (
     build_rag_orchestrator_prompt,
 )
 from codebase_rag.core.config import ModelConfig, settings
+from codebase_rag.services.cypher_guard import CypherGuard
+from codebase_rag.services.cypher_templates import CypherTemplateBank
 
 from ..core import constants as cs
 from ..core import logs as ls
@@ -106,8 +108,33 @@ class CypherGenerator:
                 output_type=str,
                 retries=settings.AGENT_RETRIES,
             )
+            self._guard = CypherGuard()
+            self._template_bank = CypherTemplateBank()
         except Exception as e:
             raise ex.LLMGenerationError(ex.LLM_INIT_CYPHER.format(error=e)) from e
+
+    def inspect_generation_strategy(
+        self, natural_language_query: str
+    ) -> dict[str, object]:
+        match = self._template_bank.inspect(natural_language_query)
+        if match is None:
+            return {
+                "strategy": "llm",
+                "template_name": "",
+                "confidence": 0.0,
+                "prompt_hint": "",
+            }
+        return {
+            "strategy": match.strategy,
+            "template_name": match.name,
+            "confidence": match.confidence,
+            "prompt_hint": match.prompt_hint,
+            "direct_query": match.query or "",
+            "guard_preview": self._guard.rewrite_and_validate(
+                match.query or "",
+                require_project_scope=True,
+            ).metadata,
+        }
 
     async def generate(self, natural_language_query: str) -> str:
         """
@@ -125,7 +152,22 @@ class CypherGenerator:
         """
         logger.info(ls.CYPHER_GENERATING.format(query=natural_language_query))
         try:
-            result = await self.agent.run(natural_language_query)
+            template_match = self._template_bank.inspect(natural_language_query)
+            if template_match is not None and template_match.query:
+                guarded = self._guard.rewrite_and_validate(
+                    template_match.query,
+                    require_project_scope=True,
+                )
+                if not guarded.valid:
+                    raise ex.LLMGenerationError(
+                        ex.LLM_INVALID_QUERY.format(output=guarded.errors)
+                    )
+                query = _clean_cypher_response(guarded.query)
+                logger.info(ls.CYPHER_GENERATED.format(query=query))
+                return query
+
+            prompt = self._template_bank.augment_prompt(natural_language_query)
+            result = await self.agent.run(prompt)
             if (
                 not isinstance(result.output, str)
                 or cs.CYPHER_MATCH_KEYWORD not in result.output.upper()
@@ -134,7 +176,15 @@ class CypherGenerator:
                     ex.LLM_INVALID_QUERY.format(output=result.output)
                 )
 
-            query = _clean_cypher_response(result.output)
+            guarded = self._guard.rewrite_and_validate(
+                result.output,
+                require_project_scope=True,
+            )
+            if not guarded.valid:
+                raise ex.LLMGenerationError(
+                    ex.LLM_INVALID_QUERY.format(output=guarded.errors)
+                )
+            query = _clean_cypher_response(guarded.query)
             logger.info(ls.CYPHER_GENERATED.format(query=query))
             return query
         except Exception as e:

@@ -21,6 +21,12 @@ __all__ = [
     "GraphUpdateConfigService",
     "GraphUpdaterContext",
     "GraphUpdateOrchestrator",
+    "CodeChangeEventHandler",
+    "run_watcher_loop",
+    "start_watcher",
+    "run_mcp_benchmarks",
+    "RepoSemanticEnricher",
+    "CypherGuard",
 ]
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
@@ -58,6 +64,12 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "FileProcessingService": (".graph_update_services", "FileProcessingService"),
     "GitDeltaService": (".graph_update_services", "GitDeltaService"),
     "ParsePreparationService": (".graph_update_services", "ParsePreparationService"),
+    "CodeChangeEventHandler": (".realtime_watcher", "CodeChangeEventHandler"),
+    "run_watcher_loop": (".realtime_watcher", "run_watcher_loop"),
+    "start_watcher": (".realtime_watcher", "start_watcher"),
+    "run_mcp_benchmarks": (".mcp_benchmark", "run_mcp_benchmarks"),
+    "RepoSemanticEnricher": (".repo_semantics", "RepoSemanticEnricher"),
+    "CypherGuard": (".cypher_guard", "CypherGuard"),
 }
 
 

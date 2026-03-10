@@ -1,6 +1,7 @@
 import asyncio
 import itertools
 import json
+import os
 import random
 import re
 import time
@@ -51,6 +52,7 @@ from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure import tool_errors as te
 from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.policy.engine import MCPPolicyEngine
+from codebase_rag.services.analysis_evidence import AnalysisEvidenceService
 from codebase_rag.services.cleanup_service import CleanupService
 from codebase_rag.services.context7_client import Context7Client
 from codebase_rag.services.context7_persistence import (
@@ -60,6 +62,7 @@ from codebase_rag.services.context7_persistence import (
 )
 from codebase_rag.services.graph_service import MemgraphIngestor
 from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.services.repo_semantics import RepoSemanticEnricher
 from codebase_rag.tools import tool_descriptions as td
 from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
 from codebase_rag.tools.codebase_query import create_query_tool
@@ -512,7 +515,11 @@ def _build_tool_metadata_catalog(
                     cs.MCPParamName.REPO_PATH: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
                         description=td.MCP_PARAM_REPO_PATH,
-                    )
+                    ),
+                    cs.MCPParamName.CLIENT_PROFILE: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CLIENT_PROFILE,
+                    ),
                 },
                 required=[],
             ),
@@ -1013,6 +1020,130 @@ def _build_tool_metadata_catalog(
             handler=registry.list_analysis_artifacts,
             returns_json=True,
         ),
+        cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL: ToolMetadata(
+            name=cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+            description=td.MCP_TOOLS[cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.GOAL: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_GOAL,
+                    ),
+                    cs.MCPParamName.CONTEXT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CONTEXT,
+                    ),
+                },
+                required=[cs.MCPParamName.GOAL],
+            ),
+            handler=registry.analysis_bundle_for_goal,
+            returns_json=True,
+        ),
+        cs.MCPToolName.ARCHITECTURE_BUNDLE: ToolMetadata(
+            name=cs.MCPToolName.ARCHITECTURE_BUNDLE,
+            description=td.MCP_TOOLS[cs.MCPToolName.ARCHITECTURE_BUNDLE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.GOAL: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_GOAL,
+                    ),
+                    cs.MCPParamName.CONTEXT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CONTEXT,
+                    ),
+                },
+                required=[],
+            ),
+            handler=registry.architecture_bundle,
+            returns_json=True,
+        ),
+        cs.MCPToolName.CHANGE_BUNDLE: ToolMetadata(
+            name=cs.MCPToolName.CHANGE_BUNDLE,
+            description=td.MCP_TOOLS[cs.MCPToolName.CHANGE_BUNDLE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.GOAL: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_GOAL,
+                    ),
+                    cs.MCPParamName.CONTEXT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CONTEXT,
+                    ),
+                    cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUALIFIED_NAME,
+                    ),
+                    cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FILE_PATH,
+                    ),
+                },
+                required=[cs.MCPParamName.GOAL],
+            ),
+            handler=registry.change_bundle,
+            returns_json=True,
+        ),
+        cs.MCPToolName.RISK_BUNDLE: ToolMetadata(
+            name=cs.MCPToolName.RISK_BUNDLE,
+            description=td.MCP_TOOLS[cs.MCPToolName.RISK_BUNDLE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.GOAL: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_GOAL,
+                    ),
+                    cs.MCPParamName.CONTEXT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CONTEXT,
+                    ),
+                    cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUALIFIED_NAME,
+                    ),
+                    cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FILE_PATH,
+                    ),
+                },
+                required=[cs.MCPParamName.GOAL],
+            ),
+            handler=registry.risk_bundle,
+            returns_json=True,
+        ),
+        cs.MCPToolName.TEST_BUNDLE: ToolMetadata(
+            name=cs.MCPToolName.TEST_BUNDLE,
+            description=td.MCP_TOOLS[cs.MCPToolName.TEST_BUNDLE],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.GOAL: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_GOAL,
+                    ),
+                    cs.MCPParamName.CONTEXT: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_CONTEXT,
+                    ),
+                    cs.MCPParamName.QUALIFIED_NAME: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUALIFIED_NAME,
+                    ),
+                    cs.MCPParamName.FILE_PATH: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_FILE_PATH,
+                    ),
+                },
+                required=[cs.MCPParamName.GOAL],
+            ),
+            handler=registry.test_bundle,
+            returns_json=True,
+        ),
         cs.MCPToolName.EXPORT_MERMAID: ToolMetadata(
             name=cs.MCPToolName.EXPORT_MERMAID,
             description=td.MCP_TOOLS[cs.MCPToolName.EXPORT_MERMAID],
@@ -1448,6 +1579,11 @@ _TOOL_DOMAIN_GROUPS: dict[str, tuple[str, ...]] = {
         cs.MCPToolName.GET_ANALYSIS_METRIC,
         cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
         cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+        cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+        cs.MCPToolName.ARCHITECTURE_BUNDLE,
+        cs.MCPToolName.CHANGE_BUNDLE,
+        cs.MCPToolName.RISK_BUNDLE,
+        cs.MCPToolName.TEST_BUNDLE,
         cs.MCPToolName.EXPORT_MERMAID,
     ),
     "workflow": (
@@ -1501,6 +1637,51 @@ class MCPToolsRegistry:
     )
     _ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS = 8
     _ORCHESTRATOR_VISIBLE_TIERS = {"tier1", "meta"}
+    _DEFAULT_CLIENT_PROFILE = cs.MCPClientProfile.BALANCED
+    _CLIENT_PROFILE_CONFIGS: dict[str, dict[str, object]] = {
+        cs.MCPClientProfile.BALANCED: {
+            "tool_chain_max_steps": 8,
+            "response_mode": "balanced",
+            "summary_style": "readable_compact",
+            "planner_contract": "standard",
+            "preferred_auto_next": False,
+        },
+        cs.MCPClientProfile.VSCODE: {
+            "tool_chain_max_steps": 8,
+            "response_mode": "ide_readable",
+            "summary_style": "copy_paste_guided",
+            "planner_contract": "standard",
+            "preferred_auto_next": False,
+        },
+        cs.MCPClientProfile.CLINE: {
+            "tool_chain_max_steps": 9,
+            "response_mode": "tool_forward",
+            "summary_style": "dense_with_exact_calls",
+            "planner_contract": "standard",
+            "preferred_auto_next": True,
+        },
+        cs.MCPClientProfile.COPILOT: {
+            "tool_chain_max_steps": 7,
+            "response_mode": "short_guided",
+            "summary_style": "ide_readable",
+            "planner_contract": "compact",
+            "preferred_auto_next": False,
+        },
+        cs.MCPClientProfile.OLLAMA: {
+            "tool_chain_max_steps": 5,
+            "response_mode": "minimal_deterministic",
+            "summary_style": "shortest_safe",
+            "planner_contract": "ultra_compact",
+            "preferred_auto_next": False,
+        },
+        cs.MCPClientProfile.HTTP: {
+            "tool_chain_max_steps": 8,
+            "response_mode": "api_copy_paste",
+            "summary_style": "copy_paste_guided",
+            "planner_contract": "compact",
+            "preferred_auto_next": False,
+        },
+    }
     _EXPLORATION_BASE_EPSILON = 0.15
     _EXPLORATION_MIN_EPSILON = 0.05
     _EXPLORATION_MAX_EPSILON = 0.35
@@ -1510,9 +1691,14 @@ class MCPToolsRegistry:
         cs.MCPToolName.LIST_PROJECTS: "tier1",
         cs.MCPToolName.QUERY_CODE_GRAPH: "tier1",
         cs.MCPToolName.MULTI_HOP_ANALYSIS: "tier1",
+        cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL: "tier1",
+        cs.MCPToolName.ARCHITECTURE_BUNDLE: "tier1",
         cs.MCPToolName.SEMANTIC_SEARCH: "tier1",
         cs.MCPToolName.RUN_CYPHER: "tier1",
         cs.MCPToolName.SELECT_ACTIVE_PROJECT: "tier1",
+        cs.MCPToolName.CHANGE_BUNDLE: "tier2",
+        cs.MCPToolName.RISK_BUNDLE: "tier2",
+        cs.MCPToolName.TEST_BUNDLE: "tier2",
         cs.MCPToolName.CONTEXT7_DOCS: "tier2",
         cs.MCPToolName.GET_FUNCTION_SOURCE: "tier2",
         cs.MCPToolName.READ_FILE: "tier2",
@@ -1540,6 +1726,19 @@ class MCPToolsRegistry:
         "execution",
         "post_validation",
     )
+    _EXECUTION_TRANSITIONS = {
+        "preflight": {"preflight", "retrieval"},
+        "retrieval": {"retrieval", "validation", "execution", "post_validation"},
+        "validation": {"retrieval", "validation", "execution", "post_validation"},
+        "execution": {"retrieval", "validation", "execution", "post_validation"},
+        "post_validation": {
+            "preflight",
+            "retrieval",
+            "validation",
+            "execution",
+            "post_validation",
+        },
+    }
     _PHASE_EXEMPT_TOOLS = {
         cs.MCPToolName.LIST_PROJECTS,
         cs.MCPToolName.SELECT_ACTIVE_PROJECT,
@@ -1572,6 +1771,11 @@ class MCPToolsRegistry:
             cs.MCPToolName.GET_ANALYSIS_METRIC,
             cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
             cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+            cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+            cs.MCPToolName.ARCHITECTURE_BUNDLE,
+            cs.MCPToolName.CHANGE_BUNDLE,
+            cs.MCPToolName.RISK_BUNDLE,
+            cs.MCPToolName.TEST_BUNDLE,
             cs.MCPToolName.RUN_ANALYSIS,
             cs.MCPToolName.RUN_ANALYSIS_SUBSET,
             cs.MCPToolName.SECURITY_SCAN,
@@ -1603,6 +1807,11 @@ class MCPToolsRegistry:
             cs.MCPToolName.GET_ANALYSIS_METRIC,
             cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
             cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+            cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+            cs.MCPToolName.ARCHITECTURE_BUNDLE,
+            cs.MCPToolName.CHANGE_BUNDLE,
+            cs.MCPToolName.RISK_BUNDLE,
+            cs.MCPToolName.TEST_BUNDLE,
             cs.MCPToolName.RUN_ANALYSIS,
             cs.MCPToolName.RUN_ANALYSIS_SUBSET,
             cs.MCPToolName.SECURITY_SCAN,
@@ -1643,6 +1852,75 @@ class MCPToolsRegistry:
         return str(cls._TOOL_TIER_MAP.get(tool_name, "unknown"))
 
     @classmethod
+    def _normalize_client_profile_value(cls, client_profile: str | None) -> str:
+        raw = str(client_profile or "").strip().lower()
+        aliases = {
+            "vs code": cs.MCPClientProfile.VSCODE,
+            "vs_code": cs.MCPClientProfile.VSCODE,
+            "cursor": cs.MCPClientProfile.VSCODE,
+            "copilot-chat": cs.MCPClientProfile.COPILOT,
+            "copilot_chat": cs.MCPClientProfile.COPILOT,
+            "http_api": cs.MCPClientProfile.HTTP,
+            "local": cs.MCPClientProfile.OLLAMA,
+        }
+        normalized = aliases.get(raw, raw)
+        if normalized in cls._CLIENT_PROFILE_CONFIGS:
+            return normalized
+        return str(cls._DEFAULT_CLIENT_PROFILE)
+
+    def set_client_profile(self, client_profile: str | None) -> str:
+        normalized = self._normalize_client_profile_value(client_profile)
+        session_state = getattr(self, "_session_state", None)
+        if isinstance(session_state, dict):
+            session_state["client_profile"] = normalized
+        return normalized
+
+    def _client_profile(self) -> str:
+        session_state = getattr(self, "_session_state", None)
+        if not isinstance(session_state, dict):
+            return str(self._DEFAULT_CLIENT_PROFILE)
+        return self._normalize_client_profile_value(
+            str(session_state.get("client_profile", self._DEFAULT_CLIENT_PROFILE))
+        )
+
+    def _client_profile_config(self) -> dict[str, object]:
+        return dict(
+            self._CLIENT_PROFILE_CONFIGS.get(
+                self._client_profile(),
+                self._CLIENT_PROFILE_CONFIGS[str(self._DEFAULT_CLIENT_PROFILE)],
+            )
+        )
+
+    def _orchestrator_max_tool_chain_steps(self) -> int:
+        profile_config = self._client_profile_config()
+        return max(
+            3,
+            self._coerce_int(
+                profile_config.get(
+                    "tool_chain_max_steps", self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS
+                ),
+                self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS,
+            ),
+        )
+
+    def _state_machine_contract(self) -> dict[str, object]:
+        return {
+            "enabled": True,
+            "deterministic": True,
+            "current_phase": self._current_execution_phase(),
+            "allowed_transitions": {
+                phase: sorted(next_phases)
+                for phase, next_phases in self._EXECUTION_TRANSITIONS.items()
+            },
+            "last_transition_allowed": bool(
+                self._session_state.get("last_phase_transition_allowed", True)
+            ),
+            "last_transition_error": str(
+                self._session_state.get("last_phase_transition_error", "")
+            ).strip(),
+        }
+
+    @classmethod
     def _is_tool_visible_in_orchestrator(cls, tool_name: str) -> tuple[bool, str]:
         tier = cls._tool_tier(tool_name)
         return tier in cls._ORCHESTRATOR_VISIBLE_TIERS, tier
@@ -1658,6 +1936,16 @@ class MCPToolsRegistry:
         if normalized_phase not in self._EXECUTION_PHASES:
             normalized_phase = "preflight"
         previous = self._current_execution_phase()
+        allowed_transitions = self._EXECUTION_TRANSITIONS.get(previous, {previous})
+        if normalized_phase not in allowed_transitions:
+            self._session_state["last_phase_transition_allowed"] = False
+            self._session_state["last_phase_transition_error"] = (
+                f"invalid_transition:{previous}->{normalized_phase}"
+            )
+            normalized_phase = previous
+        else:
+            self._session_state["last_phase_transition_allowed"] = True
+            self._session_state["last_phase_transition_error"] = ""
         if previous == normalized_phase:
             return
         self._session_state["execution_phase"] = normalized_phase
@@ -1693,6 +1981,7 @@ class MCPToolsRegistry:
             "allowed_tools": allowed_tools,
             "forbidden_tools": forbidden_tools,
             "phase_history": self._session_state.get("execution_phase_history", []),
+            "state_machine": self._state_machine_contract(),
         }
 
     def _visible_tool_names(self, *, allow_phase_bypass: bool = False) -> set[str]:
@@ -1718,6 +2007,8 @@ class MCPToolsRegistry:
                 cs.MCPToolName.PLAN_TASK,
                 cs.MCPToolName.QUERY_CODE_GRAPH,
                 cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+                cs.MCPToolName.ARCHITECTURE_BUNDLE,
                 cs.MCPToolName.GET_GRAPH_STATS,
                 cs.MCPToolName.GET_DEPENDENCY_STATS,
             }
@@ -1752,6 +2043,9 @@ class MCPToolsRegistry:
                     cs.MCPToolName.GET_ANALYSIS_METRIC,
                     cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
                     cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+                    cs.MCPToolName.CHANGE_BUNDLE,
+                    cs.MCPToolName.RISK_BUNDLE,
+                    cs.MCPToolName.TEST_BUNDLE,
                     cs.MCPToolName.RUN_ANALYSIS,
                     cs.MCPToolName.RUN_ANALYSIS_SUBSET,
                     cs.MCPToolName.SECURITY_SCAN,
@@ -1813,6 +2107,8 @@ class MCPToolsRegistry:
                     "tools": [
                         cs.MCPToolName.QUERY_CODE_GRAPH,
                         cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                        cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+                        cs.MCPToolName.ARCHITECTURE_BUNDLE,
                         cs.MCPToolName.PLAN_TASK,
                         cs.MCPToolName.GET_EXECUTION_READINESS,
                     ],
@@ -1826,6 +2122,9 @@ class MCPToolsRegistry:
                         cs.MCPToolName.GET_CODE_SNIPPET,
                         cs.MCPToolName.GET_FUNCTION_SOURCE,
                         cs.MCPToolName.CONTEXT7_DOCS,
+                        cs.MCPToolName.CHANGE_BUNDLE,
+                        cs.MCPToolName.RISK_BUNDLE,
+                        cs.MCPToolName.TEST_BUNDLE,
                     ],
                 },
                 {
@@ -2329,6 +2628,8 @@ class MCPToolsRegistry:
         self._context7_knowledge_store = Context7KnowledgeStore(ingestor)
         self._context7_memory_store = Context7MemoryStore(project_root)
         self._context7_persistence = Context7Persistence(ingestor, project_root)
+        self._analysis_evidence = AnalysisEvidenceService(project_root)
+        self._repo_semantic_enricher = RepoSemanticEnricher()
 
         async def _default_plan(goal: str, context: str | None = None) -> object:
             _ = goal
@@ -2365,6 +2666,7 @@ class MCPToolsRegistry:
         )
         self._session_state: dict[str, object] = {
             "orchestrator_prompt": self._orchestrator_prompt,
+            "client_profile": str(self._DEFAULT_CLIENT_PROFILE),
             "preflight_project_selected": False,
             "preflight_schema_summary_loaded": False,
             "preflight_schema_summary_rows": 0,
@@ -2401,6 +2703,8 @@ class MCPToolsRegistry:
                     "timestamp": int(time.time()),
                 }
             ],
+            "last_phase_transition_allowed": True,
+            "last_phase_transition_error": "",
             "semantic_success_count": 0,
             "semantic_similarity_mean": 0.0,
             "edit_success_count": 0,
@@ -2417,6 +2721,16 @@ class MCPToolsRegistry:
             "last_graph_sync_timestamp": 0,
             "last_graph_sync_error": "",
             "last_graph_sync_paths": [],
+            "last_mutation_paths": [],
+            "last_analysis_bundle": {},
+            "last_architecture_bundle": {},
+            "last_change_bundle": {},
+            "last_impact_bundle": {},
+            "last_multi_hop_bundle": {},
+            "last_risk_bundle": {},
+            "last_test_bundle": {},
+            "last_test_selection": {},
+            "repo_semantics": {},
             "orchestrate_circuit": {
                 "state": "closed",
                 "failure_count": 0,
@@ -3054,13 +3368,33 @@ class MCPToolsRegistry:
                 "timestamp": int(time.time()),
             }
         ]
+        self._session_state["last_phase_transition_allowed"] = True
+        self._session_state["last_phase_transition_error"] = ""
+        self._session_state["repo_semantics"] = {}
+        self._session_state["last_analysis_bundle"] = {}
+        self._session_state["last_architecture_bundle"] = {}
+        self._session_state["last_change_bundle"] = {}
+        self._session_state["last_impact_bundle"] = {}
+        self._session_state["last_multi_hop_bundle"] = {}
+        self._session_state["last_risk_bundle"] = {}
+        self._session_state["last_test_bundle"] = {}
+        self._session_state["last_test_selection"] = {}
         self._refresh_internal_agents()
         return resolved_repo
 
-    def _build_session_contract(self, project_name: str) -> dict[str, object]:
+    def _build_session_contract(
+        self, project_name: str, client_profile: str | None = None
+    ) -> dict[str, object]:
+        resolved_client_profile = self.set_client_profile(client_profile)
+        profile_config = self._client_profile_config()
+        max_tool_chain_steps = self._orchestrator_max_tool_chain_steps()
+        repo_semantics = self._session_state.get("repo_semantics", {})
+        if not isinstance(repo_semantics, dict):
+            repo_semantics = {}
         orchestrator_policy = {
             "version": "2026-03-10",
             "published_on_first_call": "select_active_project",
+            "client_profile": resolved_client_profile,
             "tool_tiering": {
                 "visible_tiers": sorted(self._ORCHESTRATOR_VISIBLE_TIERS),
                 "tier_map": dict(self._TOOL_TIER_MAP),
@@ -3072,7 +3406,7 @@ class MCPToolsRegistry:
                 for domain, tool_names in _TOOL_DOMAIN_GROUPS.items()
             },
             "tool_chain_guard": {
-                "max_steps": self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS,
+                "max_steps": max_tool_chain_steps,
                 "base_flow_steps": [
                     "execution_feedback",
                     "sync_graph_updates",
@@ -3081,6 +3415,16 @@ class MCPToolsRegistry:
                 ],
                 "auto_next_budget": "max_steps - base_flow_steps",
                 "overflow_behavior": "truncate_exact_next_calls_and_report",
+            },
+            "client_profile_policy": {
+                "response_mode": str(profile_config.get("response_mode", "balanced")),
+                "summary_style": str(profile_config.get("summary_style", "balanced")),
+                "planner_contract": str(
+                    profile_config.get("planner_contract", "standard")
+                ),
+                "preferred_auto_next": bool(
+                    profile_config.get("preferred_auto_next", False)
+                ),
             },
             "exploration_policy": {
                 "strategy": "epsilon_greedy",
@@ -3110,6 +3454,7 @@ class MCPToolsRegistry:
                     "scope_gate",
                     "write_safety_gate",
                     "tool_chain_guard",
+                    "state_machine_gate",
                 ],
                 "soft_guards": [
                     "confidence_gate",
@@ -3135,9 +3480,11 @@ class MCPToolsRegistry:
                 },
             },
             "execution_state": self._build_execution_state_contract(),
+            "state_machine": self._state_machine_contract(),
         }
         return {
             "active_project": project_name,
+            "client_profile": resolved_client_profile,
             "default_flow": [
                 "list_projects",
                 "select_active_project",
@@ -3208,20 +3555,49 @@ class MCPToolsRegistry:
                 ],
             },
             "response_profiles": {
-                "query_code_graph": "summary + cypher + compact details",
-                "multi_hop_analysis": "compressed evidence bundle + recommended reads + exact next calls",
+                "query_code_graph": (
+                    "short summary + cypher + compact details"
+                    if resolved_client_profile == cs.MCPClientProfile.OLLAMA
+                    else "summary + cypher + compact details"
+                ),
+                "analysis_bundles": "normalized artifacts + trusted_findings + session evidence + exact_next_calls",
+                "multi_hop_analysis": (
+                    "ultra-compressed evidence bundle + exact next calls"
+                    if resolved_client_profile == cs.MCPClientProfile.OLLAMA
+                    else "compressed evidence bundle + recommended reads + exact next calls"
+                ),
                 "test_generate": {
-                    "default_output_mode": "code",
+                    "default_output_mode": (
+                        "plan_json"
+                        if resolved_client_profile == cs.MCPClientProfile.OLLAMA
+                        else "code"
+                    ),
                     "supported_output_modes": ["code", "plan_json", "both"],
                 },
-                "run_cypher": "compact json with readable cypher and params",
-                "context7_docs": "summary + doc excerpts + persistence source",
+                "run_cypher": (
+                    "minimal json with readable cypher and params"
+                    if resolved_client_profile == cs.MCPClientProfile.HTTP
+                    else "compact json with readable cypher and params"
+                ),
+                "context7_docs": (
+                    "summary + minimal doc excerpts + persistence source"
+                    if resolved_client_profile == cs.MCPClientProfile.OLLAMA
+                    else "summary + doc excerpts + persistence source"
+                ),
             },
             "graph_sync_policy": {
                 "after_edits": "sync_graph_updates",
                 "default_mode": "fast",
                 "consistency_mode": "full",
                 "readiness_gate": "graph_sync_gate",
+            },
+            "client_profile_policy": {
+                "response_mode": str(profile_config.get("response_mode", "balanced")),
+                "summary_style": str(profile_config.get("summary_style", "balanced")),
+                "planner_contract": str(
+                    profile_config.get("planner_contract", "standard")
+                ),
+                "tool_chain_max_steps": max_tool_chain_steps,
             },
             "context7_policy": {
                 "usage": "external_library_gap_only",
@@ -3246,6 +3622,27 @@ class MCPToolsRegistry:
                     "RETURN c.name AS name LIMIT 100"
                 ),
             },
+            "repo_semantics": repo_semantics,
+            "evidence_plane": {
+                "artifacts": "output/analysis normalized by analysis evidence service",
+                "resources": [
+                    resource.get("uri", "")
+                    for resource in self._analysis_evidence.list_resources()[:12]
+                ],
+                "prompts": [
+                    prompt.get("name", "")
+                    for prompt in self._analysis_evidence.list_prompts()
+                ],
+                "bundle_entrypoints": [
+                    cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+                    cs.MCPToolName.ARCHITECTURE_BUNDLE,
+                    cs.MCPToolName.CHANGE_BUNDLE,
+                    cs.MCPToolName.RISK_BUNDLE,
+                    cs.MCPToolName.TEST_BUNDLE,
+                ],
+                "default_rule": "prefer bundles/resources before raw artifact retrieval",
+            },
+            "state_machine": self._state_machine_contract(),
             "orchestrator_policy": orchestrator_policy,
             "staged_tool_visibility": self._staged_tool_visibility_contract(),
         }
@@ -3642,8 +4039,9 @@ class MCPToolsRegistry:
         provider_name = (
             str(settings.active_orchestrator_config.provider).strip().lower()
         )
+        profile_name = self._client_profile()
         agent_system_prompt: str | None = self._orchestrator_prompt
-        if provider_name == "ollama":
+        if provider_name == "ollama" or profile_name == cs.MCPClientProfile.OLLAMA:
             from codebase_rag.agents.mcp_prompt_pack import LOCAL_MCP_SYSTEM_PROMPT
 
             agent_system_prompt = LOCAL_MCP_SYSTEM_PROMPT
@@ -3687,11 +4085,14 @@ class MCPToolsRegistry:
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
     async def select_active_project(
-        self, repo_path: str | None = None
+        self,
+        repo_path: str | None = None,
+        client_profile: str | None = None,
     ) -> dict[str, object]:
         try:
             if repo_path and repo_path.strip():
                 self._set_project_root(repo_path)
+            resolved_client_profile = self.set_client_profile(client_profile)
 
             project_name = self._active_project_name()
             project_root = str(Path(self.project_root).resolve())
@@ -3798,7 +4199,22 @@ class MCPToolsRegistry:
                     if isinstance(item, dict):
                         preview_rows.append(cast(dict[str, object], item))
             preview_text = self._schema_summary_preview_text(preview_rows, max_items=5)
-            session_contract = self._build_session_contract(project_name)
+            try:
+                repo_semantics = self._repo_semantic_enricher.summarize(project_root)
+            except Exception as exc:
+                repo_semantics = {
+                    "summary": f"repo_semantics_unavailable: {exc}",
+                    "frameworks": [],
+                    "framework_metadata": {},
+                    "infra": {},
+                }
+            self._session_state["repo_semantics"] = repo_semantics
+            analysis_resources = await self.list_mcp_resources()
+            analysis_prompts = await self.list_mcp_prompts()
+            session_contract = self._build_session_contract(
+                project_name,
+                client_profile=resolved_client_profile,
+            )
             self._session_state["session_contract"] = session_contract
             exact_next_calls = self._build_select_active_project_next_calls(
                 project_name=project_name,
@@ -3822,6 +4238,7 @@ class MCPToolsRegistry:
                     "name": project_name,
                     "root": project_root,
                     "indexed": active_indexed,
+                    "client_profile": resolved_client_profile,
                 },
                 "indexed_projects": {
                     "count": len(indexed_projects),
@@ -3842,6 +4259,16 @@ class MCPToolsRegistry:
                 },
                 "latest_analysis_timestamp": latest_analysis_timestamp,
                 "session_preflight": preflight,
+                "repo_semantics": repo_semantics,
+                "analysis_resources": analysis_resources[:12],
+                "analysis_prompts": analysis_prompts,
+                "analysis_bundle_entrypoints": [
+                    cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+                    cs.MCPToolName.ARCHITECTURE_BUNDLE,
+                    cs.MCPToolName.CHANGE_BUNDLE,
+                    cs.MCPToolName.RISK_BUNDLE,
+                    cs.MCPToolName.TEST_BUNDLE,
+                ],
                 "session_contract": session_contract,
                 "initial_llm_policy_broadcast": cast(
                     dict[str, object],
@@ -4164,6 +4591,7 @@ class MCPToolsRegistry:
         self._session_state["last_graph_sync_error"] = ""
         self._session_state["last_graph_sync_paths"] = normalized_paths
         self._session_state["last_graph_sync_action"] = action
+        self._session_state["last_mutation_paths"] = normalized_paths
 
     def _record_graph_sync_result(
         self,
@@ -4620,12 +5048,13 @@ class MCPToolsRegistry:
                 "reason": "no_exact_next_calls",
             }
 
-        candidate_limit = self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS
+        max_tool_chain_steps = self._orchestrator_max_tool_chain_steps()
+        candidate_limit = max_tool_chain_steps
         if max_candidates is not None:
             candidate_limit = max(1, int(max_candidates))
         candidate_limit = max(
             1,
-            min(candidate_limit, self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS),
+            min(candidate_limit, max_tool_chain_steps),
         )
         truncated = len(ordered_calls) > candidate_limit
         bounded_calls = ordered_calls[:candidate_limit]
@@ -4949,7 +5378,7 @@ class MCPToolsRegistry:
         if not isinstance(done_result, dict):
             done_result = {"status": "ok", "decision": "not_done"}
 
-        max_tool_chain_steps = self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS
+        max_tool_chain_steps = self._orchestrator_max_tool_chain_steps()
         base_tool_chain_steps = 3 + (1 if verify_drift_effective else 0)
         remaining_tool_chain_budget = max(
             0,
@@ -5077,7 +5506,7 @@ class MCPToolsRegistry:
             },
             "tool_tiering": {
                 "visible_tiers": sorted(self._ORCHESTRATOR_VISIBLE_TIERS),
-                "max_tool_chain_steps": self._ORCHESTRATOR_MAX_TOOL_CHAIN_STEPS,
+                "max_tool_chain_steps": max_tool_chain_steps,
             },
             "feedback": feedback_result,
             "sync": sync_result,
@@ -6648,22 +7077,6 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_READ_FILE.format(path=file_path, offset=offset, limit=limit))
         self._set_execution_phase("retrieval", "read_file")
         try:
-            if (
-                bool(settings.MCP_READ_FILE_REQUIRES_QUERY_GRAPH)
-                and not self._has_graph_read_prerequisite()
-            ):
-                self._record_tool_usefulness(
-                    cs.MCPToolName.READ_FILE,
-                    success=False,
-                    usefulness_score=0.0,
-                )
-                return te.ERROR_WRAPPER.format(
-                    message=(
-                        "graph_read_prerequisite_required: call query_code_graph, multi_hop_analysis, "
-                        "or run_cypher after graph-first flow and obtain a successful query digest before read_file"
-                    )
-                )
-
             graph_evidence_count = self._coerce_int(
                 self._session_state.get("graph_evidence_count", 0)
             )
@@ -6696,6 +7109,22 @@ class MCPToolsRegistry:
                     message=(
                         "graph_digest_required: call query_code_graph (or run_cypher after graph-first flow) "
                         "and obtain a successful query_digest_id before read_file"
+                    )
+                )
+
+            if (
+                bool(settings.MCP_READ_FILE_REQUIRES_QUERY_GRAPH)
+                and not self._has_graph_read_prerequisite()
+            ):
+                self._record_tool_usefulness(
+                    cs.MCPToolName.READ_FILE,
+                    success=False,
+                    usefulness_score=0.0,
+                )
+                return te.ERROR_WRAPPER.format(
+                    message=(
+                        "graph_read_prerequisite_required: call query_code_graph, multi_hop_analysis, "
+                        "or run_cypher after graph-first flow and obtain a successful query digest before read_file"
                     )
                 )
 
@@ -7379,6 +7808,10 @@ class MCPToolsRegistry:
                 "run_id": row.get("run_id"),
                 "analysis_timestamp": row.get("analysis_timestamp"),
                 "summary": summary,
+                "analysis_overview": self._analysis_evidence.read_resource(
+                    "analysis://overview",
+                    session_state=self._session_state,
+                ),
             }
         except Exception as exc:
             return {"error": str(exc)}
@@ -7417,72 +7850,143 @@ class MCPToolsRegistry:
         if not normalized_name:
             return {"error": te.MCP_INVALID_RESPONSE}
 
-        analysis_dir = (Path(self.project_root) / "output" / "analysis").resolve()
-        if not analysis_dir.exists() or not analysis_dir.is_dir():
-            return {"error": "analysis_output_not_found"}
+        result = self._analysis_evidence.get_artifact(normalized_name)
+        if result.get("error") == "artifact_not_found":
+            return result
+        if "error" in result:
+            return result
 
-        request_path = Path(normalized_name)
-        if request_path.is_absolute() or any(
-            part in {"..", "."} for part in request_path.parts
-        ):
-            return {"error": "artifact_not_allowed"}
-
-        candidate_paths: list[Path] = []
-        if request_path.suffix:
-            candidate_paths.append((analysis_dir / request_path).resolve())
-        else:
-            for suffix in (".json", ".md", ".log"):
-                candidate_paths.append(
-                    (analysis_dir / f"{normalized_name}{suffix}").resolve()
-                )
-
-        report_path = next(
-            (
-                candidate
-                for candidate in candidate_paths
-                if candidate.parent == analysis_dir
-                and candidate.exists()
-                and candidate.is_file()
-            ),
-            None,
-        )
-        if report_path is None:
-            available = sorted(
-                file.name for file in analysis_dir.glob("*") if file.is_file()
-            )
-            return {"error": "artifact_not_found", "available_artifacts": available}
-        try:
-            content = report_path.read_text(encoding=cs.ENCODING_UTF8)
-        except Exception as exc:
-            return {"error": str(exc)}
-        return {
-            "artifact": report_path.stem,
-            "filename": report_path.name,
-            "content": content,
-        }
+        normalized_payload = result.get("normalized", {})
+        response = dict(result)
+        if isinstance(normalized_payload, dict):
+            normalized_dict = cast(dict[str, object], normalized_payload)
+            response["ui_summary"] = normalized_dict.get("summary", "")
+            response["confidence"] = normalized_dict.get("confidence", 0.0)
+            response["freshness"] = normalized_dict.get("freshness", {})
+            response["next_actions"] = normalized_dict.get("next_actions", [])
+        return response
 
     async def list_analysis_artifacts(self) -> dict[str, object]:
-        analysis_dir = (Path(self.project_root) / "output" / "analysis").resolve()
-        if not analysis_dir.exists() or not analysis_dir.is_dir():
-            return {"count": 0, "artifacts": []}
+        result = self._analysis_evidence.list_artifacts()
+        result["ui_summary"] = (
+            f"Normalized {result.get('count', 0)} analysis artifacts into evidence-ready resources."
+        )
+        return result
 
-        artifacts: list[dict[str, object]] = []
-        for file_path in sorted(
-            (entry for entry in analysis_dir.glob("*") if entry.is_file()),
-            key=lambda item: item.name,
-        ):
-            stat = file_path.stat()
-            artifacts.append(
-                {
-                    "name": file_path.name,
-                    "stem": file_path.stem,
-                    "extension": file_path.suffix,
-                    "size_bytes": stat.st_size,
-                    "modified_at": int(stat.st_mtime),
-                }
-            )
+    async def analysis_bundle_for_goal(
+        self,
+        goal: str,
+        context: str | None = None,
+    ) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "analysis_bundle_for_goal")
+        bundle = self._analysis_evidence.build_bundle(
+            "analysis_bundle_for_goal",
+            goal=goal,
+            context=context,
+            session_state=self._session_state,
+        )
+        self._session_state["last_analysis_bundle"] = bundle
+        bundle["ui_summary"] = str(bundle.get("summary", "")).strip()
+        return bundle
 
-        return {"count": len(artifacts), "artifacts": artifacts}
+    async def architecture_bundle(
+        self,
+        goal: str | None = None,
+        context: str | None = None,
+    ) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "architecture_bundle")
+        bundle = self._analysis_evidence.build_bundle(
+            "architecture_bundle",
+            goal=goal,
+            context=context,
+            session_state=self._session_state,
+        )
+        self._session_state["last_architecture_bundle"] = bundle
+        bundle["ui_summary"] = str(bundle.get("summary", "")).strip()
+        return bundle
+
+    async def change_bundle(
+        self,
+        goal: str,
+        context: str | None = None,
+        qualified_name: str | None = None,
+        file_path: str | None = None,
+    ) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "change_bundle")
+        bundle = self._analysis_evidence.build_bundle(
+            "change_bundle",
+            goal=goal,
+            context=context,
+            qualified_name=qualified_name,
+            file_path=file_path,
+            session_state=self._session_state,
+        )
+        self._session_state["last_change_bundle"] = bundle
+        bundle["ui_summary"] = str(bundle.get("summary", "")).strip()
+        return bundle
+
+    async def risk_bundle(
+        self,
+        goal: str,
+        context: str | None = None,
+        qualified_name: str | None = None,
+        file_path: str | None = None,
+    ) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "risk_bundle")
+        bundle = self._analysis_evidence.build_bundle(
+            "risk_bundle",
+            goal=goal,
+            context=context,
+            qualified_name=qualified_name,
+            file_path=file_path,
+            session_state=self._session_state,
+        )
+        self._session_state["last_risk_bundle"] = bundle
+        bundle["ui_summary"] = str(bundle.get("summary", "")).strip()
+        return bundle
+
+    async def test_bundle(
+        self,
+        goal: str,
+        context: str | None = None,
+        qualified_name: str | None = None,
+        file_path: str | None = None,
+    ) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "test_bundle")
+        bundle = self._analysis_evidence.build_bundle(
+            "test_bundle",
+            goal=goal,
+            context=context,
+            qualified_name=qualified_name,
+            file_path=file_path,
+            session_state=self._session_state,
+        )
+        self._session_state["last_test_bundle"] = bundle
+        bundle["ui_summary"] = str(bundle.get("summary", "")).strip()
+        return bundle
+
+    async def list_mcp_resources(self) -> list[dict[str, object]]:
+        return self._analysis_evidence.list_resources()
+
+    async def read_mcp_resource(self, uri: str) -> dict[str, object]:
+        return self._analysis_evidence.read_resource(
+            uri,
+            session_state=self._session_state,
+        )
+
+    async def list_mcp_prompts(self) -> list[dict[str, object]]:
+        return self._analysis_evidence.list_prompts()
+
+    async def get_mcp_prompt(
+        self,
+        prompt_name: str,
+        arguments: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        return self._analysis_evidence.get_prompt(
+            prompt_name,
+            arguments=arguments,
+            session_state=self._session_state,
+        )
 
     async def apply_diff_safe(self, file_path: str, chunks: str) -> dict[str, object]:
         self._set_execution_phase("execution", "apply_diff_safe")
@@ -7593,7 +8097,29 @@ class MCPToolsRegistry:
         output_mode: str = "code",
     ) -> dict[str, object]:
         self._set_execution_phase("post_validation", "test_generate")
+        test_selection = self._build_test_selection_bundle()
+        evidence_packet = self._build_evidence_bundle_packet(
+            goal=goal,
+            context=context,
+            include_architecture=True,
+            include_change=True,
+            include_risk=True,
+            include_test=True,
+        )
+        selection_lines = [
+            "Impact-aware test selection:",
+            f"- Strategy: {test_selection.get('selection_strategy', 'goal-only')}",
+            f"- Impacted files: {test_selection.get('impacted_files', [])}",
+            f"- Impacted symbols: {test_selection.get('impacted_symbols', [])}",
+            f"- Candidate existing tests: {test_selection.get('candidate_existing_tests', [])}",
+            f"- New test file hints: {test_selection.get('new_test_file_hints', [])}",
+        ]
         prompt = goal if context is None else f"{goal}\nContext: {context}"
+        prompt += "\n" + "\n".join(selection_lines)
+        prompt += "\n" + self._format_evidence_packet_for_prompt(
+            evidence_packet,
+            title="Structured evidence packet:",
+        )
         try:
             result = await asyncio.wait_for(
                 self._test_agent.run(prompt),
@@ -7603,14 +8129,20 @@ class MCPToolsRegistry:
                 result.content,
                 output_mode=output_mode,
             )
+            normalized_output["impact_context"] = {
+                "impacted_files": test_selection.get("impacted_files", []),
+                "impacted_symbols": test_selection.get("impacted_symbols", []),
+            }
+            normalized_output["test_selection"] = test_selection
+            normalized_output["evidence_packet"] = evidence_packet
             self._session_state["test_generate_completed"] = True
             self._session_state["last_test_generation"] = normalized_output
             self._record_tool_usefulness(
                 cs.MCPToolName.TEST_GENERATE,
                 success=True,
-                usefulness_score=1.0
-                if str(normalized_output.get("content", "")).strip()
-                else 0.4,
+                usefulness_score=(
+                    1.0 if str(normalized_output.get("content", "")).strip() else 0.4
+                ),
             )
             return {"status": result.status, **normalized_output}
         except TimeoutError:
@@ -7980,9 +8512,38 @@ class MCPToolsRegistry:
                 + "\n".join(chain_lines)
             )
 
+            lowered_goal = str(goal).strip().lower()
+            evidence_packet = self._build_evidence_bundle_packet(
+                goal=goal,
+                context=context,
+                include_architecture=True,
+                include_change=any(
+                    token in lowered_goal
+                    for token in (
+                        "change",
+                        "edit",
+                        "fix",
+                        "impact",
+                        "refactor",
+                    )
+                )
+                or bool(self._collect_recent_impact_context().get("has_impact", False)),
+                include_risk=any(
+                    token in lowered_goal
+                    for token in ("dependency", "performance", "risk", "security")
+                ),
+                include_test=any(
+                    token in lowered_goal for token in ("coverage", "test", "tests")
+                ),
+            )
+
             augmented_context = (
                 (context + "\n") if context else ""
             ) + mandatory_memory_block
+            augmented_context += "\n" + self._format_evidence_packet_for_prompt(
+                evidence_packet,
+                title="Structured evidence packet:",
+            )
 
             result = await asyncio.wait_for(
                 self._planner_agent.plan(goal, context=augmented_context),
@@ -8024,6 +8585,7 @@ class MCPToolsRegistry:
                     "retrieved_patterns": pattern_texts[:5],
                     "chain_success_rates": chain_success_rates[:5],
                     "memory_injection_mandatory": True,
+                    "evidence_packet": evidence_packet,
                 }
             return {
                 "status": result.status,
@@ -8031,6 +8593,7 @@ class MCPToolsRegistry:
                 "retrieved_patterns": pattern_texts[:5],
                 "chain_success_rates": chain_success_rates[:5],
                 "memory_injection_mandatory": True,
+                "evidence_packet": evidence_packet,
             }
         except TimeoutError:
             self._session_state["plan_task_completed"] = False
@@ -8069,6 +8632,23 @@ class MCPToolsRegistry:
             result_count = self._coerce_int(result.get("count", 0))
             self._session_state["impact_graph_called"] = True
             self._session_state["impact_graph_count"] = result_count
+            result_rows = result.get("results", [])
+            affected_symbols: list[str] = []
+            if isinstance(result_rows, list):
+                for row in result_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    row_dict = cast(dict[str, object], row)
+                    target_ref = str(row_dict.get("target", "")).strip()
+                    if target_ref and target_ref not in affected_symbols:
+                        affected_symbols.append(target_ref)
+            self._session_state["last_impact_bundle"] = {
+                "qualified_name": qualified_name,
+                "file_path": file_path,
+                "affected_symbols": affected_symbols[:20],
+                "affected_files": [],
+                "count": result_count,
+            }
             self._record_tool_usefulness(
                 cs.MCPToolName.IMPACT_GRAPH,
                 success=True,
@@ -8269,9 +8849,9 @@ class MCPToolsRegistry:
             "query": normalized_query,
             "version": normalized_version,
             "source": "context7_api",
-            "library_id": result.get("library_id")
-            if isinstance(result, dict)
-            else None,
+            "library_id": (
+                result.get("library_id") if isinstance(result, dict) else None
+            ),
             "docs": docs,
             "highlights": highlights,
             "ui_summary": (
@@ -8506,9 +9086,353 @@ LIMIT $limit
             "next_best_action": next_best_action,
             "execution_state": self._build_execution_state_contract(),
         }
+        self._session_state["last_multi_hop_bundle"] = {
+            "qualified_name": normalized_qualified_name,
+            "file_path": normalized_file_path,
+            "affected_symbols": affected_symbols,
+            "affected_files": affected_files,
+            "recommended_reads": recommended_reads,
+            "summary": summary,
+        }
         if context7_enrichment is not None:
             response["context7_enrichment"] = context7_enrichment
         return response
+
+    def _collect_recent_impact_context(self) -> dict[str, object]:
+        impacted_files: list[str] = []
+        impacted_symbols: list[str] = []
+        sources = [
+            self._session_state.get("last_multi_hop_bundle", {}),
+            self._session_state.get("last_impact_bundle", {}),
+        ]
+        for bundle in sources:
+            if not isinstance(bundle, dict):
+                continue
+            bundle_dict = cast(dict[str, object], bundle)
+            raw_files = bundle_dict.get("affected_files", [])
+            if isinstance(raw_files, list):
+                for item in raw_files:
+                    normalized = self._normalize_path_value(item)
+                    if normalized and normalized not in impacted_files:
+                        impacted_files.append(normalized)
+            raw_symbols = bundle_dict.get("affected_symbols", [])
+            if isinstance(raw_symbols, list):
+                for item in raw_symbols:
+                    symbol = str(item).strip()
+                    if symbol and symbol not in impacted_symbols:
+                        impacted_symbols.append(symbol)
+
+        for source_key in ("last_graph_sync_paths", "last_mutation_paths"):
+            raw_paths = self._session_state.get(source_key, [])
+            if isinstance(raw_paths, list):
+                for item in raw_paths:
+                    normalized = self._normalize_path_value(item)
+                    if normalized and normalized not in impacted_files:
+                        impacted_files.append(normalized)
+
+        return {
+            "has_impact": bool(impacted_files or impacted_symbols),
+            "impacted_files": impacted_files[:12],
+            "impacted_symbols": impacted_symbols[:15],
+        }
+
+    def _build_evidence_bundle_packet(
+        self,
+        *,
+        goal: str,
+        context: str | None = None,
+        qualified_name: str | None = None,
+        file_path: str | None = None,
+        include_architecture: bool = True,
+        include_change: bool = False,
+        include_risk: bool = False,
+        include_test: bool = False,
+    ) -> dict[str, object]:
+        recent_impact = self._collect_recent_impact_context()
+        impacted_files = cast(list[str], recent_impact.get("impacted_files", []))
+        impacted_symbols = cast(list[str], recent_impact.get("impacted_symbols", []))
+        resolved_qualified_name = str(qualified_name or "").strip() or (
+            impacted_symbols[0] if impacted_symbols else ""
+        )
+        resolved_file_path = self._normalize_path_value(file_path) or (
+            impacted_files[0] if impacted_files else ""
+        )
+
+        bundle_specs: list[tuple[str, str, dict[str, str]]] = [
+            (
+                "analysis_bundle",
+                "analysis_bundle_for_goal",
+                {"goal": goal, "context": str(context or "").strip()},
+            )
+        ]
+        if include_architecture:
+            bundle_specs.append(
+                (
+                    "architecture_bundle",
+                    "architecture_bundle",
+                    {"goal": goal, "context": str(context or "").strip()},
+                )
+            )
+        if include_change:
+            bundle_specs.append(
+                (
+                    "change_bundle",
+                    "change_bundle",
+                    {
+                        "goal": goal,
+                        "context": str(context or "").strip(),
+                        "qualified_name": resolved_qualified_name,
+                        "file_path": resolved_file_path,
+                    },
+                )
+            )
+        if include_risk:
+            bundle_specs.append(
+                (
+                    "risk_bundle",
+                    "risk_bundle",
+                    {
+                        "goal": goal,
+                        "context": str(context or "").strip(),
+                        "qualified_name": resolved_qualified_name,
+                        "file_path": resolved_file_path,
+                    },
+                )
+            )
+        if include_test:
+            bundle_specs.append(
+                (
+                    "test_bundle",
+                    "test_bundle",
+                    {
+                        "goal": goal,
+                        "context": str(context or "").strip(),
+                        "qualified_name": resolved_qualified_name,
+                        "file_path": resolved_file_path,
+                    },
+                )
+            )
+
+        bundles: dict[str, dict[str, object]] = {}
+        resource_uris: list[str] = []
+        for session_key, bundle_name, arguments in bundle_specs:
+            bundle = self._analysis_evidence.build_bundle(
+                bundle_name,
+                goal=arguments.get("goal") or None,
+                context=arguments.get("context") or None,
+                qualified_name=arguments.get("qualified_name") or None,
+                file_path=arguments.get("file_path") or None,
+                session_state=self._session_state,
+            )
+            self._session_state[f"last_{session_key}"] = bundle
+            bundles[session_key] = bundle
+            raw_resource_uris = bundle.get("resource_uris", [])
+            if isinstance(raw_resource_uris, list):
+                for resource_uri in raw_resource_uris:
+                    normalized_uri = str(resource_uri).strip()
+                    if normalized_uri and normalized_uri not in resource_uris:
+                        resource_uris.append(normalized_uri)
+
+        repo_semantics = self._session_state.get("repo_semantics", {})
+        repo_semantics_dict = (
+            cast(dict[str, object], repo_semantics)
+            if isinstance(repo_semantics, dict)
+            else {}
+        )
+        runtime_signals = (
+            cast(dict[str, object], repo_semantics_dict.get("runtime_signals", {}))
+            if isinstance(repo_semantics_dict.get("runtime_signals", {}), dict)
+            else {}
+        )
+        packet = {
+            "goal": goal,
+            "context": str(context or "").strip(),
+            "target": {
+                "qualified_name": resolved_qualified_name,
+                "file_path": resolved_file_path,
+            },
+            "bundles": bundles,
+            "resource_uris": resource_uris[:15],
+            "repo_semantics": repo_semantics_dict,
+            "runtime_scout": {
+                "dynamic_analysis_present": bool(
+                    runtime_signals.get("dynamic_analysis_present", False)
+                ),
+                "available_dirs": (
+                    runtime_signals.get("available_dirs", [])
+                    if isinstance(runtime_signals, dict)
+                    else []
+                ),
+                "artifact_count": (
+                    runtime_signals.get("artifact_count", 0)
+                    if isinstance(runtime_signals, dict)
+                    else 0
+                ),
+                "graph_dirty": bool(self._session_state.get("graph_dirty", False)),
+            },
+            "impact_context": recent_impact,
+        }
+        return packet
+
+    def _bundle_findings_excerpt(
+        self,
+        bundle: dict[str, object],
+        *,
+        limit: int = 4,
+    ) -> list[str]:
+        findings = bundle.get("key_findings", [])
+        if not isinstance(findings, list):
+            return []
+        excerpts: list[str] = []
+        for item in findings[:limit]:
+            if not isinstance(item, dict):
+                continue
+            item_dict = cast(dict[str, object], item)
+            summary = self._compact_text(item_dict.get("summary", ""), limit=160)
+            if not summary:
+                continue
+            paths = item_dict.get("paths", [])
+            normalized_paths = (
+                [
+                    self._normalize_path_value(path)
+                    for path in cast(list[object], paths)[:2]
+                ]
+                if isinstance(paths, list)
+                else []
+            )
+            if normalized_paths:
+                excerpts.append(
+                    f"{summary} @ {', '.join(path for path in normalized_paths if path)}"
+                )
+            else:
+                excerpts.append(summary)
+        return excerpts
+
+    def _format_evidence_packet_for_prompt(
+        self,
+        packet: dict[str, object],
+        *,
+        title: str,
+    ) -> str:
+        lines = [title]
+        bundles = packet.get("bundles", {})
+        if isinstance(bundles, dict):
+            bundle_map = cast(dict[str, object], bundles)
+            for bundle_name, bundle in bundle_map.items():
+                if not isinstance(bundle, dict):
+                    continue
+                bundle_dict = cast(dict[str, object], bundle)
+                lines.append(
+                    f"{bundle_name}: {self._compact_text(bundle_dict.get('summary', ''), limit=220)}"
+                )
+                for finding in self._bundle_findings_excerpt(bundle_dict):
+                    lines.append(f"- {finding}")
+        repo_semantics = packet.get("repo_semantics", {})
+        if isinstance(repo_semantics, dict):
+            repo_semantics_dict = cast(dict[str, object], repo_semantics)
+            semantics_summary = self._compact_text(
+                repo_semantics_dict.get("summary", ""),
+                limit=240,
+            )
+            if semantics_summary:
+                lines.append(f"repo_semantics: {semantics_summary}")
+        runtime_scout = packet.get("runtime_scout", {})
+        if isinstance(runtime_scout, dict):
+            runtime_scout_dict = cast(dict[str, object], runtime_scout)
+            runtime_dirs = runtime_scout_dict.get("available_dirs", [])
+            if isinstance(runtime_dirs, list) and runtime_dirs:
+                lines.append(
+                    "runtime_scout: "
+                    + ", ".join(str(item) for item in runtime_dirs[:4])
+                )
+        impact_context = packet.get("impact_context", {})
+        if isinstance(impact_context, dict):
+            impact_context_dict = cast(dict[str, object], impact_context)
+            impacted_files = impact_context_dict.get("impacted_files", [])
+            impacted_symbols = impact_context_dict.get("impacted_symbols", [])
+            if isinstance(impacted_files, list) and impacted_files:
+                lines.append(
+                    "impacted_files: "
+                    + ", ".join(str(item) for item in impacted_files[:6])
+                )
+            if isinstance(impacted_symbols, list) and impacted_symbols:
+                lines.append(
+                    "impacted_symbols: "
+                    + ", ".join(str(item) for item in impacted_symbols[:6])
+                )
+        resource_uris = packet.get("resource_uris", [])
+        if isinstance(resource_uris, list) and resource_uris:
+            lines.append(
+                "resource_uris: " + ", ".join(str(item) for item in resource_uris[:8])
+            )
+        return "\n".join(lines)
+
+    def _discover_candidate_test_files(
+        self,
+        impacted_files: list[str],
+        *,
+        limit: int = 8,
+    ) -> list[str]:
+        repo_root = Path(self.project_root)
+        if not repo_root.exists():
+            return []
+
+        tokens: set[str] = set()
+        for path in impacted_files:
+            stem = Path(path).stem.lower()
+            tokens.update(part for part in re.split(r"[^a-z0-9]+", stem) if part)
+
+        candidates: list[str] = []
+        for current_root, dirs, files in os.walk(repo_root):
+            dirs[:] = [
+                directory
+                for directory in dirs
+                if directory
+                not in {".git", ".venv", "venv", "node_modules", "dist", "build"}
+            ]
+            for file_name in files:
+                lowered = file_name.lower()
+                if not (
+                    lowered.startswith("test_")
+                    or lowered.endswith("_test.py")
+                    or ".spec." in lowered
+                    or ".test." in lowered
+                ):
+                    continue
+                full_path = Path(current_root) / file_name
+                relative = full_path.relative_to(repo_root).as_posix()
+                if tokens and not any(token in relative.lower() for token in tokens):
+                    continue
+                if relative not in candidates:
+                    candidates.append(relative)
+                if len(candidates) >= limit:
+                    return candidates
+        return candidates
+
+    def _build_test_selection_bundle(self) -> dict[str, object]:
+        impact_context = self._collect_recent_impact_context()
+        impacted_files = cast(list[str], impact_context.get("impacted_files", []))
+        impacted_symbols = cast(list[str], impact_context.get("impacted_symbols", []))
+        candidate_tests = self._discover_candidate_test_files(impacted_files)
+
+        new_test_hints: list[str] = []
+        for impacted_file in impacted_files[:5]:
+            stem = Path(impacted_file).stem
+            if stem:
+                new_test_hints.append(f"tests/test_{stem}.py")
+
+        bundle = {
+            "has_impact_context": bool(impact_context.get("has_impact", False)),
+            "impacted_files": impacted_files,
+            "impacted_symbols": impacted_symbols,
+            "candidate_existing_tests": candidate_tests,
+            "new_test_file_hints": new_test_hints,
+            "selection_strategy": (
+                "impact-first" if impacted_files or impacted_symbols else "goal-only"
+            ),
+        }
+        self._session_state["last_test_selection"] = bundle
+        return bundle
 
     def _normalize_test_generation_output(
         self,
@@ -9092,6 +10016,16 @@ LIMIT $limit
             replan_reasons = []
 
         readiness = {
+            "state_machine_gate": {
+                "enabled": True,
+                "pass": bool(
+                    self._session_state.get("last_phase_transition_allowed", True)
+                ),
+                "error": str(
+                    self._session_state.get("last_phase_transition_error", "")
+                ).strip(),
+                "current_phase": self._current_execution_phase(),
+            },
             "confidence_gate": {
                 "score": round(confidence_total, 3),
                 "required": confidence_required,
@@ -9189,6 +10123,7 @@ LIMIT $limit
     @staticmethod
     def _done_protocol_checks(readiness: dict[str, object]) -> list[dict[str, object]]:
         check_specs = [
+            ("state_machine_gate", "state machine gate detected an invalid transition"),
             ("confidence_gate", "confidence gate is below required threshold"),
             (
                 "context_confidence_gate",
@@ -9385,6 +10320,11 @@ LIMIT $limit
         goal: str | None = None,
         context: str | None = None,
     ) -> dict[str, object]:
+        if self._current_execution_phase() == "preflight":
+            self._set_execution_phase(
+                "retrieval",
+                "validate_done_decision_phase_recovery",
+            )
         self._set_execution_phase("validation", "validate_done_decision_start")
         readiness = self._compute_execution_readiness()
         checks = self._done_protocol_checks(readiness)
@@ -9394,6 +10334,15 @@ LIMIT $limit
             if isinstance(item, dict) and item.get("pass") is False
         ]
         decision = "done" if not blockers else "not_done"
+        evidence_packet = self._build_evidence_bundle_packet(
+            goal=str(goal or "validate done decision").strip()
+            or "validate done decision",
+            context=context,
+            include_architecture=True,
+            include_change=True,
+            include_risk=True,
+            include_test=True,
+        )
 
         validator_payload = {
             "goal": goal or "",
@@ -9402,6 +10351,7 @@ LIMIT $limit
             "blockers": blockers,
             "readiness": readiness,
             "checks": checks,
+            "evidence_packet": evidence_packet,
         }
 
         validator_output: dict[str, object] = {
@@ -9471,6 +10421,7 @@ LIMIT $limit
                 "required_actions": normalized_required_actions,
             },
             "deterministic_decision": decision,
+            "evidence_packet": evidence_packet,
             "readiness": readiness,
             "execution_state": self._build_execution_state_contract(),
         }

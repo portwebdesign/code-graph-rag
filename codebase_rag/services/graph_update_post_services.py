@@ -28,6 +28,8 @@ from codebase_rag.parsers.core.incremental_cache import GitDeltaCache
 from codebase_rag.parsers.core.pre_scanner import PreScanIndex, PreScanner
 from codebase_rag.parsers.pipeline.cross_file_resolver import CrossFileResolver
 from codebase_rag.parsers.query.declarative_parser import DeclarativeParser
+from codebase_rag.services.runtime_evidence import RuntimeEvidenceIngestor
+from codebase_rag.services.topology_graph_enricher import TopologyGraphEnricher
 from codebase_rag.utils.dependencies import has_semantic_dependencies
 from codebase_rag.utils.fqn_resolver import find_function_source_by_fqn
 from codebase_rag.utils.git_delta import get_git_head
@@ -251,6 +253,30 @@ class ResolverPassService:
             ).process_ast_cache(ast_cache.items())
         except Exception as exc:
             logger.warning("Cypher schema pass failed: {}", exc)
+
+    def process_topology_enrichment(self) -> None:
+        """Builds service/data/infra topology nodes and relationships."""
+        try:
+            result = TopologyGraphEnricher(
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                ingestor=self.ingestor,
+            ).enrich()
+            logger.info("Topology enrichment summary: {}", result)
+        except Exception as exc:
+            logger.warning("Topology enrichment failed: {}", exc)
+
+    def process_runtime_evidence(self) -> None:
+        """Ingests runtime evidence artifacts when available."""
+        try:
+            result = RuntimeEvidenceIngestor(
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                ingestor=self.ingestor,
+            ).ingest_available()
+            logger.info("Runtime evidence summary: {}", result)
+        except Exception as exc:
+            logger.warning("Runtime evidence ingest failed: {}", exc)
 
 
 class SemanticEmbeddingService:

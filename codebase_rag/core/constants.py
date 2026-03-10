@@ -472,6 +472,15 @@ class NodeLabel(StrEnum):
     ENTRY_POINT = "EntryPoint"
     EVENT_FLOW = "EventFlow"
     COLUMN = "Column"
+    SERVICE = "Service"
+    DATA_STORE = "DataStore"
+    CACHE_STORE = "CacheStore"
+    QUEUE = "Queue"
+    GRAPHQL_OPERATION = "GraphQLOperation"
+    CONTAINER_SERVICE = "ContainerService"
+    INFRA_RESOURCE = "InfraResource"
+    RUNTIME_ARTIFACT = "RuntimeArtifact"
+    RUNTIME_EVENT = "RuntimeEvent"
     # Cypher / Memgraph schema entities
     GRAPH_NODE_LABEL = "GraphNodeLabel"
     GRAPH_CONSTRAINT = "GraphConstraint"
@@ -515,6 +524,15 @@ _NODE_LABEL_UNIQUE_KEYS: dict[NodeLabel, UniqueKeyType] = {
     NodeLabel.ENTRY_POINT: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.EVENT_FLOW: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.COLUMN: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.SERVICE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.DATA_STORE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.CACHE_STORE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.QUEUE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.GRAPHQL_OPERATION: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.CONTAINER_SERVICE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.INFRA_RESOURCE: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.RUNTIME_ARTIFACT: UniqueKeyType.QUALIFIED_NAME,
+    NodeLabel.RUNTIME_EVENT: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.GRAPH_NODE_LABEL: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.GRAPH_CONSTRAINT: UniqueKeyType.QUALIFIED_NAME,
     NodeLabel.GRAPH_REL_TYPE: UniqueKeyType.QUALIFIED_NAME,
@@ -605,6 +623,17 @@ class RelationshipType(StrEnum):
     DOCUMENTS_EXTERNAL = "DOCUMENTS_EXTERNAL"
     IS_ENTRY_POINT = "IS_ENTRY_POINT"
     TRIGGERS_FLOW = "TRIGGERS_FLOW"
+    EXPOSES_ENDPOINT = "EXPOSES_ENDPOINT"
+    CALLS_SERVICE = "CALLS_SERVICE"
+    CONNECTS_TO_DATASTORE = "CONNECTS_TO_DATASTORE"
+    USES_CACHE = "USES_CACHE"
+    USES_QUEUE = "USES_QUEUE"
+    OWNS_GRAPHQL_OPERATION = "OWNS_GRAPHQL_OPERATION"
+    DEPLOYS_SERVICE = "DEPLOYS_SERVICE"
+    DEFINED_IN = "DEFINED_IN"
+    OBSERVED_IN_RUNTIME = "OBSERVED_IN_RUNTIME"
+    RAISES_EXCEPTION = "RAISES_EXCEPTION"
+    COVERS_MODULE = "COVERS_MODULE"
     # SQL structural relationships
     HAS_COLUMN = "HAS_COLUMN"
     FOREIGN_KEY = "FOREIGN_KEY"
@@ -2764,6 +2793,11 @@ class MCPToolName(StrEnum):
     PERFORMANCE_HOTSPOTS = "performance_hotspots"
     GET_ANALYSIS_ARTIFACT = "get_analysis_artifact"
     LIST_ANALYSIS_ARTIFACTS = "list_analysis_artifacts"
+    ANALYSIS_BUNDLE_FOR_GOAL = "analysis_bundle_for_goal"
+    ARCHITECTURE_BUNDLE = "architecture_bundle"
+    CHANGE_BUNDLE = "change_bundle"
+    RISK_BUNDLE = "risk_bundle"
+    TEST_BUNDLE = "test_bundle"
     EXPORT_MERMAID = "export_mermaid"
     RUN_CYPHER = "run_cypher"
     APPLY_DIFF_SAFE = "apply_diff_safe"
@@ -2836,6 +2870,7 @@ class MCPParamName(StrEnum):
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
     REPO_PATH = "repo_path"
+    CLIENT_PROFILE = "client_profile"
     METRIC_NAME = "metric_name"
     DEPTH = "depth"
     MODULES = "modules"
@@ -2872,6 +2907,15 @@ class MCPParamName(StrEnum):
     AUTO_EXECUTE_NEXT = "auto_execute_next"
     VERIFY_DRIFT = "verify_drift"
     DEBOUNCE_SECONDS = "debounce_seconds"
+
+
+class MCPClientProfile(StrEnum):
+    BALANCED = "balanced"
+    VSCODE = "vscode"
+    CLINE = "cline"
+    COPILOT = "copilot"
+    OLLAMA = "ollama"
+    HTTP = "http"
 
 
 # (H) MCP server constants

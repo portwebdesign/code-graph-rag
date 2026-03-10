@@ -7,6 +7,23 @@ from ..types import NodeRecord, RelationshipRecord
 
 
 class TopologyMixin:
+    _NON_PRODUCTION_PATH_MARKERS = {
+        ".git",
+        ".venv",
+        "__tests__",
+        "build",
+        "coverage",
+        "dist",
+        "generated",
+        "node_modules",
+        "site-packages",
+        "spec",
+        "test",
+        "tests",
+        "vendor",
+        "venv",
+    }
+
     def _cycle_detection(
         self: AnalysisRunnerProtocol,
         nodes: list[NodeRecord],
@@ -110,7 +127,8 @@ class TopologyMixin:
             seen.discard(start_id)
             return seen
 
-        results: list[dict[str, object]] = []
+        production_results: list[dict[str, object]] = []
+        ignored_results: list[dict[str, object]] = []
         for node in nodes:
             if (
                 cs.NodeLabel.FUNCTION.value not in node.labels
@@ -119,16 +137,42 @@ class TopologyMixin:
                 continue
             impact = len(reachable(node.node_id))
             if impact:
-                results.append(
-                    {
-                        "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
-                        "impact": impact,
-                    }
-                )
+                payload = {
+                    "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
+                    "path": node.properties.get(cs.KEY_PATH),
+                    "impact": impact,
+                }
+                path = str(node.properties.get(cs.KEY_PATH) or "")
+                if TopologyMixin._is_non_production_path(path):
+                    ignored_results.append(payload)
+                else:
+                    production_results.append(payload)
 
-        top = sorted(results, key=lambda item: item["impact"], reverse=True)[:10]
-        self._write_json_report("blast_radius_report.json", top)
-        return {"entries": len(results)}
+        top = sorted(
+            production_results, key=lambda item: int(item["impact"]), reverse=True
+        )[:10]
+        ignored_top = sorted(
+            ignored_results, key=lambda item: int(item["impact"]), reverse=True
+        )[:10]
+        self._write_json_report(
+            "blast_radius_report.json",
+            {
+                "summary": {
+                    "production_entries": len(production_results),
+                    "ignored_entries": len(ignored_results),
+                    "top_production_impact": (int(top[0]["impact"]) if top else 0),
+                },
+                "top_production_impact": top,
+                "ignored_non_production": ignored_top,
+                "reason": (
+                    "No production code blast radius entries found" if not top else None
+                ),
+            },
+        )
+        return {
+            "entries": len(production_results),
+            "ignored_entries": len(ignored_results),
+        }
 
     def _layering_violations(
         self: AnalysisRunnerProtocol,
@@ -228,3 +272,10 @@ class TopologyMixin:
                 dfs(node_id)
 
         return cycles
+
+    @classmethod
+    def _is_non_production_path(cls, path: str) -> bool:
+        normalized = str(path or "").replace("\\", "/").lower()
+        if not normalized:
+            return False
+        return not cls._NON_PRODUCTION_PATH_MARKERS.isdisjoint(normalized.split("/"))

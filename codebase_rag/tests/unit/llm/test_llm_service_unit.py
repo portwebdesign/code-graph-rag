@@ -147,7 +147,7 @@ class TestCypherGeneratorGenerate:
         generator = CypherGenerator()
         result = await generator.generate("Find all nodes")
 
-        assert result == "MATCH (n) RETURN n;"
+        assert result == "MATCH (n) RETURN n LIMIT 200;"
 
     @pytest.mark.asyncio
     @patch("codebase_rag.services.llm.settings")
@@ -204,6 +204,64 @@ class TestCypherGeneratorGenerate:
         generator = CypherGenerator()
         with pytest.raises(ex.LLMGenerationError):
             await generator.generate("Find all nodes")
+
+    @pytest.mark.asyncio
+    @patch("codebase_rag.services.llm.settings")
+    @patch("codebase_rag.services.llm.get_provider_from_config")
+    @patch("codebase_rag.services.llm.Agent")
+    async def test_generate_uses_direct_template_without_llm_call(
+        self,
+        mock_agent_cls: MagicMock,
+        mock_get_provider: MagicMock,
+        mock_settings: MagicMock,
+    ) -> None:
+        mock_config = MagicMock()
+        mock_config.provider = cs.Provider.GOOGLE
+        mock_settings.active_cypher_config = mock_config
+        mock_settings.AGENT_RETRIES = 3
+
+        mock_provider = MagicMock()
+        mock_provider.create_model.return_value = MagicMock()
+        mock_get_provider.return_value = mock_provider
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock()
+        mock_agent_cls.return_value = mock_agent
+
+        generator = CypherGenerator()
+        result = await generator.generate("List modules in the active project")
+
+        assert "MATCH" in result
+        assert ":Module" in result
+        mock_agent.run.assert_not_called()
+
+    @patch("codebase_rag.services.llm.settings")
+    @patch("codebase_rag.services.llm.get_provider_from_config")
+    @patch("codebase_rag.services.llm.Agent")
+    def test_inspect_generation_strategy_reports_template_match(
+        self,
+        mock_agent_cls: MagicMock,
+        mock_get_provider: MagicMock,
+        mock_settings: MagicMock,
+    ) -> None:
+        mock_config = MagicMock()
+        mock_config.provider = cs.Provider.GOOGLE
+        mock_settings.active_cypher_config = mock_config
+        mock_settings.AGENT_RETRIES = 3
+
+        mock_provider = MagicMock()
+        mock_provider.create_model.return_value = MagicMock()
+        mock_get_provider.return_value = mock_provider
+        mock_agent_cls.return_value = MagicMock()
+
+        generator = CypherGenerator()
+        strategy = generator.inspect_generation_strategy(
+            "Show classes in the active project"
+        )
+
+        assert strategy["strategy"] == "direct_template"
+        assert strategy["template_name"] == "class_inventory"
+        assert ":Class" in str(strategy["direct_query"])
 
 
 class TestCreateRagOrchestrator:

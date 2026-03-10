@@ -82,7 +82,7 @@ MCP_LIST_PROJECTS = (
 
 MCP_SELECT_ACTIVE_PROJECT = (
     "Preflight tool to set/confirm the active repository context and return project-scoped readiness info. "
-    "Optionally accepts repo_path to switch active root, then reports active project, indexed status, "
+    "Optionally accepts repo_path to switch active root and client_profile to tailor MCP behavior for VS Code, Cline, Copilot, Ollama, or HTTP clients, then reports active project, indexed status, "
     "project-scoped graph counts, latest analysis timestamp, and enforced safety policies. "
     "MANDATORY SECOND STEP after list_projects before using non-exempt tools."
 )
@@ -194,6 +194,9 @@ MCP_PARAM_LIMIT = "Maximum number of lines to read (optional)"
 MCP_PARAM_CONTENT = "Content to write to the file"
 MCP_PARAM_DIRECTORY_PATH = "Relative path to directory from project root (default: '.')"
 MCP_PARAM_REPO_PATH = "Absolute path to target repository root"
+MCP_PARAM_CLIENT_PROFILE = (
+    "Optional MCP client profile: balanced, vscode, cline, copilot, ollama, or http"
+)
 MCP_PARAM_METRIC_NAME = "Name of the metric to retrieve (e.g. 'security_score')"
 MCP_PARAM_DEPTH = "Depth of the impact analysis (default 3, max 6)"
 
@@ -263,6 +266,32 @@ MCP_LIST_ANALYSIS_ARTIFACTS = (
     "List files currently available under output/analysis with metadata "
     "(filename, extension, size_bytes, modified_at). "
     "Use this to discover which artifacts can be fetched with get_analysis_artifact."
+)
+
+MCP_ANALYSIS_BUNDLE_FOR_GOAL = (
+    "Build a normalized analysis evidence bundle for a goal/context pair. "
+    "Selects the most relevant output/analysis artifacts, filters low-trust paths, "
+    "and returns trusted findings plus exact next MCP calls."
+)
+
+MCP_ARCHITECTURE_BUNDLE = (
+    "Build a normalized architecture bundle from analysis artifacts, repo semantics, "
+    "and typed service/data/infra signals. Use this before deep multi-hop architecture work."
+)
+
+MCP_CHANGE_BUNDLE = (
+    "Build a normalized change-planning bundle combining analysis artifacts with impact/multi-hop session evidence. "
+    "Use this before edits, refactors, or test generation."
+)
+
+MCP_RISK_BUNDLE = (
+    "Build a normalized security/performance/dependency risk bundle for a goal or target. "
+    "Use this when validating risky areas or before approving a change."
+)
+
+MCP_TEST_BUNDLE = (
+    "Build a normalized test bundle using coverage, blast radius, public API, and impacted-test context. "
+    "Use this before test_generate or test_quality_gate."
 )
 
 MCP_EXPORT_MERMAID = (
@@ -420,6 +449,11 @@ MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.PERFORMANCE_HOTSPOTS: MCP_PERFORMANCE_HOTSPOTS,
     MCPToolName.GET_ANALYSIS_ARTIFACT: MCP_GET_ANALYSIS_ARTIFACT,
     MCPToolName.LIST_ANALYSIS_ARTIFACTS: MCP_LIST_ANALYSIS_ARTIFACTS,
+    MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL: MCP_ANALYSIS_BUNDLE_FOR_GOAL,
+    MCPToolName.ARCHITECTURE_BUNDLE: MCP_ARCHITECTURE_BUNDLE,
+    MCPToolName.CHANGE_BUNDLE: MCP_CHANGE_BUNDLE,
+    MCPToolName.RISK_BUNDLE: MCP_RISK_BUNDLE,
+    MCPToolName.TEST_BUNDLE: MCP_TEST_BUNDLE,
     MCPToolName.EXPORT_MERMAID: MCP_EXPORT_MERMAID,
     MCPToolName.RUN_CYPHER: MCP_RUN_CYPHER,
     MCPToolName.APPLY_DIFF_SAFE: MCP_APPLY_DIFF_SAFE,

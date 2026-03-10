@@ -64,6 +64,7 @@ class TestMCPToolsIntegration:
         ]
 
         result = await mcp_registry.query_code_graph("find all functions")
+        assert isinstance(result, dict)
 
         assert "error" not in result or result.get("error") is None
         assert "results" in result

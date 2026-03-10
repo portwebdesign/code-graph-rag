@@ -21,6 +21,8 @@ def test_help_command_works() -> None:
 
     assert "Usage:" in result.stdout or "usage:" in result.stdout.lower()
     assert "--help" in result.stdout
+    assert "watch" in result.stdout
+    assert "benchmark" in result.stdout
 
     assert result.stderr == "", f"Unexpected stderr: {result.stderr}"
 

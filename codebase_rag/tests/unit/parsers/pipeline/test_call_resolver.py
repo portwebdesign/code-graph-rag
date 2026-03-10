@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import ItemsView, KeysView
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -912,7 +912,11 @@ class TestResolveChainedCall:
         processor._resolver.function_registry["proj.models.QuerySet.all"] = (
             NodeType.METHOD
         )
-        processor._resolver.type_inference.python_type_inference._method_return_type_cache[
+        type_inference = processor._resolver.type_inference
+        assert type_inference is not None
+        python_type_inference = getattr(type_inference, "python_type_inference", None)
+        assert python_type_inference is not None
+        cast(Any, python_type_inference)._method_return_type_cache[
             "proj.models.QuerySet.all"
         ] = "QuerySet"
         processor._resolver.import_processor.import_mapping["proj.views"] = {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -62,7 +62,8 @@ class TestMCPPhaseDeadlockRegressions:
             limit=5,
         )
 
-        assert result.get("count", 0) >= 0
+        count = result.get("count", 0)
+        assert int(count if isinstance(count, int | float | str) else 0) >= 0
         assert mcp_registry._current_execution_phase() == "retrieval"
 
     async def test_security_scan_allowed_after_validation_phase(
@@ -114,7 +115,8 @@ class TestMCPPhaseDeadlockRegressions:
             _ = task
             return SimpleNamespace(status="ok", content="generated tests")
 
-        mcp_registry._test_agent.run = fake_run
+        registry_any = cast(Any, mcp_registry)
+        registry_any._test_agent.run = fake_run
         mcp_registry._set_execution_phase("retrieval", "simulate_blocked_test_generate")
 
         _ = await mcp_registry.get_execution_readiness()
@@ -137,8 +139,9 @@ class TestMCPPhaseDeadlockRegressions:
             _ = task
             return SimpleNamespace(status="ok", content="generated from plan")
 
-        mcp_registry._planner_agent.plan = fake_plan
-        mcp_registry._test_agent.run = fake_run
+        registry_any = cast(Any, mcp_registry)
+        registry_any._planner_agent.plan = fake_plan
+        registry_any._test_agent.run = fake_run
 
         plan_result = await mcp_registry.plan_task("generate tests for api")
 

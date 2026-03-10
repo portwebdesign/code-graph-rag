@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -105,7 +106,7 @@ class TestWriteFileBasic:
             return {"status": "ok"}
 
         mcp_registry._session_state["preflight_project_selected"] = True
-        mcp_registry.sync_graph_updates = fake_sync_graph_updates
+        cast(Any, mcp_registry).sync_graph_updates = fake_sync_graph_updates
 
         result = await mcp_registry.write_file("synced.txt", "content")
 

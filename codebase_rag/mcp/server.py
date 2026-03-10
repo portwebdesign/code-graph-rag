@@ -2,12 +2,21 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from loguru import logger
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import (
+    GetPromptResult,
+    Prompt,
+    PromptArgument,
+    PromptMessage,
+    Resource,
+    TextContent,
+    Tool,
+)
+from pydantic import AnyUrl
 
 from codebase_rag.agents import MCP_SYSTEM_PROMPT
 from codebase_rag.agents.output_parser import decode_escaped_text, extract_code_block
@@ -227,6 +236,52 @@ def _build_tool_list(tools: MCPToolsRegistry) -> list[Tool]:
     ]
 
 
+async def _build_resource_list(tools: MCPToolsRegistry) -> list[Resource]:
+    resources = await tools.list_mcp_resources()
+    resource_items: list[Resource] = []
+    for entry in resources:
+        if not isinstance(entry, dict):
+            continue
+        entry_dict = entry
+        uri = str(entry_dict.get("uri", "")).strip()
+        if not uri:
+            continue
+        resource_items.append(
+            Resource(
+                uri=cast(AnyUrl, uri),
+                name=str(entry_dict.get("name", "")),
+                description=str(entry_dict.get("description", "")).strip() or None,
+                mimeType=str(entry_dict.get("mime_type", "")).strip()
+                or "application/json",
+            )
+        )
+    return resource_items
+
+
+async def _build_prompt_list(tools: MCPToolsRegistry) -> list[Prompt]:
+    prompts = await tools.list_mcp_prompts()
+    return [
+        Prompt(
+            name=str(entry.get("name", "")),
+            description=str(entry.get("description", "")).strip() or None,
+            arguments=[
+                PromptArgument(
+                    name=str(argument.get("name", "")),
+                    description=str(argument.get("description", "")).strip() or None,
+                    required=bool(argument.get("required", False)),
+                )
+                for argument in cast(
+                    list[dict[str, object]], entry.get("arguments", [])
+                )
+                if isinstance(argument, dict) and str(argument.get("name", "")).strip()
+            ]
+            or None,
+        )
+        for entry in prompts
+        if isinstance(entry, dict) and str(entry.get("name", "")).strip()
+    ]
+
+
 async def execute_tool_call(
     tools: MCPToolsRegistry,
     name: str,
@@ -336,6 +391,65 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
     @server.list_tools()
     async def list_tools() -> list[Tool]:
         return _build_tool_list(tools)
+
+    @server.list_resources()
+    async def list_resources() -> list[Resource]:
+        return await _build_resource_list(tools)
+
+    @server.read_resource()
+    async def read_resource(uri: object) -> str:
+        payload = await tools.read_mcp_resource(str(uri))
+        return _json_dumps_pretty(payload)
+
+    @server.list_prompts()
+    async def list_prompts() -> list[Prompt]:
+        return await _build_prompt_list(tools)
+
+    @server.get_prompt()
+    async def get_prompt(
+        name: str,
+        arguments: dict[str, str] | None,
+    ) -> GetPromptResult:
+        payload = await tools.get_mcp_prompt(name, arguments)
+        if payload.get("error"):
+            return GetPromptResult(
+                description="Prompt lookup failed.",
+                messages=[
+                    PromptMessage(
+                        role="user",
+                        content=TextContent(
+                            type=cs.MCP_CONTENT_TYPE_TEXT,
+                            text=_json_dumps_pretty(payload),
+                        ),
+                    )
+                ],
+            )
+
+        messages = cast(list[dict[str, object]], payload.get("messages", []))
+        prompt_messages: list[PromptMessage] = []
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            item_dict = item
+            prompt_role: Literal["user", "assistant"] = (
+                "assistant"
+                if str(item_dict.get("role", "user")).strip().lower() == "assistant"
+                else "user"
+            )
+            prompt_messages.append(
+                PromptMessage(
+                    role=prompt_role,
+                    content=TextContent(
+                        type=cs.MCP_CONTENT_TYPE_TEXT,
+                        text=str(item_dict.get("text", "")),
+                    ),
+                )
+            )
+
+        return GetPromptResult(
+            description=str(payload.get("description", "")).strip() or None,
+            messages=prompt_messages,
+        )
 
     @server.call_tool()
     async def call_tool(name: str, arguments: MCPToolArguments) -> list[TextContent]:

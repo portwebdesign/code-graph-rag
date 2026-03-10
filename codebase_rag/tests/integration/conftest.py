@@ -4,6 +4,7 @@ import os
 import socket
 import time
 from collections.abc import Generator
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 import pytest
@@ -23,8 +24,10 @@ def memgraph_container() -> Generator[dict[str, str | int], None, None]:
         pytest.skip("Docker engine not available on this host")
     import time
 
-    from testcontainers.core.container import DockerContainer
-    from testcontainers.core.wait_strategies import LogMessageWaitStrategy
+    container_module = import_module("testcontainers.core.container")
+    wait_module = import_module("testcontainers.core.wait_strategies")
+    DockerContainer = getattr(container_module, "DockerContainer")
+    LogMessageWaitStrategy = getattr(wait_module, "LogMessageWaitStrategy")
 
     container = DockerContainer("memgraph/memgraph:latest")
     container.with_exposed_ports(7687)

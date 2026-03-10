@@ -108,3 +108,9 @@ class GraphUpdateOrchestrator:
 
         logger.info("Running Context7 semantic bridging")
         ctx.resolver_service.process_context7_bridging()
+
+        logger.info("Running service/data/infra topology enrichment")
+        ctx.resolver_service.process_topology_enrichment()
+
+        logger.info("Running runtime evidence ingest")
+        ctx.resolver_service.process_runtime_evidence()

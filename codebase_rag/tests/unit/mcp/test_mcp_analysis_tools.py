@@ -181,3 +181,47 @@ class TestMCPAnalysisTools:
         assert "security_report.json" in cast(
             list[str], result.get("available_artifacts", [])
         )
+
+    async def test_mcp_analysis_resources_and_resource_read(
+        self, mcp_registry: MCPToolsRegistry, temp_test_repo: Path
+    ) -> None:
+        report_dir = temp_test_repo / "output" / "analysis"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "security_report.json").write_text(
+            '{"summary":{"issues":1},"violations":[{"path":"src/app.py"}]}',
+            encoding="utf-8",
+        )
+
+        resources = await mcp_registry.list_mcp_resources()
+        overview = await mcp_registry.read_mcp_resource("analysis://overview")
+
+        assert any(
+            str(item.get("uri", "")) == "analysis://overview" for item in resources
+        )
+        assert overview.get("artifact_count") == 1
+
+    async def test_mcp_analysis_prompts_and_bundle_lookup(
+        self, mcp_registry: MCPToolsRegistry, temp_test_repo: Path
+    ) -> None:
+        report_dir = temp_test_repo / "output" / "analysis"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "api_report.json").write_text(
+            '{"summary":{"endpoints":2},"endpoints":[{"path":"src/api.py"}]}',
+            encoding="utf-8",
+        )
+
+        prompts = await mcp_registry.list_mcp_prompts()
+        prompt = await mcp_registry.get_mcp_prompt(
+            "architecture_review",
+            {"goal": "map services and endpoints"},
+        )
+        bundle = await mcp_registry.architecture_bundle("map services")
+
+        assert any(
+            str(item.get("name", "")) == "architecture_review" for item in prompts
+        )
+        messages = cast(list[dict[str, object]], prompt.get("messages", []))
+        assert messages
+        assert "Use normalized bundle findings" in str(messages[0].get("text", ""))
+        assert bundle.get("bundle") == "architecture_bundle"
+        assert "resource_uris" in bundle

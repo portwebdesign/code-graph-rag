@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from codebase_rag.mcp.server import _format_tool_result_text, get_project_root
+from codebase_rag.mcp.server import (
+    _build_prompt_list,
+    _build_resource_list,
+    _format_tool_result_text,
+    get_project_root,
+)
 
 
 class TestGetProjectRoot:
@@ -239,3 +244,48 @@ class TestServerFormatting:
         assert "Next actions:" in formatted
         assert "Next best action:" in formatted
         assert '"session_contract"' not in formatted
+
+
+class _FakeRegistry:
+    async def list_mcp_resources(self) -> list[dict[str, object]]:
+        return [
+            {
+                "uri": "analysis://overview",
+                "name": "analysis_overview",
+                "description": "overview",
+                "mime_type": "application/json",
+            }
+        ]
+
+    async def list_mcp_prompts(self) -> list[dict[str, object]]:
+        return [
+            {
+                "name": "architecture_review",
+                "description": "architecture",
+                "arguments": [
+                    {
+                        "name": "goal",
+                        "description": "focus",
+                        "required": False,
+                    }
+                ],
+            }
+        ]
+
+
+@pytest.mark.anyio
+async def test_build_resource_list_maps_analysis_resources() -> None:
+    resources = await _build_resource_list(_FakeRegistry())  # type: ignore[arg-type]
+
+    assert resources
+    assert str(resources[0].uri) == "analysis://overview"
+    assert resources[0].name == "analysis_overview"
+
+
+@pytest.mark.anyio
+async def test_build_prompt_list_maps_analysis_prompts() -> None:
+    prompts = await _build_prompt_list(_FakeRegistry())  # type: ignore[arg-type]
+
+    assert prompts
+    assert prompts[0].name == "architecture_review"
+    assert prompts[0].arguments is not None
