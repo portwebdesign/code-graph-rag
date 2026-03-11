@@ -4,9 +4,12 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from starlette.responses import JSONResponse
+from starlette.testclient import TestClient
 
 from codebase_rag.core.config import settings
-from codebase_rag.mcp.http_server import MCPHTTPService
+from codebase_rag.mcp import http_server as http_server_module
+from codebase_rag.mcp.http_server import MCPHTTPService, create_streamable_http_app
 
 
 class FakeTools:
@@ -112,6 +115,39 @@ class ProfileAwareFakeTools(FakeTools):
 
     def _client_profile(self) -> str:
         return self._client_profile_value
+
+
+class FakeIngestor:
+    def __enter__(self) -> FakeIngestor:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        _ = exc_type, exc, tb
+
+
+class FakeSessionManager:
+    def __init__(self, _server: object) -> None:
+        self.started = False
+
+    async def handle_request(
+        self,
+        scope: dict[str, object],
+        receive: object,
+        send: object,
+    ) -> None:
+        _ = receive
+        response = JSONResponse({"status": "ok", "transport": "streamable-http-test"})
+        await response(scope, receive, send)
+
+    def run(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _runner():
+            self.started = True
+            yield
+
+        return _runner()
 
 
 @pytest.mark.asyncio
@@ -347,3 +383,38 @@ def test_http_service_cleans_up_expired_sessions(
 
     assert removed == 1
     assert session_id not in service._sessions
+
+
+def test_create_streamable_http_app_exposes_health_tools_and_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        http_server_module,
+        "create_tools_runtime",
+        lambda: (FakeTools(), FakeIngestor()),
+    )
+    monkeypatch.setattr(
+        http_server_module,
+        "create_server_with_tools",
+        lambda _tools: object(),
+    )
+    monkeypatch.setattr(
+        http_server_module,
+        "StreamableHTTPSessionManager",
+        FakeSessionManager,
+    )
+
+    app = create_streamable_http_app("/mcp")
+
+    with TestClient(app) as client:
+        health = client.get("/health")
+        tools = client.get("/tools")
+        mcp = client.post("/mcp", json={})
+
+    assert health.status_code == 200
+    assert health.json()["transport"] == "streamable-http"
+    assert health.json()["mcp_path"] == "/mcp"
+    assert tools.status_code == 200
+    assert tools.json()["transport"] == "http"
+    assert mcp.status_code == 200
+    assert mcp.json()["transport"] == "streamable-http-test"

@@ -7,11 +7,20 @@ import time
 from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlparse
 from uuid import uuid4
 
+import uvicorn
 from loguru import logger
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as lg
@@ -19,6 +28,7 @@ from codebase_rag.core.config import settings
 from codebase_rag.data_models.types_defs import MCPToolArguments
 from codebase_rag.mcp.server import (
     _build_tool_list,
+    create_server_with_tools,
     create_tools_runtime,
     execute_tool_call,
 )
@@ -36,6 +46,24 @@ class _HTTPSession:
 
     def touch(self) -> None:
         self.last_seen = time.time()
+
+
+class _NormalizeMCPPathMiddleware:
+    def __init__(self, app: ASGIApp, *, source_path: str, target_path: str) -> None:
+        self.app = app
+        self.source_path = source_path
+        self.target_path = target_path
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") == "http":
+            path = str(scope.get("path", ""))
+            if path == self.source_path:
+                scope = dict(scope)
+                scope["path"] = self.target_path
+                raw_path = scope.get("raw_path")
+                if isinstance(raw_path, bytes | bytearray):
+                    scope["raw_path"] = self.target_path.encode("utf-8")
+        await self.app(scope, receive, send)
 
 
 class MCPHTTPService:
@@ -773,6 +801,126 @@ def create_http_server(
         service,
     )
     return server, ingestor
+
+
+def _normalize_mcp_mount_path(path: str | None) -> str:
+    normalized = str(path or "/mcp").strip() or "/mcp"
+    if not normalized.startswith("/"):
+        normalized = f"/{normalized}"
+    if normalized != "/" and normalized.endswith("/"):
+        normalized = normalized.rstrip("/")
+    return normalized or "/mcp"
+
+
+def create_streamable_http_app(
+    mount_path: str | None = None,
+) -> Starlette:
+    normalized_mount_path = _normalize_mcp_mount_path(mount_path)
+    tools, ingestor = create_tools_runtime()
+    mcp_server = create_server_with_tools(tools)
+    session_manager = StreamableHTTPSessionManager(mcp_server)
+
+    def _session_factory(client_profile: str | None = None) -> MCPToolsRegistry:
+        registry = create_mcp_tools_registry(
+            project_root=str(tools.project_root),
+            ingestor=ingestor,
+            cypher_gen=tools.cypher_gen,
+            orchestrator_prompt=tools._orchestrator_prompt,
+        )
+        registry.set_client_profile(client_profile)
+        return registry
+
+    debug_service = MCPHTTPService(tools, session_factory=_session_factory)
+
+    async def health(_request: Request) -> JSONResponse:
+        return JSONResponse(
+            {
+                "status": "ok",
+                "server": cs.MCP_SERVER_NAME,
+                "transport": "streamable-http",
+                "mcp_path": normalized_mount_path,
+            }
+        )
+
+    async def tools_endpoint(_request: Request) -> JSONResponse:
+        return JSONResponse(debug_service.list_tools_payload())
+
+    async def resources_endpoint(_request: Request) -> JSONResponse:
+        payload = await debug_service.list_resources_payload()
+        return JSONResponse(payload)
+
+    async def prompts_endpoint(_request: Request) -> JSONResponse:
+        payload = await debug_service.list_prompts_payload()
+        return JSONResponse(payload)
+
+    trailing_mount_path = (
+        normalized_mount_path
+        if normalized_mount_path == "/"
+        else f"{normalized_mount_path}/"
+    )
+
+    routes = [
+        Route("/health", health, methods=["GET"]),
+        Route("/tools", tools_endpoint, methods=["GET"]),
+        Route("/resources", resources_endpoint, methods=["GET"]),
+        Route("/prompts", prompts_endpoint, methods=["GET"]),
+        Mount(trailing_mount_path, app=session_manager.handle_request),
+    ]
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(_app: Starlette):
+        logger.info(lg.MCP_SERVER_STARTING)
+        with ingestor:
+            logger.info(
+                lg.MCP_SERVER_CONNECTED.format(
+                    host=settings.MEMGRAPH_HOST, port=settings.MEMGRAPH_PORT
+                )
+            )
+            async with session_manager.run():
+                yield
+        logger.info(lg.MCP_SERVER_SHUTDOWN)
+
+    app = Starlette(
+        routes=routes,
+        lifespan=lifespan,
+        middleware=[
+            Middleware(
+                cast(Any, _NormalizeMCPPathMiddleware),
+                source_path=normalized_mount_path,
+                target_path=trailing_mount_path,
+            ),
+            Middleware(
+                cast(Any, CORSMiddleware),
+                allow_origins=["*"],
+                allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+                allow_headers=["*"],
+                expose_headers=["Mcp-Session-Id"],
+            ),
+        ],
+    )
+    app.router.redirect_slashes = False
+    app.state.ingestor = ingestor
+    app.state.mcp_path = normalized_mount_path
+    return app
+
+
+def serve_streamable_http(
+    host: str | None = None,
+    port: int | None = None,
+    mount_path: str | None = None,
+) -> None:
+    app = create_streamable_http_app(mount_path=mount_path)
+    resolved_host = str(host or settings.MCP_HTTP_HOST)
+    resolved_port = int(settings.MCP_HTTP_PORT if port is None else port)
+    logger.info(
+        "[GraphCode MCP Streamable HTTP] Listening on http://{}:{}{}",
+        resolved_host,
+        resolved_port,
+        str(app.state.mcp_path),
+    )
+    uvicorn.run(app, host=resolved_host, port=resolved_port, log_level="info")
 
 
 def serve_http(

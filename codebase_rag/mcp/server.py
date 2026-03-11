@@ -1,6 +1,8 @@
+import inspect
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -80,6 +82,176 @@ def _format_next_best_action(next_best_action: object) -> str:
     return line
 
 
+def _coerce_float(value: object) -> float:
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _format_execution_readiness_summary(payload: dict[str, object]) -> str:
+    state_machine = payload.get("state_machine_gate", {})
+    confidence_gate = payload.get("confidence_gate", {})
+    context_gate = payload.get("context_confidence_gate", {})
+    completion_gate = payload.get("completion_gate", {})
+    impact_gate = payload.get("impact_graph_gate", {})
+    test_quality_gate = payload.get("test_quality_gate", {})
+    guard_partition = payload.get("guard_partition", {})
+
+    current_phase = ""
+    if isinstance(state_machine, dict):
+        state_machine_dict = cast(dict[str, object], state_machine)
+        current_phase = str(state_machine_dict.get("current_phase") or "").strip()
+
+    confidence_score = 0.0
+    confidence_required = 0.0
+    if isinstance(confidence_gate, dict):
+        confidence_gate_dict = cast(dict[str, object], confidence_gate)
+        confidence_score = _coerce_float(confidence_gate_dict.get("score"))
+        confidence_required = _coerce_float(confidence_gate_dict.get("required"))
+
+    context_score = 0.0
+    context_required = 0.0
+    if isinstance(context_gate, dict):
+        context_gate_dict = cast(dict[str, object], context_gate)
+        context_score = _coerce_float(context_gate_dict.get("score"))
+        context_required = _coerce_float(context_gate_dict.get("required"))
+
+    missing: list[str] = []
+    if isinstance(completion_gate, dict):
+        completion_gate_dict = cast(dict[str, object], completion_gate)
+        raw_missing = completion_gate_dict.get("missing", [])
+        if isinstance(raw_missing, list):
+            missing = [str(item).strip() for item in raw_missing if str(item).strip()]
+    normalized_missing = [
+        "test_quality_gate" if item == "test_quality" else item for item in missing
+    ]
+
+    soft_failed: list[str] = []
+    hard_failed: list[str] = []
+    if isinstance(guard_partition, dict):
+        guard_partition_dict = cast(dict[str, object], guard_partition)
+        soft = guard_partition_dict.get("soft", {})
+        hard = guard_partition_dict.get("hard", {})
+        if isinstance(soft, dict):
+            soft_dict = cast(dict[str, object], soft)
+            raw_failed = soft_dict.get("failed", [])
+            if isinstance(raw_failed, list):
+                soft_failed = [
+                    str(item).strip() for item in raw_failed if str(item).strip()
+                ]
+        if isinstance(hard, dict):
+            hard_dict = cast(dict[str, object], hard)
+            raw_failed = hard_dict.get("failed", [])
+            if isinstance(raw_failed, list):
+                hard_failed = [
+                    str(item).strip() for item in raw_failed if str(item).strip()
+                ]
+
+    impact_called = False
+    impact_affected = 0
+    if isinstance(impact_gate, dict):
+        impact_gate_dict = cast(dict[str, object], impact_gate)
+        impact_called = bool(impact_gate_dict.get("called", False))
+        impact_affected = _coerce_int(impact_gate_dict.get("affected"))
+
+    test_quality_score = 0.0
+    test_quality_required = 0.0
+    if isinstance(test_quality_gate, dict):
+        test_quality_gate_dict = cast(dict[str, object], test_quality_gate)
+        test_quality_score = _coerce_float(test_quality_gate_dict.get("score"))
+        test_quality_required = _coerce_float(test_quality_gate_dict.get("required"))
+
+    lines = [
+        "Execution readiness summary:",
+        f"- phase: {current_phase or 'unknown'}",
+        f"- confidence: {confidence_score:.3f}/{confidence_required:.3f}",
+        f"- context confidence: {context_score:.3f}/{context_required:.3f}",
+        f"- hard guard failures: {', '.join(hard_failed) if hard_failed else 'none'}",
+        f"- soft guard failures: {', '.join(soft_failed) if soft_failed else 'none'}",
+        (
+            "- missing completion evidence: "
+            + (", ".join(normalized_missing) if normalized_missing else "none")
+        ),
+        (
+            "- impact graph: "
+            + ("called" if impact_called else "not called")
+            + f" (affected={impact_affected})"
+        ),
+        f"- test quality: {test_quality_score:.3f}/{test_quality_required:.3f}",
+    ]
+    return "\n".join(lines)
+
+
+def _normalize_tool_name(name: str) -> str:
+    aliases = {
+        "test_quality": cs.MCPToolName.TEST_QUALITY_GATE,
+    }
+    normalized = str(name or "").strip()
+    return aliases.get(normalized, normalized)
+
+
+def _normalize_tool_arguments(
+    name: str,
+    arguments: dict[str, object],
+    handler: object,
+) -> dict[str, object]:
+    normalized_arguments = dict(arguments)
+
+    if name in {cs.MCPToolName.PLAN_TASK, cs.MCPToolName.TEST_GENERATE}:
+        if not str(normalized_arguments.get("goal", "")).strip():
+            alias_goal = str(
+                normalized_arguments.get("natural_language_query")
+                or normalized_arguments.get("query")
+                or ""
+            ).strip()
+            if alias_goal:
+                normalized_arguments["goal"] = alias_goal
+
+    if name == cs.MCPToolName.TEST_GENERATE:
+        output_mode = str(normalized_arguments.get("output_mode", "")).strip()
+        if not output_mode:
+            alias_mode = str(normalized_arguments.get("output_format", "")).strip()
+            if alias_mode:
+                normalized_arguments["output_mode"] = alias_mode
+
+    if name == cs.MCPToolName.PLAN_TASK:
+        normalized_arguments.pop("output_format", None)
+
+    try:
+        callable_handler = cast(Callable[..., object], handler)
+        allowed_params = set(inspect.signature(callable_handler).parameters.keys())
+    except (TypeError, ValueError):
+        return normalized_arguments
+
+    return {
+        key: value
+        for key, value in normalized_arguments.items()
+        if key in allowed_params
+    }
+
+
 def _format_tool_result_text(result: object, returns_json: bool) -> str:
     if not returns_json or isinstance(result, str):
         text = decode_escaped_text(str(result))
@@ -94,6 +266,12 @@ def _format_tool_result_text(result: object, returns_json: bool) -> str:
     ui_summary = decode_escaped_text(str(payload.get("ui_summary", "")).strip())
     if ui_summary:
         sections.append(ui_summary)
+    elif {
+        "state_machine_gate",
+        "confidence_gate",
+        "completion_gate",
+    }.issubset(payload.keys()):
+        sections.append(_format_execution_readiness_summary(payload))
     else:
         error_text = decode_escaped_text(str(payload.get("error", "")).strip())
         if error_text:
@@ -287,14 +465,31 @@ async def execute_tool_call(
     name: str,
     arguments: MCPToolArguments | dict[str, object] | None,
 ) -> dict[str, object]:
-    logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=name))
-    normalized_arguments = cast(dict[str, object], arguments or {})
+    canonical_name = _normalize_tool_name(name)
+    logger.info(lg.MCP_SERVER_CALLING_TOOL.format(name=canonical_name))
+    raw_arguments = cast(dict[str, object], arguments or {})
 
-    preflight_error = tools.get_preflight_gate_error(name)
+    handler_info = tools.get_tool_handler(canonical_name)
+    if not handler_info:
+        error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=canonical_name)
+        logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=canonical_name))
+        return {
+            "status": "error",
+            "source": "registry",
+            "payload": {"error": error_msg},
+            "formatted_text": te.ERROR_WRAPPER.format(message=error_msg),
+        }
+
+    handler, returns_json = handler_info
+    normalized_arguments = _normalize_tool_arguments(
+        canonical_name, raw_arguments, handler
+    )
+
+    preflight_error = tools.get_preflight_gate_error(canonical_name)
     if preflight_error is not None:
         logger.warning(preflight_error)
         payload = tools.build_gate_guidance_payload(
-            tool_name=name,
+            tool_name=canonical_name,
             gate_error=preflight_error,
             gate_type="preflight",
         )
@@ -305,11 +500,11 @@ async def execute_tool_call(
             "formatted_text": _format_tool_result_text(payload, True),
         }
 
-    phase_error = tools.get_phase_gate_error(name)
+    phase_error = tools.get_phase_gate_error(canonical_name)
     if phase_error is not None:
         logger.warning(phase_error)
         payload = tools.build_gate_guidance_payload(
-            tool_name=name,
+            tool_name=canonical_name,
             gate_error=phase_error,
             gate_type="phase",
         )
@@ -320,7 +515,9 @@ async def execute_tool_call(
             "formatted_text": _format_tool_result_text(payload, True),
         }
 
-    workflow_gate_payload = tools.get_workflow_gate_payload(name, normalized_arguments)
+    workflow_gate_payload = tools.get_workflow_gate_payload(
+        canonical_name, normalized_arguments
+    )
     if workflow_gate_payload is not None:
         logger.warning(str(workflow_gate_payload.get("error", "workflow_gate")))
         return {
@@ -331,7 +528,7 @@ async def execute_tool_call(
         }
 
     visibility_gate_payload = tools.get_visibility_gate_payload(
-        name, normalized_arguments
+        canonical_name, normalized_arguments
     )
     if visibility_gate_payload is not None:
         logger.warning(str(visibility_gate_payload.get("error", "visibility_gate")))
@@ -341,19 +538,6 @@ async def execute_tool_call(
             "payload": visibility_gate_payload,
             "formatted_text": _format_tool_result_text(visibility_gate_payload, True),
         }
-
-    handler_info = tools.get_tool_handler(name)
-    if not handler_info:
-        error_msg = cs.MCP_UNKNOWN_TOOL_ERROR.format(name=name)
-        logger.error(lg.MCP_SERVER_UNKNOWN_TOOL.format(name=name))
-        return {
-            "status": "error",
-            "source": "registry",
-            "payload": {"error": error_msg},
-            "formatted_text": te.ERROR_WRAPPER.format(message=error_msg),
-        }
-
-    handler, returns_json = handler_info
 
     try:
         result = await handler(**normalized_arguments)
@@ -365,8 +549,8 @@ async def execute_tool_call(
             "formatted_text": _format_tool_result_text(result, returns_json),
         }
     except Exception as e:
-        error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=name, error=e)
-        logger.exception(lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
+        error_msg = cs.MCP_TOOL_EXEC_ERROR.format(name=canonical_name, error=e)
+        logger.exception(lg.MCP_SERVER_TOOL_ERROR.format(name=canonical_name, error=e))
         return {
             "status": "error",
             "source": "tool",
@@ -375,9 +559,7 @@ async def execute_tool_call(
         }
 
 
-def create_server() -> tuple[Server, MemgraphIngestor]:
-    tools, ingestor = create_tools_runtime()
-
+def create_server_with_tools(tools: MCPToolsRegistry) -> Server:
     server = Server(cs.MCP_SERVER_NAME)
 
     def _create_error_content(message: str) -> list[TextContent]:
@@ -466,7 +648,12 @@ def create_server() -> tuple[Server, MemgraphIngestor]:
             logger.exception(lg.MCP_SERVER_TOOL_ERROR.format(name=name, error=e))
             return _create_error_content(error_msg)
 
-    return server, ingestor
+    return server
+
+
+def create_server() -> tuple[Server, MemgraphIngestor]:
+    tools, ingestor = create_tools_runtime()
+    return create_server_with_tools(tools), ingestor
 
 
 async def main() -> None:

@@ -220,6 +220,12 @@ class TestMCPNewTools:
         visible_tools = cast(list[str], staged_visibility.get("visible_tools", []))
         assert "query_code_graph" in visible_tools
         assert "multi_hop_analysis" in visible_tools
+        assert "list_analysis_artifacts" in visible_tools
+        assert "get_analysis_report" in visible_tools
+        assert "security_scan" in visible_tools
+        assert "test_bundle" in visible_tools
+        assert "test_generate" in visible_tools
+        assert "test_quality_gate" in visible_tools
         assert "read_file" not in visible_tools
         state_machine = cast(
             dict[str, object], session_contract.get("state_machine", {})
@@ -229,6 +235,30 @@ class TestMCPNewTools:
             dict[str, object], session_contract.get("repo_semantics", {})
         )
         assert "summary" in repo_semantics
+
+    def test_analysis_and_test_tools_are_visible_after_project_selection_even_without_schema_preflight(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["preflight_project_selected"] = True
+        mcp_registry._session_state["preflight_schema_summary_loaded"] = False
+
+        visible_tools = mcp_registry._visible_tool_names()
+
+        assert "list_analysis_artifacts" in visible_tools
+        assert "get_analysis_report" in visible_tools
+        assert "run_analysis" in visible_tools
+        assert "run_analysis_subset" in visible_tools
+        assert "security_scan" in visible_tools
+        assert "test_bundle" in visible_tools
+        assert "test_generate" in visible_tools
+        assert "test_quality_gate" in visible_tools
+
+        assert (
+            mcp_registry.get_visibility_gate_payload("list_analysis_artifacts", None)
+            is None
+        )
+        assert mcp_registry.get_visibility_gate_payload("security_scan", None) is None
+        assert mcp_registry.get_visibility_gate_payload("test_generate", None) is None
 
     async def test_select_active_project_applies_ollama_client_profile(
         self, mcp_registry: MCPToolsRegistry
@@ -441,6 +471,10 @@ class TestMCPNewTools:
         assert "calls" in fallback_exploration
         assert "explore_ratio" in fallback_exploration
         assert "execution_state" in result
+        assert "ui_summary" in result
+        assert "next_best_action" in result
+        completion_gate = cast(dict[str, object], result.get("completion_gate", {}))
+        assert "missing_tools" in completion_gate
 
     async def test_get_execution_readiness_exposes_context_confidence_components(
         self, mcp_registry: MCPToolsRegistry

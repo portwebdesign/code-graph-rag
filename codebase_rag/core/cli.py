@@ -476,10 +476,10 @@ def optimize(
 
 @app.command(name=ch.CLICommandName.MCP_SERVER, help=ch.CMD_MCP_SERVER)
 def mcp_server(
-    transport: Literal["stdio", "http"] = typer.Option(
+    transport: Literal["stdio", "http", "legacy-http"] = typer.Option(
         "stdio",
         "--transport",
-        help="Transport to expose: stdio for MCP clients, http for external tools.",
+        help="Transport to expose: stdio for command-based MCP clients, http for Streamable HTTP clients, legacy-http for the older custom REST wrapper.",
         case_sensitive=False,
     ),
     host: str = typer.Option(
@@ -494,6 +494,11 @@ def mcp_server(
         max=65535,
         help="HTTP port to bind when --transport=http.",
     ),
+    path: str = typer.Option(
+        "/mcp",
+        "--path",
+        help="Streamable HTTP endpoint path when --transport=http.",
+    ),
 ) -> None:
     """
     Starts the Model Context Protocol (MCP) server.
@@ -502,6 +507,10 @@ def mcp_server(
     """
     try:
         if transport == "http":
+            from codebase_rag.mcp.http_server import serve_streamable_http
+
+            serve_streamable_http(host=host, port=port, mount_path=path)
+        elif transport == "legacy-http":
             from codebase_rag.mcp.http_server import serve_http
 
             serve_http(host=host, port=port)

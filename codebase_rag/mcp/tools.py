@@ -1990,29 +1990,40 @@ class MCPToolsRegistry:
             cs.MCPToolName.LIST_PROJECTS,
             cs.MCPToolName.SELECT_ACTIVE_PROJECT,
         }
+        project_selected_tools: set[str] = {
+            cs.MCPToolName.GET_EXECUTION_READINESS,
+            cs.MCPToolName.GET_TOOL_USEFULNESS_RANKING,
+            cs.MCPToolName.MEMORY_QUERY_PATTERNS,
+            cs.MCPToolName.MEMORY_LIST,
+            cs.MCPToolName.PLAN_TASK,
+            cs.MCPToolName.QUERY_CODE_GRAPH,
+            cs.MCPToolName.MULTI_HOP_ANALYSIS,
+            cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
+            cs.MCPToolName.ARCHITECTURE_BUNDLE,
+            cs.MCPToolName.GET_ANALYSIS_REPORT,
+            cs.MCPToolName.GET_ANALYSIS_METRIC,
+            cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
+            cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+            cs.MCPToolName.RUN_ANALYSIS,
+            cs.MCPToolName.RUN_ANALYSIS_SUBSET,
+            cs.MCPToolName.SECURITY_SCAN,
+            cs.MCPToolName.PERFORMANCE_HOTSPOTS,
+            cs.MCPToolName.TEST_BUNDLE,
+            cs.MCPToolName.TEST_GENERATE,
+            cs.MCPToolName.TEST_QUALITY_GATE,
+            cs.MCPToolName.EXECUTION_FEEDBACK,
+            cs.MCPToolName.VALIDATE_DONE_DECISION,
+            cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
+            cs.MCPToolName.GET_GRAPH_STATS,
+            cs.MCPToolName.GET_DEPENDENCY_STATS,
+        }
         if allow_phase_bypass and phase != "preflight":
             visible.update(self._PHASE_ALLOWED_TOOLS.get(phase, set()))
         if not bool(self._session_state.get("preflight_project_selected", False)):
             return visible
+        visible.update(project_selected_tools)
         if not bool(self._session_state.get("preflight_schema_summary_loaded", False)):
-            visible.add(cs.MCPToolName.GET_EXECUTION_READINESS)
             return visible
-
-        visible.update(
-            {
-                cs.MCPToolName.GET_EXECUTION_READINESS,
-                cs.MCPToolName.GET_TOOL_USEFULNESS_RANKING,
-                cs.MCPToolName.MEMORY_QUERY_PATTERNS,
-                cs.MCPToolName.MEMORY_LIST,
-                cs.MCPToolName.PLAN_TASK,
-                cs.MCPToolName.QUERY_CODE_GRAPH,
-                cs.MCPToolName.MULTI_HOP_ANALYSIS,
-                cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
-                cs.MCPToolName.ARCHITECTURE_BUNDLE,
-                cs.MCPToolName.GET_GRAPH_STATS,
-                cs.MCPToolName.GET_DEPENDENCY_STATS,
-            }
-        )
 
         graph_evidence = self._coerce_int(
             self._session_state.get("graph_evidence_count", 0)
@@ -2109,6 +2120,15 @@ class MCPToolsRegistry:
                         cs.MCPToolName.MULTI_HOP_ANALYSIS,
                         cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
                         cs.MCPToolName.ARCHITECTURE_BUNDLE,
+                        cs.MCPToolName.GET_ANALYSIS_REPORT,
+                        cs.MCPToolName.GET_ANALYSIS_METRIC,
+                        cs.MCPToolName.GET_ANALYSIS_ARTIFACT,
+                        cs.MCPToolName.LIST_ANALYSIS_ARTIFACTS,
+                        cs.MCPToolName.RUN_ANALYSIS,
+                        cs.MCPToolName.RUN_ANALYSIS_SUBSET,
+                        cs.MCPToolName.SECURITY_SCAN,
+                        cs.MCPToolName.PERFORMANCE_HOTSPOTS,
+                        cs.MCPToolName.TEST_BUNDLE,
                         cs.MCPToolName.PLAN_TASK,
                         cs.MCPToolName.GET_EXECUTION_READINESS,
                     ],
@@ -9985,6 +10005,14 @@ LIMIT $limit
         completion_missing = [
             name for name, satisfied in completion_requirements.items() if not satisfied
         ]
+        completion_required_tools = [
+            "test_quality_gate" if name == "test_quality" else name
+            for name in completion_requirements.keys()
+        ]
+        completion_missing_tools = [
+            "test_quality_gate" if name == "test_quality" else name
+            for name in completion_missing
+        ]
 
         context_components_raw = context_confidence.get("components", {})
         context_components = (
@@ -10042,7 +10070,9 @@ LIMIT $limit
             },
             "completion_gate": {
                 "required": list(completion_requirements.keys()),
+                "required_tools": completion_required_tools,
                 "missing": completion_missing,
+                "missing_tools": completion_missing_tools,
                 "pass": not completion_missing,
             },
             "test_quality_gate": {
@@ -10117,6 +10147,42 @@ LIMIT $limit
                 "get_execution_readiness_phase_recovery",
             )
         readiness = self._compute_execution_readiness()
+        blockers = [
+            str(check.get("name", "")).strip()
+            for check in self._done_protocol_checks(readiness)
+            if isinstance(check, dict) and not bool(check.get("pass", False))
+        ]
+        confidence_summary = self._build_confidence_summary(readiness)
+        next_best_action = self._build_next_best_action(blockers, readiness)
+        completion_gate = readiness.get("completion_gate", {})
+        missing: list[str] = []
+        if isinstance(completion_gate, dict):
+            completion_gate_dict = cast(dict[str, object], completion_gate)
+            raw_missing = completion_gate_dict.get("missing", [])
+            if isinstance(raw_missing, list):
+                missing = [
+                    (
+                        "test_quality_gate"
+                        if str(item).strip() == "test_quality"
+                        else str(item).strip()
+                    )
+                    for item in raw_missing
+                    if str(item).strip()
+                ]
+        readiness["blockers"] = blockers
+        readiness["confidence_summary"] = confidence_summary
+        readiness["next_best_action"] = next_best_action
+        readiness["completion_summary"] = {
+            "missing": missing,
+            "missing_count": len(missing),
+        }
+        readiness["ui_summary"] = (
+            f"Execution readiness is {'ready' if not blockers else 'not ready'}.\n"
+            f"Phase: {self._current_execution_phase()}\n"
+            f"Confidence: {confidence_summary.get('text', '')}\n"
+            f"Missing completion evidence: {', '.join(missing) if missing else 'none'}\n"
+            f"Next Best Action: {next_best_action.get('tool', '')}"
+        )
         readiness["execution_state"] = self._build_execution_state_contract()
         return readiness
 

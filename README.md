@@ -34,6 +34,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 ## Latest News 🔥
 
 - **[NEW]** **MCP Server Integration**: Code-Graph-RAG now works as an MCP server with Claude Code! Query and edit your codebase using natural language directly from Claude Code. [Setup Guide](docs/claude-code-setup.md)
+- **[NEW]** **Streamable HTTP MCP**: The MCP server can now be exposed over Streamable HTTP for tools that require a URL-based MCP endpoint, such as Memgraph Lab style integrations.
 - [2025/10/21] **Semantic Code Search**: Added intent-based code search using UniXcoder embeddings. Find functions by describing what they do (e.g., "error handling functions", "authentication code") rather than by exact names.
 
 ## 🚀 Features
@@ -824,6 +825,8 @@ my_build_output
 - **protobuf**
 - **defusedxml**: XML bomb protection for Python stdlib modules
 - **huggingface-hub**: Client library to download and publish models, datasets and other repos on the huggingface.co hub
+- **starlette**: The little ASGI library that shines.
+- **uvicorn**: The lightning-fast ASGI server.
 <!-- /SECTION:dependencies -->
 
 ## 🤖 Agentic Workflow & Tools

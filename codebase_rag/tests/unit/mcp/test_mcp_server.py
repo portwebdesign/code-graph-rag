@@ -9,6 +9,7 @@ from codebase_rag.mcp.server import (
     _build_prompt_list,
     _build_resource_list,
     _format_tool_result_text,
+    execute_tool_call,
     get_project_root,
 )
 
@@ -244,6 +245,135 @@ class TestServerFormatting:
         assert "Next actions:" in formatted
         assert "Next best action:" in formatted
         assert '"session_contract"' not in formatted
+
+    def test_formats_execution_readiness_summary(self) -> None:
+        formatted = _format_tool_result_text(
+            {
+                "state_machine_gate": {"current_phase": "validation", "pass": True},
+                "confidence_gate": {"score": 2.223, "required": 2.0, "pass": True},
+                "context_confidence_gate": {
+                    "score": 0.741,
+                    "required": 0.6,
+                    "pass": True,
+                },
+                "completion_gate": {
+                    "missing": [
+                        "test_generate",
+                        "test_quality",
+                        "memory_add",
+                        "impact_graph",
+                    ],
+                    "pass": False,
+                },
+                "test_quality_gate": {"score": 0.0, "required": 2.0, "pass": False},
+                "impact_graph_gate": {"called": False, "affected": 0, "pass": False},
+                "guard_partition": {
+                    "hard": {"failed": [], "pass": True},
+                    "soft": {
+                        "failed": [
+                            "completion_gate",
+                            "test_quality_gate",
+                            "impact_graph_gate",
+                        ],
+                        "pass": False,
+                    },
+                },
+            },
+            True,
+        )
+
+        assert "Execution readiness summary:" in formatted
+        assert "test_quality_gate" in formatted
+        assert "soft guard failures:" in formatted
+
+
+class _AliasRegistry:
+    def get_preflight_gate_error(self, name: str) -> str | None:
+        _ = name
+        return None
+
+    def get_phase_gate_error(self, name: str) -> str | None:
+        _ = name
+        return None
+
+    def get_workflow_gate_payload(
+        self, name: str, arguments: dict[str, object] | None
+    ) -> dict[str, object] | None:
+        _ = name, arguments
+        return None
+
+    def get_visibility_gate_payload(
+        self, name: str, arguments: dict[str, object] | None
+    ) -> dict[str, object] | None:
+        _ = name, arguments
+        return None
+
+    def build_gate_guidance_payload(
+        self, tool_name: str, gate_error: str, gate_type: str
+    ) -> dict[str, object]:
+        return {
+            "tool_name": tool_name,
+            "gate_error": gate_error,
+            "gate_type": gate_type,
+        }
+
+    def get_tool_handler(self, name: str) -> tuple[Any, bool] | None:
+        if name == "plan_task":
+
+            async def plan_task(
+                goal: str, context: str | None = None
+            ) -> dict[str, object]:
+                return {"goal": goal, "context": context}
+
+            return plan_task, True
+        if name == "test_quality_gate":
+
+            async def test_quality_gate(
+                coverage: str,
+                edge_cases: str,
+                negative_tests: str,
+            ) -> dict[str, object]:
+                return {
+                    "coverage": coverage,
+                    "edge_cases": edge_cases,
+                    "negative_tests": negative_tests,
+                }
+
+            return test_quality_gate, True
+        return None
+
+
+@pytest.mark.anyio
+async def test_execute_tool_call_normalizes_plan_task_alias_arguments() -> None:
+    result = await execute_tool_call(
+        _AliasRegistry(),  # type: ignore[arg-type]
+        "plan_task",
+        {
+            "natural_language_query": "trace auth flow",
+            "output_format": "text",
+        },
+    )
+
+    payload = result["payload"]
+    assert isinstance(payload, dict)
+    assert payload["goal"] == "trace auth flow"
+
+
+@pytest.mark.anyio
+async def test_execute_tool_call_accepts_test_quality_alias_name() -> None:
+    result = await execute_tool_call(
+        _AliasRegistry(),  # type: ignore[arg-type]
+        "test_quality",
+        {
+            "coverage": "0.8",
+            "edge_cases": "0.7",
+            "negative_tests": "0.6",
+        },
+    )
+
+    payload = result["payload"]
+    assert isinstance(payload, dict)
+    assert payload["coverage"] == "0.8"
 
 
 class _FakeRegistry:
