@@ -9,6 +9,7 @@ from pathlib import Path
 from loguru import logger
 
 from codebase_rag.core import constants as cs
+from codebase_rag.core.config import settings
 
 from ..services.protocols import IngestorProtocol, QueryProtocol
 from ..utils.git_delta import get_git_head
@@ -215,6 +216,8 @@ class AnalysisRunner(
         return verify_dead_code
 
     def _write_analysis_report(self, summary: dict[str, object]) -> None:
+        if not bool(settings.CODEGRAPH_WRITE_ANALYSIS_GRAPH_NODES):
+            return
         if not isinstance(self.ingestor, QueryProtocol):
             return
 

@@ -313,13 +313,28 @@ CYPHER_ANALYSIS_DEAD_CODE = """
 MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(f)
 WHERE (f:Function OR f:Method)
     AND (f.is_exported IS NULL OR f.is_exported = false)
+    AND coalesce(f.is_entry_point, false) = false
 WITH f, min(m.path) AS path
-WITH f, path,
-     size([()-[:CALLS]->(f) | 1]) AS call_in_degree,
-     size([(f)-[:CALLS]->() | 1]) AS out_call_count,
+OPTIONAL MATCH (decorator_src)-[:DECORATES|ANNOTATES]->(f)
+WITH f, path, count(DISTINCT decorator_src) AS decorator_links
+WHERE decorator_links = 0
+OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
+WITH f, path, decorator_links, count(DISTINCT registration_src) AS registration_links
+WHERE registration_links = 0
+OPTIONAL MATCH (caller)-[:CALLS]->(f)
+WITH f, path, decorator_links, registration_links, count(DISTINCT caller) AS call_in_degree
+WHERE call_in_degree = 0
+OPTIONAL MATCH (f)-[:CALLS]->(callee)
+WITH f, path, decorator_links, registration_links, call_in_degree, count(DISTINCT callee) AS out_call_count
+OPTIONAL MATCH (import_src)-[:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
+WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
+OPTIONAL MATCH (config_src)-[:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
+WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count,
+     imported_by_cli_links, count(DISTINCT config_src) AS config_reference_links
+WITH f, path, call_in_degree, out_call_count, decorator_links, registration_links,
+     imported_by_cli_links, config_reference_links,
      CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
      CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
-WHERE call_in_degree = 0
 RETURN DISTINCT f.qualified_name AS qualified_name,
                 f.name AS name,
                 path AS path,
@@ -329,10 +344,10 @@ RETURN DISTINCT f.qualified_name AS qualified_name,
                 out_call_count,
                 is_entrypoint_name,
                 has_entry_decorator,
-                0 AS decorator_links,
-                0 AS registration_links,
-                0 AS imported_by_cli_links,
-                0 AS config_reference_links,
+                decorator_links,
+                registration_links,
+                imported_by_cli_links,
+                config_reference_links,
                 coalesce(f.decorators, []) AS decorators,
                 coalesce(f.is_exported, false) AS is_exported
 ORDER BY path, start_line
@@ -344,13 +359,28 @@ MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(
 WHERE (f:Function OR f:Method)
     AND ($module_paths IS NULL OR m.path IN $module_paths)
     AND (f.is_exported IS NULL OR f.is_exported = false)
+    AND coalesce(f.is_entry_point, false) = false
 WITH f, min(m.path) AS path
-WITH f, path,
-     size([()-[:CALLS]->(f) | 1]) AS call_in_degree,
-     size([(f)-[:CALLS]->() | 1]) AS out_call_count,
+OPTIONAL MATCH (decorator_src)-[:DECORATES|ANNOTATES]->(f)
+WITH f, path, count(DISTINCT decorator_src) AS decorator_links
+WHERE decorator_links = 0
+OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
+WITH f, path, decorator_links, count(DISTINCT registration_src) AS registration_links
+WHERE registration_links = 0
+OPTIONAL MATCH (caller)-[:CALLS]->(f)
+WITH f, path, decorator_links, registration_links, count(DISTINCT caller) AS call_in_degree
+WHERE call_in_degree = 0
+OPTIONAL MATCH (f)-[:CALLS]->(callee)
+WITH f, path, decorator_links, registration_links, call_in_degree, count(DISTINCT callee) AS out_call_count
+OPTIONAL MATCH (import_src)-[:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
+WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
+OPTIONAL MATCH (config_src)-[:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
+WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count,
+     imported_by_cli_links, count(DISTINCT config_src) AS config_reference_links
+WITH f, path, call_in_degree, out_call_count, decorator_links, registration_links,
+     imported_by_cli_links, config_reference_links,
      CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
      CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
-WHERE call_in_degree = 0
 RETURN DISTINCT f.qualified_name AS qualified_name,
                 f.name AS name,
                 path AS path,
@@ -360,10 +390,10 @@ RETURN DISTINCT f.qualified_name AS qualified_name,
                 out_call_count,
                 is_entrypoint_name,
                 has_entry_decorator,
-                0 AS decorator_links,
-                0 AS registration_links,
-                0 AS imported_by_cli_links,
-                0 AS config_reference_links,
+                decorator_links,
+                registration_links,
+                imported_by_cli_links,
+                config_reference_links,
                 coalesce(f.decorators, []) AS decorators,
                 coalesce(f.is_exported, false) AS is_exported
 ORDER BY path, start_line
@@ -373,6 +403,11 @@ LIMIT $dead_code_limit
 CYPHER_ANALYSIS_TOTAL_FUNCTIONS = """
 MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(f)
 WHERE (f:Function OR f:Method)
+    AND coalesce(f.is_entry_point, false) = false
+WITH DISTINCT f
+OPTIONAL MATCH (decorator_src)-[:DECORATES|ANNOTATES]->(f)
+WITH f, count(DISTINCT decorator_src) AS decorator_links
+WHERE decorator_links = 0
 RETURN count(DISTINCT f) AS total_functions
 """
 
@@ -380,6 +415,11 @@ CYPHER_ANALYSIS_TOTAL_FUNCTIONS_FILTERED = """
 MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(f)
 WHERE (f:Function OR f:Method)
     AND ($module_paths IS NULL OR m.path IN $module_paths)
+    AND coalesce(f.is_entry_point, false) = false
+WITH DISTINCT f
+OPTIONAL MATCH (decorator_src)-[:DECORATES|ANNOTATES]->(f)
+WITH f, count(DISTINCT decorator_src) AS decorator_links
+WHERE decorator_links = 0
 RETURN count(DISTINCT f) AS total_functions
 """
 
@@ -449,6 +489,18 @@ RETURN id(n) AS node_id,
        n.start_line AS start_line,
        n.end_line AS end_line,
        coalesce(n.path, paths[0]) AS path,
+       coalesce(n.signature, n.signature_lite, '') AS signature,
+       coalesce(n.visibility, '') AS visibility,
+       coalesce(n.module_qn, '') AS module_qn,
+       coalesce(n.namespace, '') AS namespace,
+       coalesce(n.symbol_kind, toLower(labels(n)[0]), '') AS symbol_kind,
+       coalesce(n.pagerank, 0.0) AS pagerank,
+       coalesce(n.community_id, -1) AS community_id,
+       coalesce(n.has_cycle, false) AS has_cycle,
+       coalesce(n.in_call_count, 0) AS in_call_count,
+       coalesce(n.out_call_count, 0) AS out_call_count,
+       coalesce(n.dead_code_score, 0.0) AS dead_code_score,
+       coalesce(n.is_reachable, true) AS is_reachable,
        n.parameters AS parameters
 ORDER BY n.qualified_name
 """

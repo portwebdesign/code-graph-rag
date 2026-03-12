@@ -28,6 +28,9 @@ class HotspotsMixin:
                 and cs.NodeLabel.METHOD.value not in node.labels
             ):
                 continue
+            path = str(node.properties.get(cs.KEY_PATH) or "")
+            if not self._is_runtime_source_path(path):
+                continue
             complexity = int(str(node.properties.get("complexity") or 0))
             if complexity < 10:
                 continue
@@ -37,6 +40,7 @@ class HotspotsMixin:
             hotspots.append(
                 {
                     "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
+                    "path": path,
                     "complexity": complexity,
                     "fan_in": calls_in,
                 }

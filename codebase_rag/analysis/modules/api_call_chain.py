@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict, deque
 from typing import Any, cast
 
@@ -10,11 +11,20 @@ from .base_module import AnalysisContext, AnalysisModule
 
 
 class ApiCallChainModule(AnalysisModule):
+    _PY_ROUTE_HANDLER_PATTERN = re.compile(
+        r"@(?:app|router|bp)\.(get|post|put|delete|patch|api_route)\(\s*['\"]([^'\"]+)['\"][\s\S]*?\)\s*(?:async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        re.IGNORECASE,
+    )
+    _FLASK_ROUTE_HANDLER_PATTERN = re.compile(
+        r"@(?:app|bp)\.route\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*methods=\[([^\]]+)\])?[\s\S]*?\)\s*(?:async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        re.IGNORECASE,
+    )
+
     def get_name(self) -> str:
         return "api_call_chain"
 
     def run(self, context: AnalysisContext) -> dict[str, Any]:
-        if not context.nodes or not context.relationships:
+        if not context.nodes:
             context.runner._write_json_report(
                 "api_call_chain_report.json",
                 {
@@ -104,6 +114,7 @@ class ApiCallChainModule(AnalysisModule):
                     handler.node_id,
                     rels_by_from,
                     context.node_by_id,
+                    context,
                     max_depth,
                     max_calls,
                 )
@@ -218,6 +229,12 @@ class ApiCallChainModule(AnalysisModule):
                 if endpoint_key in seen:
                     continue
                 seen.add(endpoint_key)
+                handler_name = self._resolve_inferred_handler_name(
+                    source,
+                    method,
+                    route_path,
+                    endpoint_file,
+                )
                 endpoints.append(
                     {
                         "qualified_name": (
@@ -229,11 +246,12 @@ class ApiCallChainModule(AnalysisModule):
                         "file_path": endpoint_file,
                         "route_path": route_path,
                         "method": method,
+                        "handler_name": handler_name,
                         "labels": [cs.NodeLabel.ENDPOINT.value],
                         "inferred": True,
                     }
                 )
-        return endpoints[:40]
+        return endpoints[:200]
 
     def _resolve_handler_nodes(
         self,
@@ -273,16 +291,24 @@ class ApiCallChainModule(AnalysisModule):
         ).replace("\\", "/")
         if not endpoint_path:
             return []
+        handler_name = str(endpoint_payload.get("handler_name") or "").strip()
         candidates = []
         for node in context.nodes:
             node_path = str(node.properties.get(cs.KEY_PATH) or "").replace("\\", "/")
             if node_path != endpoint_path:
+                continue
+            if not context.runner._is_runtime_source_path(node_path):
                 continue
             if not (
                 cs.NodeLabel.FUNCTION.value in node.labels
                 or cs.NodeLabel.METHOD.value in node.labels
                 or cs.NodeLabel.CLASS.value in node.labels
                 or cs.NodeLabel.SERVICE.value in node.labels
+            ):
+                continue
+            if (
+                handler_name
+                and str(node.properties.get(cs.KEY_NAME) or "") != handler_name
             ):
                 continue
             candidates.append(node)
@@ -305,6 +331,7 @@ class ApiCallChainModule(AnalysisModule):
         start_id: int,
         rels_by_from: dict[int, list],
         node_by_id: dict[int, Any],
+        context: AnalysisContext,
         max_depth: int,
         max_nodes: int,
     ) -> list[dict[str, Any]]:
@@ -332,6 +359,8 @@ class ApiCallChainModule(AnalysisModule):
                 visited.add(target_id)
                 node = node_by_id.get(target_id)
                 if node is None:
+                    continue
+                if not ApiCallChainModule._should_include_chain_node(context, node):
                     continue
                 payload = ApiCallChainModule._node_payload(node)
                 payload["relationship_type"] = str(rel.rel_type)
@@ -368,6 +397,81 @@ class ApiCallChainModule(AnalysisModule):
             return True
         return any(
             label in label_list
+            for label in {
+                cs.NodeLabel.EXTERNAL_PACKAGE.value,
+                cs.NodeLabel.DATA_STORE.value,
+                cs.NodeLabel.CACHE_STORE.value,
+                cs.NodeLabel.QUEUE.value,
+                cs.NodeLabel.GRAPHQL_OPERATION.value,
+                cs.NodeLabel.SERVICE.value,
+            }
+        )
+
+    @classmethod
+    def _extract_source_endpoint_bindings(
+        cls,
+        source: str,
+        file_path: str,
+    ) -> list[dict[str, str]]:
+        _ = file_path
+        bindings: list[dict[str, str]] = []
+
+        for match in cls._PY_ROUTE_HANDLER_PATTERN.finditer(source):
+            bindings.append(
+                {
+                    "method": match.group(1).upper(),
+                    "path": match.group(2),
+                    "handler_name": match.group(3),
+                }
+            )
+
+        for match in cls._FLASK_ROUTE_HANDLER_PATTERN.finditer(source):
+            methods_raw = match.group(2) or "GET"
+            methods = re.findall(r"['\"]([A-Za-z]+)['\"]", methods_raw) or [methods_raw]
+            for method in methods:
+                bindings.append(
+                    {
+                        "method": str(method).strip().upper(),
+                        "path": match.group(1),
+                        "handler_name": match.group(3),
+                    }
+                )
+
+        return bindings
+
+    @classmethod
+    def _resolve_inferred_handler_name(
+        cls,
+        source: str,
+        method: str,
+        route_path: str,
+        file_path: str,
+    ) -> str | None:
+        for binding in cls._extract_source_endpoint_bindings(source, file_path):
+            if (
+                str(binding.get("method") or "").strip().upper() == method
+                and str(binding.get("path") or "").strip() == route_path
+            ):
+                handler_name = str(binding.get("handler_name") or "").strip()
+                if handler_name:
+                    return handler_name
+        return None
+
+    @staticmethod
+    def _should_include_chain_node(context: AnalysisContext, node: Any) -> bool:
+        path = str(node.properties.get(cs.KEY_PATH) or "")
+        normalized = path.replace("\\", "/").lower()
+        path_parts = [part for part in normalized.split("/") if part]
+        if (
+            any(part in {"tests", "test", "__tests__"} for part in path_parts)
+            or ".spec." in normalized
+            or ".test." in normalized
+        ):
+            return False
+        if context.runner._is_runtime_source_path(path):
+            return True
+        return any(
+            label in node.labels
             for label in {
                 cs.NodeLabel.EXTERNAL_PACKAGE.value,
                 cs.NodeLabel.DATA_STORE.value,

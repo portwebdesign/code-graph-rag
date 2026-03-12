@@ -259,6 +259,10 @@ function greet(name) {
             assert "function_definitions" in docker_queries
             assert "copy_instruction" in docker_queries
 
+    def test_query_name_map_does_not_treat_json_yaml_documents_as_functions(self):
+        assert _QUERY_NAME_MAP[cs.SupportedLanguage.YAML]["functions"] == []
+        assert _QUERY_NAME_MAP[cs.SupportedLanguage.JSON]["functions"] == []
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

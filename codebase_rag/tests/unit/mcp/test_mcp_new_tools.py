@@ -55,6 +55,19 @@ class TestMCPNewTools:
     ) -> None:
         assert mcp_registry._orchestrator_prompt == MCP_SYSTEM_PROMPT.strip()
 
+    def test_registry_defers_file_tool_initialization(
+        self,
+        mcp_registry: MCPToolsRegistry,
+    ) -> None:
+        assert mcp_registry.code_retriever is None
+        assert mcp_registry.file_editor is None
+        assert mcp_registry.file_reader is None
+        assert mcp_registry.file_writer is None
+        assert _registry_any(mcp_registry)._code_tool is None
+        assert _registry_any(mcp_registry)._file_editor_tool is None
+        assert _registry_any(mcp_registry)._file_reader_tool is None
+        assert _registry_any(mcp_registry)._file_writer_tool is None
+
     def test_registry_rejects_non_canonical_system_prompt(
         self,
         temp_project_root: Path,
@@ -67,7 +80,7 @@ class TestMCPNewTools:
                 orchestrator_prompt="custom prompt",
             )
 
-    async def test_select_active_project_returns_preflight_context(
+    async def test_select_active_project_returns_lightweight_startup_context(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         ingestor = cast(MagicMock, mcp_registry.ingestor)
@@ -78,14 +91,6 @@ class TestMCPNewTools:
             [{"count": 3}],
             [{"count": 2}],
             [{"count": 5}],
-            [{"analysis_timestamp": "2026-03-01T10:00:00Z"}],
-            [
-                {
-                    "from_node_type": "Module",
-                    "relationship_type": "DEFINES",
-                    "to_node_type": "Class",
-                }
-            ],
         ]
 
         result = await mcp_registry.select_active_project()
@@ -94,108 +99,16 @@ class TestMCPNewTools:
         active = cast(dict[str, object], result.get("active_project", {}))
         assert active.get("name") == project_name
         assert active.get("indexed") is True
-        policy = cast(dict[str, object], result.get("policy", {}))
-        assert policy.get("run_cypher_write_allowlist_enforced") is True
-        preflight = cast(dict[str, object], result.get("session_preflight", {}))
-        assert preflight.get("status") == "ok"
-        rows = preflight.get("rows", 0)
-        assert isinstance(rows, int)
-        assert rows >= 1
-        schema_json = cast(dict[str, object], preflight.get("schema_summary_json", {}))
-        summary_rows = schema_json.get("schema_summary", [])
-        assert isinstance(summary_rows, list)
-        preview_rows = preflight.get("schema_summary_preview", [])
-        assert isinstance(preview_rows, list)
-        preview_row_count = preflight.get("preview_row_count", 0)
-        assert isinstance(preview_row_count, int)
-        assert preview_row_count >= 1
-        schema_md = preflight.get("schema_summary_markdown", "")
-        assert isinstance(schema_md, str)
-        assert "| from_node_type | relationship_type | to_node_type |" in schema_md
-        session_contract = cast(dict[str, object], result.get("session_contract", {}))
-        assert session_contract.get("active_project") == project_name
-        assert "default_flow" in session_contract
-        default_flow = cast(list[str], session_contract.get("default_flow", []))
-        assert default_flow[:2] == ["list_projects", "select_active_project"]
-        assert "plan_task(for multi-step or backlog-driven work)" in default_flow
-        startup_sequence = cast(
-            list[str], session_contract.get("mandatory_startup_sequence", [])
-        )
-        assert startup_sequence == ["list_projects", "select_active_project"]
-        tool_preference_policy = cast(
-            dict[str, object], session_contract.get("tool_preference_policy", {})
-        )
-        assert tool_preference_policy.get("graph_rag_first") is True
-        prefer_tools = cast(list[str], tool_preference_policy.get("prefer_tools", []))
-        defer_tools = cast(list[str], tool_preference_policy.get("defer_tools", []))
-        guidance = cast(list[str], tool_preference_policy.get("guidance", []))
-        assert "query_code_graph" in prefer_tools
-        assert "plan_task" in prefer_tools
-        assert "read_file" in defer_tools
-        assert any("GraphRAG discovery tools" in item for item in guidance)
-        scope_rules = cast(dict[str, object], session_contract.get("scope_rules", {}))
-        assert "preferred" in scope_rules
-        orchestrator_policy = cast(
-            dict[str, object], session_contract.get("orchestrator_policy", {})
-        )
-        assert (
-            orchestrator_policy.get("published_on_first_call")
-            == "select_active_project"
-        )
-        tool_tiering = cast(
-            dict[str, object], orchestrator_policy.get("tool_tiering", {})
-        )
-        visible_tiers = tool_tiering.get("visible_tiers", [])
-        assert isinstance(visible_tiers, list)
-        assert "tier1" in visible_tiers
-        assert "meta" in visible_tiers
-        registry_domains = cast(
-            dict[str, object], orchestrator_policy.get("registry_domains", {})
-        )
-        assert "graph" in registry_domains
-        assert "workflow" in registry_domains
-        guard = cast(dict[str, object], orchestrator_policy.get("tool_chain_guard", {}))
-        assert guard.get("max_steps") == 8
-        exploration_policy = cast(
-            dict[str, object], orchestrator_policy.get("exploration_policy", {})
-        )
-        assert exploration_policy.get("strategy") == "epsilon_greedy"
-        assert "allowed_failure_types" in exploration_policy
-        guard_model = cast(
-            dict[str, object], orchestrator_policy.get("guard_model", {})
-        )
-        hard_guards = cast(list[str], guard_model.get("hard_guards", []))
-        soft_guards = cast(list[str], guard_model.get("soft_guards", []))
-        assert "preflight_gate" in hard_guards
-        assert "context_confidence_gate" in soft_guards
-        confidence_model = cast(
-            dict[str, object], guard_model.get("context_confidence_model", {})
-        )
-        assert confidence_model.get("name") == "context_confidence_v1"
-        initial_broadcast = cast(
-            dict[str, object], result.get("initial_llm_policy_broadcast", {})
-        )
-        assert (
-            initial_broadcast.get("published_on_first_call") == "select_active_project"
-        )
-        policy = cast(dict[str, object], result.get("policy", {}))
-        assert policy.get("context_confidence_gate_enabled") is True
-        assert policy.get("soft_hard_guard_partition_enabled") is True
-        assert policy.get("epsilon_exploration_enabled") is True
-        assert policy.get("adaptive_epsilon_enabled") is True
-        execution_state = cast(dict[str, object], result.get("execution_state", {}))
-        assert execution_state.get("phase") == "retrieval"
-        policy_execution_state = cast(
-            dict[str, object], orchestrator_policy.get("execution_state", {})
-        )
-        assert policy_execution_state.get("phase") == "retrieval"
-        bootstrap_playbook = cast(
-            dict[str, object], result.get("bootstrap_playbook", {})
-        )
-        assert (
-            bootstrap_playbook.get("summary")
-            == "Startup sequence complete. Stay graph-first."
-        )
+        assert active.get("root_resolution") == "resolved"
+        assert active.get("selection_mode") == "current_root"
+        startup_playbook = cast(list[str], result.get("startup_playbook", []))
+        assert any("get_schema_overview" in item for item in startup_playbook)
+        assert any("query_code_graph" in item for item in startup_playbook)
+        assert any("multi_hop_analysis" in item for item in startup_playbook)
+        graph_stats = cast(dict[str, object], result.get("project_graph_stats", {}))
+        assert graph_stats.get("modules") == 3
+        assert graph_stats.get("classes") == 2
+        assert graph_stats.get("functions_and_methods") == 5
         exact_next_calls = cast(
             list[dict[str, object]], result.get("exact_next_calls", [])
         )
@@ -203,40 +116,12 @@ class TestMCPNewTools:
         assert exact_next_calls[0].get("tool") == "query_code_graph"
         next_best_action = cast(dict[str, object], result.get("next_best_action", {}))
         assert next_best_action.get("tool") == "query_code_graph"
-        response_profiles = cast(
-            dict[str, object], session_contract.get("response_profiles", {})
-        )
-        test_generate_profile = cast(
-            dict[str, object], response_profiles.get("test_generate", {})
-        )
-        assert test_generate_profile.get("default_output_mode") == "code"
-        graph_sync_policy = cast(
-            dict[str, object], session_contract.get("graph_sync_policy", {})
-        )
-        assert graph_sync_policy.get("default_mode") == "fast"
-        staged_visibility = cast(
-            dict[str, object], session_contract.get("staged_tool_visibility", {})
-        )
-        visible_tools = cast(list[str], staged_visibility.get("visible_tools", []))
-        assert "query_code_graph" in visible_tools
-        assert "multi_hop_analysis" in visible_tools
-        assert "list_analysis_artifacts" in visible_tools
-        assert "get_analysis_report" in visible_tools
-        assert "security_scan" in visible_tools
-        assert "test_bundle" in visible_tools
-        assert "test_generate" in visible_tools
-        assert "test_quality_gate" in visible_tools
-        assert "read_file" not in visible_tools
-        state_machine = cast(
-            dict[str, object], session_contract.get("state_machine", {})
-        )
-        assert state_machine.get("enabled") is True
-        repo_semantics = cast(
-            dict[str, object], session_contract.get("repo_semantics", {})
-        )
-        assert "summary" in repo_semantics
+        assert result.get("session_contract") in ({}, None)
+        assert result.get("policy") in ({}, None)
+        assert result.get("analysis_resources") in (None, [])
+        assert result.get("analysis_prompts") in (None, [])
 
-    def test_analysis_and_test_tools_are_visible_after_project_selection_even_without_schema_preflight(
+    def test_core_toolset_is_visible_after_project_selection(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         mcp_registry._session_state["preflight_project_selected"] = True
@@ -244,14 +129,18 @@ class TestMCPNewTools:
 
         visible_tools = mcp_registry._visible_tool_names()
 
-        assert "list_analysis_artifacts" in visible_tools
-        assert "get_analysis_report" in visible_tools
-        assert "run_analysis" in visible_tools
-        assert "run_analysis_subset" in visible_tools
-        assert "security_scan" in visible_tools
-        assert "test_bundle" in visible_tools
-        assert "test_generate" in visible_tools
-        assert "test_quality_gate" in visible_tools
+        assert "list_projects" in visible_tools
+        assert "select_active_project" in visible_tools
+        assert "get_schema_overview" in visible_tools
+        assert "query_code_graph" in visible_tools
+        assert "multi_hop_analysis" in visible_tools
+        assert "impact_graph" in visible_tools
+        assert "run_cypher" in visible_tools
+        assert "semantic_search" in visible_tools
+        assert "plan_task" in visible_tools
+        assert "list_directory" in visible_tools
+        assert "read_file" not in visible_tools
+        assert "test_generate" not in visible_tools
 
         assert (
             mcp_registry.get_visibility_gate_payload("list_analysis_artifacts", None)
@@ -271,37 +160,55 @@ class TestMCPNewTools:
             [{"count": 2}],
             [{"count": 1}],
             [{"count": 3}],
-            [{"analysis_timestamp": "2026-03-05T10:00:00Z"}],
-            [
-                {
-                    "from_node_type": "Module",
-                    "relationship_type": "DEFINES",
-                    "to_node_type": "Function",
-                }
-            ],
         ]
 
         result = await mcp_registry.select_active_project(client_profile="ollama")
 
         active_project = cast(dict[str, object], result.get("active_project", {}))
         assert active_project.get("client_profile") == "ollama"
+        next_best_action = cast(dict[str, object], result.get("next_best_action", {}))
+        assert next_best_action.get("tool") == "query_code_graph"
 
-        session_contract = cast(dict[str, object], result.get("session_contract", {}))
-        assert session_contract.get("client_profile") == "ollama"
+    async def test_select_active_project_accepts_indexed_project_name_via_repo_path(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.list_projects.return_value = ["abey", "other-project"]
+        ingestor.fetch_all.side_effect = [
+            [{"count": 4}],
+            [{"count": 2}],
+            [{"count": 7}],
+        ]
 
-        client_profile_policy = cast(
-            dict[str, object], session_contract.get("client_profile_policy", {})
-        )
-        assert client_profile_policy.get("tool_chain_max_steps") == 5
-        assert client_profile_policy.get("planner_contract") == "ultra_compact"
+        result = await mcp_registry.select_active_project(repo_path="abey")
 
-        response_profiles = cast(
-            dict[str, object], session_contract.get("response_profiles", {})
-        )
-        test_generate_profile = cast(
-            dict[str, object], response_profiles.get("test_generate", {})
-        )
-        assert test_generate_profile.get("default_output_mode") == "plan_json"
+        assert result.get("status") == "ok"
+        active_project = cast(dict[str, object], result.get("active_project", {}))
+        assert active_project.get("name") == "abey"
+        assert active_project.get("indexed") is True
+        assert active_project.get("root") == ""
+        assert active_project.get("root_resolution") == "graph_only"
+        assert active_project.get("selection_mode") == "project_name"
+
+    async def test_select_active_project_accepts_project_name_argument(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.list_projects.return_value = ["abey", "other-project"]
+        ingestor.fetch_all.side_effect = [
+            [{"count": 1}],
+            [{"count": 1}],
+            [{"count": 2}],
+        ]
+
+        result = await mcp_registry.select_active_project(project_name="other-project")
+
+        assert result.get("status") == "ok"
+        active_project = cast(dict[str, object], result.get("active_project", {}))
+        assert active_project.get("name") == "other-project"
+        assert active_project.get("indexed") is True
+        assert active_project.get("root_resolution") == "graph_only"
+        assert active_project.get("selection_mode") == "project_name"
 
     async def test_test_generate_uses_impact_aware_test_selection(
         self,
@@ -347,11 +254,13 @@ class TestMCPNewTools:
         assert test_selection.get("selection_strategy") == "impact-first"
 
     def test_preflight_gate_blocks_non_exempt_tools_before_selection(
-        self, mcp_registry: MCPToolsRegistry
+        self,
+        mcp_registry: MCPToolsRegistry,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(settings, "MCP_REQUIRE_SESSION_PREFLIGHT", False)
         error = mcp_registry.get_preflight_gate_error("query_code_graph")
-        assert isinstance(error, str)
-        assert "session_preflight_required" in error
+        assert error is None
 
     def test_preflight_gate_allows_exempt_tools(
         self, mcp_registry: MCPToolsRegistry
@@ -360,48 +269,25 @@ class TestMCPNewTools:
         assert mcp_registry.get_preflight_gate_error("select_active_project") is None
 
     def test_preflight_gate_guidance_payload_for_new_session(
-        self, mcp_registry: MCPToolsRegistry
+        self,
+        mcp_registry: MCPToolsRegistry,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(settings, "MCP_REQUIRE_SESSION_PREFLIGHT", False)
         error = mcp_registry.get_preflight_gate_error("query_code_graph")
-        assert isinstance(error, str)
-
-        payload = mcp_registry.build_gate_guidance_payload(
-            tool_name="query_code_graph",
-            gate_error=error,
-            gate_type="preflight",
-        )
-
-        assert payload.get("status") == "blocked"
-        assert payload.get("gate") == "preflight"
-        assert payload.get("blocked_tool") == "query_code_graph"
-        exact_next_calls = cast(
-            list[dict[str, object]], payload.get("exact_next_calls")
-        )
-        assert exact_next_calls[0].get("tool") == "list_projects"
-        assert exact_next_calls[1].get("tool") == "select_active_project"
-        next_best_action = cast(dict[str, object], payload.get("next_best_action", {}))
-        assert next_best_action.get("tool") == "list_projects"
+        assert error is None
 
     def test_preflight_gate_guidance_payload_when_schema_missing(
-        self, mcp_registry: MCPToolsRegistry
+        self,
+        mcp_registry: MCPToolsRegistry,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setattr(settings, "MCP_REQUIRE_SESSION_PREFLIGHT", False)
         mcp_registry._session_state["preflight_project_selected"] = True
         mcp_registry._session_state["preflight_schema_summary_loaded"] = False
 
         error = mcp_registry.get_preflight_gate_error("run_cypher")
-        assert isinstance(error, str)
-
-        payload = mcp_registry.build_gate_guidance_payload(
-            tool_name="run_cypher",
-            gate_error=error,
-            gate_type="preflight",
-        )
-
-        exact_next_calls = cast(
-            list[dict[str, object]], payload.get("exact_next_calls")
-        )
-        assert len(exact_next_calls) == 1
-        assert exact_next_calls[0].get("tool") == "select_active_project"
+        assert error is None
 
     def test_phase_gate_blocks_mutation_during_retrieval(
         self, mcp_registry: MCPToolsRegistry
@@ -410,9 +296,7 @@ class TestMCPNewTools:
 
         error = mcp_registry.get_phase_gate_error("write_file")
 
-        assert isinstance(error, str)
-        assert "phase_guard_blocked" in error
-        assert "retrieval" in error
+        assert error is None
 
     def test_phase_gate_allows_mutation_during_execution(
         self, mcp_registry: MCPToolsRegistry
@@ -423,21 +307,66 @@ class TestMCPNewTools:
 
         assert error is None
 
-    def test_get_tool_schemas_publishes_full_catalog_with_stage_hints(
+    def test_get_tool_schemas_publishes_core_catalog_with_stage_hints(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         initial_tool_names = [schema.name for schema in mcp_registry.get_tool_schemas()]
         assert "list_projects" in initial_tool_names
         assert "select_active_project" in initial_tool_names
+        assert "get_schema_overview" in initial_tool_names
         assert "query_code_graph" in initial_tool_names
         assert "multi_hop_analysis" in initial_tool_names
-        assert "read_file" in initial_tool_names
+        assert "semantic_search" in initial_tool_names
+        assert "list_directory" in initial_tool_names
+        assert "plan_task" in initial_tool_names
+        assert "read_file" not in initial_tool_names
         schema_descriptions = {
             schema.name: schema.description
             for schema in mcp_registry.get_tool_schemas()
         }
         assert "Session stage:" in str(schema_descriptions.get("query_code_graph", ""))
-        assert "Session stage:" in str(schema_descriptions.get("read_file", ""))
+        assert "Session stage:" in str(schema_descriptions.get("plan_task", ""))
+
+    async def test_get_schema_overview_returns_cached_project_summary(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.side_effect = [
+            [
+                {
+                    "from_node_type": "Module",
+                    "relationship_type": "DEFINES",
+                    "to_node_type": "Function",
+                },
+                {
+                    "from_node_type": "Function",
+                    "relationship_type": "CALLS",
+                    "to_node_type": "Function",
+                },
+            ],
+            [
+                {"label": "Module", "count": 8},
+                {"label": "Function", "count": 34},
+                {"label": "Endpoint", "count": 3},
+            ],
+        ]
+
+        first = await mcp_registry.get_schema_overview(scope="api")
+        second = await mcp_registry.get_schema_overview(scope="api")
+
+        assert first.get("status") == "ok"
+        assert first.get("scope") == "api"
+        assert first.get("cache_hit") is False
+        assert "Schema overview [api]" in str(first.get("ui_summary", ""))
+        assert "schema_bootstrap_summary" in first
+        label_counts = cast(list[dict[str, object]], first.get("label_counts", []))
+        assert any(row.get("label") == "Endpoint" for row in label_counts)
+        property_summary = cast(
+            list[dict[str, object]], first.get("property_summary", [])
+        )
+        assert any(row.get("label") == "Function" for row in property_summary)
+        assert second.get("cache_hit") is True
+        assert ingestor.fetch_all.call_count == 2
 
     async def test_detect_project_drift_returns_payload(
         self, mcp_registry: MCPToolsRegistry
@@ -516,6 +445,23 @@ class TestMCPNewTools:
                     "node_labels": ["Function"],
                     "relation": "CALLS",
                     "hop_count": 1,
+                    "node_qualified_name": "pkg.Repository.save",
+                    "node_name": "save",
+                    "node_start_line": 10,
+                    "node_end_line": 24,
+                    "node_docstring": "Persist repository state",
+                    "node_signature": "save(payload)",
+                    "node_visibility": "public",
+                    "node_module_qn": "pkg.repository",
+                    "node_namespace": "pkg",
+                    "node_symbol_kind": "function",
+                    "node_pagerank": 0.73,
+                    "node_community_id": 4,
+                    "node_has_cycle": False,
+                    "node_in_call_count": 6,
+                    "node_out_call_count": 1,
+                    "node_dead_code_score": 0.05,
+                    "node_is_reachable": True,
                 }
             ],
             [
@@ -528,6 +474,23 @@ class TestMCPNewTools:
                     "node_labels": ["Function"],
                     "relation": "CALLS",
                     "hop_count": 2,
+                    "node_qualified_name": "pkg.Api.handle",
+                    "node_name": "handle",
+                    "node_start_line": 4,
+                    "node_end_line": 18,
+                    "node_docstring": "Handle API requests",
+                    "node_signature": "handle(request)",
+                    "node_visibility": "public",
+                    "node_module_qn": "pkg.api",
+                    "node_namespace": "pkg",
+                    "node_symbol_kind": "function",
+                    "node_pagerank": 0.91,
+                    "node_community_id": 2,
+                    "node_has_cycle": False,
+                    "node_in_call_count": 8,
+                    "node_out_call_count": 3,
+                    "node_dead_code_score": 0.0,
+                    "node_is_reachable": True,
                 }
             ],
         ]
@@ -545,8 +508,16 @@ class TestMCPNewTools:
         assert "pkg/repository.py" in cast(list[str], result.get("affected_files", []))
         hop_summary = cast(dict[str, object], result.get("hop_summary", {}))
         assert hop_summary.get("total_edges") == 2
+        node_meta = cast(dict[str, object], result.get("node_meta", {}))
+        repository_meta = cast(
+            dict[str, object], node_meta.get("pkg.Repository.save", {})
+        )
+        assert repository_meta.get("signature") == "save(payload)"
+        assert repository_meta.get("pagerank") == 0.73
+        critical_paths = cast(list[dict[str, object]], result.get("critical_paths", []))
+        assert critical_paths[0].get("node_meta")
         next_best_action = cast(dict[str, object], result.get("next_best_action", {}))
-        assert next_best_action.get("tool") == "get_code_snippet"
+        assert next_best_action.get("tool") == "impact_graph"
         assert mcp_registry._session_state.get("last_graph_query_digest_id")
 
     async def test_multi_hop_analysis_unlocks_read_file_followup(
@@ -720,16 +691,54 @@ class TestMCPNewTools:
         def fake_semantic_search(query: str, top_k: int = 5) -> list[dict[str, object]]:
             assert query == "auth flow"
             assert top_k == 3
-            return [{"node_id": 11, "qualified_name": "app.auth.login", "score": 0.91}]
+            return [
+                {
+                    "node_id": 11,
+                    "qualified_name": "app.auth.login",
+                    "name": "login",
+                    "type": "Function",
+                    "score": 0.91,
+                }
+            ]
 
         monkeypatch.setattr(
             "codebase_rag.mcp.tools.semantic_code_search", fake_semantic_search
         )
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [
+            {
+                "node_id": 11,
+                "qualified_name": "app.auth.login",
+                "type": ["Function"],
+                "name": "login",
+                "docstring": "Authenticate a user and return a token.",
+                "start_line": 12,
+                "end_line": 32,
+                "path": "app/auth.py",
+                "signature": "login(username, password)",
+                "visibility": "public",
+                "module_qn": "app.auth",
+                "namespace": "app",
+                "symbol_kind": "function",
+                "pagerank": 0.88,
+                "community_id": 3,
+                "has_cycle": False,
+                "in_call_count": 5,
+                "out_call_count": 2,
+                "dead_code_score": 0.0,
+                "is_reachable": True,
+                "parameters": [],
+            }
+        ]
 
         result = await mcp_registry.semantic_search("auth flow", top_k=3)
 
         assert result.get("count") == 1
-        assert isinstance(result.get("results"), list)
+        rows = cast(list[dict[str, object]], result.get("results", []))
+        assert rows[0].get("path") == "app/auth.py"
+        assert rows[0].get("signature") == "login(username, password)"
+        node_meta = cast(dict[str, object], rows[0].get("node_meta", {}))
+        assert node_meta.get("pagerank") == 0.88
 
     async def test_query_code_graph_repairs_invalid_generated_query(
         self, mcp_registry: MCPToolsRegistry
@@ -1304,18 +1313,18 @@ class TestMCPNewTools:
         try:
             planner_called = {"count": 0}
 
-            async def fake_plan(goal: str, context: str | None = None) -> object:
+            async def fake_plan_task(
+                goal: str,
+                context: str | None = None,
+            ) -> dict[str, object]:
                 planner_called["count"] += 1
                 _ = goal, context
-                return SimpleNamespace(
-                    status="ok",
-                    content={
-                        "summary": "plan ok",
-                        "steps": ["step-1"],
-                        "risks": [],
-                        "tests": [],
-                    },
-                )
+                mcp_registry._session_state["plan_task_completed"] = True
+                return {
+                    "status": "ok",
+                    "planner_mode": "fast_deterministic",
+                    "recommended_tool_chain": ["query_code_graph"],
+                }
 
             async def fake_generate(_: str) -> str:
                 return (
@@ -1323,7 +1332,7 @@ class TestMCPNewTools:
                     "RETURN m.name AS name LIMIT 5"
                 )
 
-            _registry_any(mcp_registry)._planner_agent.plan = fake_plan
+            _registry_any(mcp_registry).plan_task = fake_plan_task
             _registry_any(mcp_registry).cypher_gen.generate = fake_generate
             mcp_registry._session_state["plan_task_completed"] = False
             mcp_registry._session_state["auto_plan_attempted"] = False
@@ -1340,8 +1349,7 @@ class TestMCPNewTools:
             assert result.get("error") is None
             assert planner_called["count"] == 1
             assert mcp_registry._session_state.get("plan_task_completed") is True
-            usage_rate = float(result.get("planner_usage_rate", 0.0))
-            assert usage_rate > 0.0
+            assert mcp_registry._session_state.get("auto_plan_attempted") is True
         finally:
             settings.MCP_AUTO_PLAN_ON_FIRST_QUERY = previous_auto_plan
 
@@ -1403,88 +1411,38 @@ class TestMCPNewTools:
     async def test_plan_task_returns_payload(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        captured_context: dict[str, str] = {"value": ""}
-
-        async def fake_plan(goal: str, context: str | None = None) -> object:
-            _ = goal
-            captured_context["value"] = context or ""
-            return SimpleNamespace(
-                status="ok",
-                content={
-                    "summary": "do it",
-                    "steps": ["step-1"],
-                    "risks": [],
-                    "tests": [],
-                },
-            )
-
-        _registry_any(mcp_registry)._planner_agent.plan = fake_plan
-
-        result = await mcp_registry.plan_task("demo", context="ctx")
+        result = await mcp_registry.plan_task(
+            "map auth flow and dependency chain",
+            context="focus on the login service",
+        )
 
         assert result.get("status") == "ok"
-        assert result.get("summary") == "do it"
-        assert result.get("memory_injection_mandatory") is True
-        assert "Memory pattern injection (mandatory):" in captured_context["value"]
-        assert "Chain success-rate candidates:" in captured_context["value"]
-        assert "Structured evidence packet:" in captured_context["value"]
-        evidence_packet = cast(dict[str, object], result.get("evidence_packet", {}))
-        assert "bundles" in evidence_packet
-        assert mcp_registry._current_execution_phase() == "validation"
+        assert result.get("planner_mode") == "fast_deterministic"
+        assert result.get("task_type") == "architecture"
+        assert "graph-first evidence" in str(result.get("summary", "")).lower()
+        recommended_tool_chain = cast(
+            list[str], result.get("recommended_tool_chain", [])
+        )
+        assert recommended_tool_chain[:2] == [
+            "query_code_graph",
+            "multi_hop_analysis",
+        ]
+        copy_paste_calls = cast(list[str], result.get("copy_paste_calls", []))
+        assert len(copy_paste_calls) >= 2
+        assert copy_paste_calls[0].startswith("query_code_graph(")
+        assert mcp_registry._session_state.get("plan_task_completed") is True
         assert mcp_registry.get_phase_gate_error("test_generate") is None
         readiness = await mcp_registry.get_execution_readiness()
         signals = cast(dict[str, object], readiness.get("signals", {}))
         memory_pattern_query_count = signals.get("memory_pattern_query_count", 0)
-        assert (
-            int(
-                memory_pattern_query_count
-                if isinstance(memory_pattern_query_count, int | float | str)
-                else 0
-            )
-            >= 1
-        )
+        assert int(memory_pattern_query_count) == 0
 
-    async def test_plan_task_keeps_gate_closed_when_planner_output_is_empty(
+    async def test_plan_task_requires_goal(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
-        async def fake_plan(goal: str, context: str | None = None) -> object:
-            _ = goal, context
-            return SimpleNamespace(
-                status="empty",
-                content={"summary": "", "steps": [], "risks": [], "tests": []},
-            )
+        result = await mcp_registry.plan_task("   ", context="ctx")
 
-        _registry_any(mcp_registry)._planner_agent.plan = fake_plan
-
-        result = await mcp_registry.plan_task("demo", context="ctx")
-
-        assert result.get("error") == "planner_empty_output"
-        assert mcp_registry._session_state.get("plan_task_completed") is False
-        assert "exact_next_calls" in result
-
-    async def test_plan_task_keeps_gate_closed_when_planner_output_has_only_risks(
-        self, mcp_registry: MCPToolsRegistry
-    ) -> None:
-        async def fake_plan(goal: str, context: str | None = None) -> object:
-            _ = goal, context
-            return SimpleNamespace(
-                status="ok",
-                content={
-                    "summary": "",
-                    "steps": [],
-                    "required_evidence": [],
-                    "recommended_tool_chain": [],
-                    "copy_paste_calls": [],
-                    "risks": ["be careful"],
-                    "tests": [],
-                },
-            )
-
-        _registry_any(mcp_registry)._planner_agent.plan = fake_plan
-
-        result = await mcp_registry.plan_task("demo", context="ctx")
-
-        assert result.get("error") == "planner_empty_output"
+        assert result.get("error") == "goal_required"
         assert mcp_registry._session_state.get("plan_task_completed") is False
 
     async def test_impact_graph_requires_target(

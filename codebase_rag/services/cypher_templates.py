@@ -29,8 +29,11 @@ class CypherTemplateBank:
             name="module_inventory",
             query=(
                 "MATCH (m:Module {project_name: $project_name}) "
-                "RETURN m.name AS module, m.path AS path "
-                "ORDER BY module LIMIT 50"
+                "RETURN m.name AS module, m.qualified_name AS qualified_name, m.path AS path, "
+                "coalesce(m.pagerank, 0.0) AS pagerank, "
+                "coalesce(m.community_id, -1) AS community_id, "
+                "coalesce(m.has_cycle, false) AS has_cycle "
+                "ORDER BY pagerank DESC, module LIMIT 50"
             ),
             phrases_any=(
                 "list modules",
@@ -41,15 +44,24 @@ class CypherTemplateBank:
             direct_threshold=0.7,
             prompt_hint=(
                 "For module inventory, prefer MATCH on Module with explicit "
-                "project_name scope and a compact RETURN of module/path."
+                "project_name scope and return module/path plus pagerank, community_id, and has_cycle."
             ),
         ),
         CypherTemplate(
             name="class_inventory",
             query=(
                 "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Class) "
-                "RETURN c.name AS class_name, c.qualified_name AS qualified_name, m.path AS module_path "
-                "ORDER BY class_name LIMIT 80"
+                "RETURN c.name AS class_name, c.qualified_name AS qualified_name, "
+                "coalesce(c.path, m.path, '') AS path, m.path AS module_path, "
+                "coalesce(c.visibility, '') AS visibility, "
+                "coalesce(c.start_line, 0) AS start_line, coalesce(c.end_line, 0) AS end_line, "
+                "coalesce(c.module_qn, m.qualified_name, '') AS module_qn, "
+                "coalesce(c.signature, c.signature_lite, '') AS signature, "
+                "coalesce(c.docstring, '') AS docstring, "
+                "coalesce(c.pagerank, 0.0) AS pagerank, "
+                "coalesce(c.community_id, -1) AS community_id, "
+                "coalesce(c.has_cycle, false) AS has_cycle "
+                "ORDER BY pagerank DESC, class_name LIMIT 80"
             ),
             phrases_any=(
                 "list classes",
@@ -60,7 +72,7 @@ class CypherTemplateBank:
             direct_threshold=0.7,
             prompt_hint=(
                 "For class inventory, traverse Module-[:DEFINES]->Class and return "
-                "class_name, qualified_name, and module_path."
+                "qualified_name, path, visibility, line range, docstring, pagerank, community_id, and has_cycle."
             ),
         ),
         CypherTemplate(
@@ -68,8 +80,21 @@ class CypherTemplateBank:
             query=(
                 "MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(f) "
                 "WHERE f:Function OR f:Method "
-                "RETURN f.name AS symbol, f.qualified_name AS qualified_name, labels(f) AS type, m.path AS module_path "
-                "ORDER BY symbol LIMIT 100"
+                "RETURN f.name AS symbol, f.qualified_name AS qualified_name, labels(f) AS type, "
+                "coalesce(f.path, m.path, '') AS path, m.path AS module_path, "
+                "coalesce(f.signature, f.signature_lite, '') AS signature, "
+                "coalesce(f.visibility, '') AS visibility, "
+                "coalesce(f.start_line, 0) AS start_line, coalesce(f.end_line, 0) AS end_line, "
+                "coalesce(f.module_qn, m.qualified_name, '') AS module_qn, "
+                "coalesce(f.docstring, '') AS docstring, "
+                "coalesce(f.pagerank, 0.0) AS pagerank, "
+                "coalesce(f.community_id, -1) AS community_id, "
+                "coalesce(f.has_cycle, false) AS has_cycle, "
+                "coalesce(f.in_call_count, 0) AS in_call_count, "
+                "coalesce(f.out_call_count, 0) AS out_call_count, "
+                "coalesce(f.dead_code_score, 0.0) AS dead_code_score, "
+                "coalesce(f.is_reachable, true) AS is_reachable "
+                "ORDER BY pagerank DESC, in_call_count DESC, symbol LIMIT 100"
             ),
             phrases_any=(
                 "list functions",
@@ -80,16 +105,22 @@ class CypherTemplateBank:
             direct_threshold=0.7,
             prompt_hint=(
                 "For symbol inventory, keep project_name scope and return symbol, "
-                "qualified_name, type labels, and module_path."
+                "qualified_name, path, signature, docstring, pagerank, call counts, dead_code_score, and reachability."
             ),
         ),
         CypherTemplate(
             name="dependency_hotspots",
             query=(
                 "MATCH (m:Module {project_name: $project_name}) "
-                "OPTIONAL MATCH (m)-[r:CALLS|IMPORTS]->() "
-                "RETURN m.name AS module, m.path AS path, count(r) AS outgoing_edges "
-                "ORDER BY outgoing_edges DESC, module LIMIT 25"
+                "OPTIONAL MATCH (m)-[out_r:CALLS|IMPORTS]->() "
+                "WITH m, count(DISTINCT out_r) AS outgoing_edges "
+                "OPTIONAL MATCH ()-[in_r:CALLS|IMPORTS]->(m) "
+                "RETURN m.name AS module, m.qualified_name AS qualified_name, m.path AS path, "
+                "outgoing_edges, count(DISTINCT in_r) AS incoming_edges, "
+                "coalesce(m.pagerank, 0.0) AS pagerank, "
+                "coalesce(m.community_id, -1) AS community_id, "
+                "coalesce(m.has_cycle, false) AS has_cycle "
+                "ORDER BY outgoing_edges DESC, incoming_edges DESC, pagerank DESC, module LIMIT 25"
             ),
             phrases_any=(
                 "dependency hotspots",
@@ -99,7 +130,7 @@ class CypherTemplateBank:
             ),
             direct_threshold=0.7,
             prompt_hint=(
-                "For dependency hotspots, count CALLS/IMPORTS edges per Module and sort descending."
+                "For dependency hotspots, count CALLS/IMPORTS edges per Module and return outgoing_edges, incoming_edges, pagerank, community_id, and has_cycle."
             ),
         ),
         CypherTemplate(

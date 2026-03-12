@@ -26,6 +26,9 @@ class DocumentationQualityModule(AnalysisModule):
                     cs.NodeLabel.CLASS.value,
                 )
             )
+            and context.runner._is_runtime_source_path(
+                str(node.properties.get(cs.KEY_PATH) or "")
+            )
         ]
         total = len(symbols)
         missing: list[dict[str, object]] = []
@@ -85,6 +88,8 @@ class DocumentationQualityModule(AnalysisModule):
         paths = list({path for path in context.module_path_map.values() if path})
         results: list[dict[str, object]] = []
         for path in paths[:200]:
+            if not context.runner._is_runtime_source_path(path):
+                continue
             file_path = context.runner.repo_path / path
             if not file_path.exists():
                 continue

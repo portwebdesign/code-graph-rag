@@ -166,8 +166,12 @@ MCP_READ_FILE = (
 MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
 
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
+MCP_GET_SCHEMA_OVERVIEW = (
+    "Return a compact, project-scoped graph schema bootstrap summary with relation patterns, "
+    "label counts, key properties, and important labels for the current repository."
+)
 
-MCP_PARAM_PROJECT_NAME = "Name of the project to delete (e.g., 'my-project')"
+MCP_PARAM_PROJECT_NAME = "Name of the indexed project (e.g., 'abey' or 'my-project')."
 MCP_PARAM_CONFIRM = "Must be true to confirm the wipe operation"
 MCP_PARAM_USER_REQUESTED = "Must be true only when the user explicitly requested this potentially destructive operation"
 MCP_PARAM_DRIFT_CONFIRMED = (
@@ -423,6 +427,7 @@ MCP_PARAM_DEBOUNCE_SECONDS = (
 MCP_TOOLS: dict[MCPToolName, str] = {
     MCPToolName.LIST_PROJECTS: MCP_LIST_PROJECTS,
     MCPToolName.SELECT_ACTIVE_PROJECT: MCP_SELECT_ACTIVE_PROJECT,
+    MCPToolName.GET_SCHEMA_OVERVIEW: MCP_GET_SCHEMA_OVERVIEW,
     MCPToolName.DETECT_PROJECT_DRIFT: MCP_DETECT_PROJECT_DRIFT,
     MCPToolName.DELETE_PROJECT: MCP_DELETE_PROJECT,
     MCPToolName.WIPE_DATABASE: MCP_WIPE_DATABASE,

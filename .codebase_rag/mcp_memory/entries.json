@@ -1,5 +1,1720 @@
 [
   {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773295805}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773295805,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773295805": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"abey\", \"query\": \"What is in the src/api/routes/legacy folder and is it used anywhere?\", \"rows\": 80, \"digest\": \":abey..pre-commit-config; :abey.docker-compose.falkordb.override; :abey.docker-compose.override; :abey.docker-compose.prod; :abey.docker-compose; :abey.frontend.index; :abey.frontend.package-lock; :abey.frontend.package; :abey.frontend.playwright.config; :abey.frontend.tsconfig\", \"query_digest_id\": \"qd_1773295745046_923523\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1773295745,
+    "vector": {
+      "kind": 0.090909,
+      "graph_query_digest": 0.090909,
+      "project": 0.090909,
+      "abey": 1.0,
+      "query": 0.090909,
+      "what": 0.090909,
+      "is": 0.181818,
+      "in": 0.090909,
+      "the": 0.090909,
+      "src": 0.090909,
+      "api": 0.090909,
+      "routes": 0.090909,
+      "legacy": 0.090909,
+      "folder": 0.090909,
+      "and": 0.090909,
+      "it": 0.090909,
+      "used": 0.090909,
+      "anywhere": 0.090909,
+      "rows": 0.090909,
+      "80": 0.090909,
+      "digest": 0.090909,
+      "pre": 0.090909,
+      "commit": 0.090909,
+      "config": 0.181818,
+      "docker": 0.363636,
+      "compose": 0.363636,
+      "falkordb": 0.090909,
+      "override": 0.181818,
+      "prod": 0.090909,
+      "frontend": 0.454545,
+      "index": 0.090909,
+      "package": 0.181818,
+      "lock": 0.090909,
+      "playwright": 0.090909,
+      "tsconfig": 0.090909,
+      "query_digest_id": 0.090909,
+      "qd_1773295745046_923523": 0.090909
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"abey\", \"query\": \"Which files call functions in src/api/routers or src/api/routes folders? Show me the dependencies between these folders\", \"rows\": 80, \"digest\": \":unknown; :unknown; :unknown; :unknown; :unknown; :unknown; :unknown; :unknown; :unknown; :unknown\", \"query_digest_id\": \"qd_1773295685814_999621\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1773295685,
+    "vector": {
+      "kind": 0.1,
+      "graph_query_digest": 0.1,
+      "project": 0.1,
+      "abey": 0.1,
+      "query": 0.1,
+      "which": 0.1,
+      "files": 0.1,
+      "call": 0.1,
+      "functions": 0.1,
+      "in": 0.1,
+      "src": 0.2,
+      "api": 0.2,
+      "routers": 0.1,
+      "or": 0.1,
+      "routes": 0.1,
+      "folders": 0.2,
+      "show": 0.1,
+      "me": 0.1,
+      "the": 0.1,
+      "dependencies": 0.1,
+      "between": 0.1,
+      "these": 0.1,
+      "rows": 0.1,
+      "80": 0.1,
+      "digest": 0.1,
+      "unknown": 1.0,
+      "query_digest_id": 0.1,
+      "qd_1773295685814_999621": 0.1
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must use parameterized project scope with $project_name for active project 'abey'.\", \"details\": {\"write\": false}, \"timestamp\": 1773295653}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1773295653,
+    "vector": {
+      "action": 0.5,
+      "run_cypher": 1.0,
+      "decision": 0.5,
+      "deny": 0.5,
+      "reason": 0.5,
+      "rejected": 0.5,
+      "query": 0.5,
+      "must": 0.5,
+      "use": 0.5,
+      "parameterized": 0.5,
+      "project": 1.0,
+      "scope": 0.5,
+      "with": 0.5,
+      "project_name": 0.5,
+      "for": 0.5,
+      "active": 0.5,
+      "abey": 0.5,
+      "details": 0.5,
+      "write": 0.5,
+      "false": 0.5,
+      "timestamp": 0.5,
+      "1773295653": 0.5
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must use parameterized project scope with $project_name for active project 'abey'.\", \"details\": {\"write\": false}, \"timestamp\": 1773295619}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1773295619,
+    "vector": {
+      "action": 0.5,
+      "run_cypher": 1.0,
+      "decision": 0.5,
+      "deny": 0.5,
+      "reason": 0.5,
+      "rejected": 0.5,
+      "query": 0.5,
+      "must": 0.5,
+      "use": 0.5,
+      "parameterized": 0.5,
+      "project": 1.0,
+      "scope": 0.5,
+      "with": 0.5,
+      "project_name": 0.5,
+      "for": 0.5,
+      "active": 0.5,
+      "abey": 0.5,
+      "details": 0.5,
+      "write": 0.5,
+      "false": 0.5,
+      "timestamp": 0.5,
+      "1773295619": 0.5
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773295538}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773295538,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773295538": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"abey\", \"query\": \"Show me all files and modules in src/api/routers and src/api/routes folders, and their dependencies\", \"rows\": 80, \"digest\": \":abey..pre-commit-config; :abey.docker-compose.falkordb.override; :abey.docker-compose.override; :abey.docker-compose.prod; :abey.docker-compose; :abey.frontend.index; :abey.frontend.package-lock; :abey.frontend.package; :abey.frontend.playwright.config; :abey.frontend.tsconfig\", \"query_digest_id\": \"qd_1773295529576_65033\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1773295529,
+    "vector": {
+      "kind": 0.090909,
+      "graph_query_digest": 0.090909,
+      "project": 0.090909,
+      "abey": 1.0,
+      "query": 0.090909,
+      "show": 0.090909,
+      "me": 0.090909,
+      "all": 0.090909,
+      "files": 0.090909,
+      "and": 0.272727,
+      "modules": 0.090909,
+      "in": 0.090909,
+      "src": 0.181818,
+      "api": 0.181818,
+      "routers": 0.090909,
+      "routes": 0.090909,
+      "folders": 0.090909,
+      "their": 0.090909,
+      "dependencies": 0.090909,
+      "rows": 0.090909,
+      "80": 0.090909,
+      "digest": 0.090909,
+      "pre": 0.090909,
+      "commit": 0.090909,
+      "config": 0.181818,
+      "docker": 0.363636,
+      "compose": 0.363636,
+      "falkordb": 0.090909,
+      "override": 0.181818,
+      "prod": 0.090909,
+      "frontend": 0.454545,
+      "index": 0.090909,
+      "package": 0.181818,
+      "lock": 0.090909,
+      "playwright": 0.090909,
+      "tsconfig": 0.090909,
+      "query_digest_id": 0.090909,
+      "qd_1773295529576_65033": 0.090909
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"abey\", \"query\": \"Summarize the main modules, entry points, and dependency hotspots in abey\", \"rows\": 25, \"digest\": \":abey.src.workers.schema_sync.governance; :abey.src.api.lifecycle; :abey.src.api.routers.system; :abey.src.tools.seed.master_data; :abey.tests.integration.test_api_write_outbox_flow; :abey.src.api.services.graph_read_service; :abey.src.api.routes.v1.documents; :abey.src.tools.parity.generate; :abey.src.tools.benchmarks.incentive_reads; :abey.src.api.read_governance\", \"query_digest_id\": \"qd_1773295514483_464723\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1773295514,
+    "vector": {
+      "kind": 0.083333,
+      "graph_query_digest": 0.083333,
+      "project": 0.083333,
+      "abey": 1.0,
+      "query": 0.083333,
+      "summarize": 0.083333,
+      "the": 0.083333,
+      "main": 0.083333,
+      "modules": 0.083333,
+      "entry": 0.083333,
+      "points": 0.083333,
+      "and": 0.083333,
+      "dependency": 0.083333,
+      "hotspots": 0.083333,
+      "in": 0.083333,
+      "rows": 0.083333,
+      "25": 0.083333,
+      "digest": 0.083333,
+      "src": 0.75,
+      "workers": 0.083333,
+      "schema_sync": 0.083333,
+      "governance": 0.083333,
+      "api": 0.416667,
+      "lifecycle": 0.083333,
+      "routers": 0.083333,
+      "system": 0.083333,
+      "tools": 0.25,
+      "seed": 0.083333,
+      "master_data": 0.083333,
+      "tests": 0.083333,
+      "integration": 0.083333,
+      "test_api_write_outbox_flow": 0.083333,
+      "services": 0.083333,
+      "graph_read_service": 0.083333,
+      "routes": 0.083333,
+      "v1": 0.083333,
+      "documents": 0.083333,
+      "parity": 0.083333,
+      "generate": 0.083333,
+      "benchmarks": 0.083333,
+      "incentive_reads": 0.083333,
+      "read_governance": 0.083333,
+      "query_digest_id": 0.083333,
+      "qd_1773295514483_464723": 0.083333
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773295243}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773295243,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773295243": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294707}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294707,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294707": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294678}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294678,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294678": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294651}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294651,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294651": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294627}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294627,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294627": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294605}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294605,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294605": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294582}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294582,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294582": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294558}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294558,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294558": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294529}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294529,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294529": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294482}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294482,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294482": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773294437}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773294437,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773294437": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773291011}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773291011,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773291011": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290997}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290997,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290997": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290985}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290985,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290985": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290976}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290976,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290976": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290965}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290965,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290965": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290948}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290948,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290948": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290931}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290931,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290931": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290909}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290909,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290909": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290721}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290721,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290721": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290708}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290708,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290708": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290691}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290691,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290691": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290681}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290681,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290681": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"kind\": \"graph_query_digest\", \"project\": \"abey\", \"query\": \"What is the governance.py module in src/workers/schema_sync and what does it do?\", \"rows\": 80, \"digest\": \":abey..pre-commit-config; :abey.docker-compose.falkordb.override; :abey.docker-compose.override; :abey.docker-compose.prod; :abey.docker-compose; :abey.frontend.index; :abey.frontend.package-lock; :abey.frontend.package; :abey.frontend.playwright.config; :abey.frontend.tsconfig\", \"query_digest_id\": \"qd_1773290673190_107385\"}",
+    "tags": [
+      "graph",
+      "query",
+      "evidence",
+      "success"
+    ],
+    "timestamp": 1773290673,
+    "vector": {
+      "kind": 0.090909,
+      "graph_query_digest": 0.090909,
+      "project": 0.090909,
+      "abey": 1.0,
+      "query": 0.090909,
+      "what": 0.181818,
+      "is": 0.090909,
+      "the": 0.090909,
+      "governance": 0.090909,
+      "py": 0.090909,
+      "module": 0.090909,
+      "in": 0.090909,
+      "src": 0.090909,
+      "workers": 0.090909,
+      "schema_sync": 0.090909,
+      "and": 0.090909,
+      "does": 0.090909,
+      "it": 0.090909,
+      "do": 0.090909,
+      "rows": 0.090909,
+      "80": 0.090909,
+      "digest": 0.090909,
+      "pre": 0.090909,
+      "commit": 0.090909,
+      "config": 0.181818,
+      "docker": 0.363636,
+      "compose": 0.363636,
+      "falkordb": 0.090909,
+      "override": 0.181818,
+      "prod": 0.090909,
+      "frontend": 0.454545,
+      "index": 0.090909,
+      "package": 0.181818,
+      "lock": 0.090909,
+      "playwright": 0.090909,
+      "tsconfig": 0.090909,
+      "query_digest_id": 0.090909,
+      "qd_1773290673190_107385": 0.090909
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290657}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290657,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290657": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290649}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290649,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290649": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290641}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290641,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290641": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290632}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290632,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290632": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290621}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290621,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290621": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290610}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290610,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290610": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290600}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290600,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290600": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290588}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290588,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290588": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290578}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290578,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290578": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290462}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290462,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290462": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290455}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290455,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290455": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290446}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290446,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290446": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290439}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290439,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290439": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290432}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290432,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290432": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290424}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290424,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290424": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773290416}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773290416,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773290416": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284789}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284789,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284789": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must use parameterized project scope with $project_name for active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1773284736}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1773284736,
+    "vector": {
+      "action": 0.5,
+      "run_cypher": 1.0,
+      "decision": 0.5,
+      "deny": 0.5,
+      "reason": 0.5,
+      "rejected": 0.5,
+      "query": 0.5,
+      "must": 0.5,
+      "use": 0.5,
+      "parameterized": 0.5,
+      "project": 1.0,
+      "scope": 0.5,
+      "with": 0.5,
+      "project_name": 0.5,
+      "for": 0.5,
+      "active": 0.5,
+      "code": 0.5,
+      "graph": 0.5,
+      "rag": 0.5,
+      "details": 0.5,
+      "write": 0.5,
+      "false": 0.5,
+      "timestamp": 0.5,
+      "1773284736": 0.5
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284729}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284729,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284729": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284720}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284720,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284720": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284704}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284704,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284704": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284690}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284690,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284690": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284678}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284678,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284678": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284670}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284670,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284670": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284655}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284655,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284655": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284636}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284636,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284636": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284631}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284631,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284631": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"deny\", \"reason\": \"run_cypher rejected. Query must use parameterized project scope with $project_name for active project 'code-graph-rag'.\", \"details\": {\"write\": false}, \"timestamp\": 1773284624}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "deny"
+    ],
+    "timestamp": 1773284624,
+    "vector": {
+      "action": 0.5,
+      "run_cypher": 1.0,
+      "decision": 0.5,
+      "deny": 0.5,
+      "reason": 0.5,
+      "rejected": 0.5,
+      "query": 0.5,
+      "must": 0.5,
+      "use": 0.5,
+      "parameterized": 0.5,
+      "project": 1.0,
+      "scope": 0.5,
+      "with": 0.5,
+      "project_name": 0.5,
+      "for": 0.5,
+      "active": 0.5,
+      "code": 0.5,
+      "graph": 0.5,
+      "rag": 0.5,
+      "details": 0.5,
+      "write": 0.5,
+      "false": 0.5,
+      "timestamp": 0.5,
+      "1773284624": 0.5
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284618}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284618,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284618": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
+    "text": "{\"action\": \"run_cypher\", \"decision\": \"allow\", \"reason\": \"policy_validated\", \"details\": {\"write\": false, \"write_impact\": null}, \"timestamp\": 1773284588}",
+    "tags": [
+      "policy",
+      "run_cypher",
+      "allow"
+    ],
+    "timestamp": 1773284588,
+    "vector": {
+      "action": 1.0,
+      "run_cypher": 1.0,
+      "decision": 1.0,
+      "allow": 1.0,
+      "reason": 1.0,
+      "policy_validated": 1.0,
+      "details": 1.0,
+      "write": 1.0,
+      "false": 1.0,
+      "write_impact": 1.0,
+      "null": 1.0,
+      "timestamp": 1.0,
+      "1773284588": 1.0
+    },
+    "chain_signature": ""
+  },
+  {
     "text": "{\"action\": \"task54_parser_multihop_report\", \"result\": \"partial_success\", \"issues\": [\"planner timeout intermittent\"], \"replan_required\": true, \"reasons\": [\"result=partial_success\"], \"timestamp\": 1772416388}",
     "tags": [
       "feedback",

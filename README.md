@@ -567,6 +567,7 @@ claude mcp add --transport stdio code-graph-rag \
 |----|-----------|
 | `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. MANDATORY START: call this first in a fresh session, then call select_active_project. |
 | `select_active_project` | Preflight tool to set/confirm the active repository context and return project-scoped readiness info. Optionally accepts repo_path to switch active root and client_profile to tailor MCP behavior for VS Code, Cline, Copilot, Ollama, or HTTP clients, then reports active project, indexed status, project-scoped graph counts, latest analysis timestamp, and enforced safety policies. MANDATORY SECOND STEP after list_projects before using non-exempt tools. |
+| `get_schema_overview` | Return a compact, project-scoped graph schema bootstrap summary with relation patterns, label counts, key properties, and important labels for the current repository. |
 | `detect_project_drift` | Detect FS↔Graph drift for a repository/project before re-index decisions. Reports filesystem file counts, graph module/file counts, and drift signals. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |

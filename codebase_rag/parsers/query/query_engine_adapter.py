@@ -262,13 +262,13 @@ _QUERY_NAME_MAP: dict[cs.SupportedLanguage, dict[str, str | list[str]]] = {
         "imports": "import_script",
     },
     cs.SupportedLanguage.YAML: {
-        "functions": "yaml_document",
+        "functions": [],
         "classes": "mapping_pair",
         "calls": ["block_sequence", "flow_sequence"],
         "imports": "parent_child_key_edge",
     },
     cs.SupportedLanguage.JSON: {
-        "functions": "json_document",
+        "functions": [],
         "classes": "json_object",
         "calls": "json_array",
         "imports": "key_value_pair",

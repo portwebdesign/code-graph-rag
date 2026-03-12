@@ -44,6 +44,8 @@ class ComplexityMixin:
             end_line = int(str(node.properties.get(cs.KEY_END_LINE) or 0))
             if not path or not start_line or not end_line:
                 continue
+            if not self._is_runtime_source_path(path):
+                continue
 
             source = extract_source_lines(self.repo_path / path, start_line, end_line)
             if not source:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import keyword
 import os
 import re
+from pathlib import Path
 
 from codebase_rag.core import constants as cs
 
@@ -11,6 +12,32 @@ from ..types import NodeRecord
 
 
 class StaticChecksMixin:
+    RUNTIME_SOURCE_EXTENSIONS: set[str] = {
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".java",
+        ".kt",
+        ".kts",
+        ".go",
+        ".rs",
+        ".rb",
+        ".php",
+        ".cs",
+        ".cpp",
+        ".cc",
+        ".cxx",
+        ".c",
+        ".h",
+        ".hpp",
+        ".hh",
+        ".swift",
+        ".scala",
+        ".lua",
+    }
+
     @staticmethod
     def _should_skip_static_analysis_path(path: str) -> bool:
         normalized = path.replace("\\", "/").strip("/").lower()
@@ -41,6 +68,13 @@ class StaticChecksMixin:
         if any(part in skip_parts for part in parts):
             return True
         return normalized.endswith((".min.js", ".min.css"))
+
+    @classmethod
+    def _is_runtime_source_path(cls, path: str | None) -> bool:
+        normalized = str(path or "").replace("\\", "/").strip()
+        if not normalized:
+            return False
+        return Path(normalized).suffix.lower() in cls.RUNTIME_SOURCE_EXTENSIONS
 
     @staticmethod
     def _is_likely_ignored_variable(name: str) -> bool:
@@ -80,6 +114,24 @@ class StaticChecksMixin:
         if re.search(r"\?.*:", line):
             return False
         return True
+
+    @staticmethod
+    def _has_unclosed_delimiters(line: str) -> bool:
+        stripped = line.strip()
+        if not stripped:
+            return False
+        if stripped.endswith(("(", "[", "{", "\\")):
+            return True
+
+        counts = {"(": 0, "[": 0, "{": 0}
+        closing = {")": "(", "]": "[", "}": "{"}
+        for char in line:
+            if char in counts:
+                counts[char] += 1
+            elif char in closing:
+                opener = closing[char]
+                counts[opener] = max(0, counts[opener] - 1)
+        return any(count > 0 for count in counts.values())
 
     def _unused_variables(
         self: AnalysisRunnerProtocol,
@@ -146,6 +198,8 @@ class StaticChecksMixin:
             for idx, line in enumerate(lines[:-1]):
                 if not self._is_control_transfer_line(line):
                     continue
+                if self._has_unclosed_delimiters(line):
+                    continue
                 next_idx, next_line_raw = self._next_executable_line(lines, idx)
                 if next_idx is None or next_line_raw is None:
                     continue
@@ -186,6 +240,9 @@ class StaticChecksMixin:
                 and cs.NodeLabel.METHOD.value not in node.labels
             ):
                 continue
+            path = str(node.properties.get(cs.KEY_PATH) or "")
+            if not self._is_runtime_source_path(path):
+                continue
             start_line = int(str(node.properties.get(cs.KEY_START_LINE) or 0))
             end_line = int(str(node.properties.get(cs.KEY_END_LINE) or 0))
             if not start_line or not end_line or end_line < start_line:
@@ -195,7 +252,7 @@ class StaticChecksMixin:
                 candidates.append(
                     {
                         "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
-                        "path": node.properties.get(cs.KEY_PATH),
+                        "path": path,
                         "start_line": start_line,
                         "end_line": end_line,
                         "lines_of_code": loc,

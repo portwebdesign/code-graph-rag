@@ -49,6 +49,28 @@ class DummyIngestor:
         return None
 
 
+class DecoratedEntryPointIngestor:
+    def __init__(self) -> None:
+        self.captured_query = ""
+        self.captured_params: dict[str, Any] | None = None
+
+    def fetch_all(self, query: str, params: dict[str, Any] | None = None):
+        self.captured_query = query
+        self.captured_params = params
+        if "total_functions" in query.lower():
+            return [{"total_functions": 1}]
+        return []
+
+    def ensure_node_batch(self, label: str, props: dict[str, Any]) -> None:
+        return None
+
+    def ensure_relationship_batch(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def flush_all(self) -> None:
+        return None
+
+
 def test_dead_code_except_test_report_created(tmp_path: Path) -> None:
     runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
     result = runner._dead_code_report_db(module_paths=None)
@@ -140,3 +162,19 @@ def test_dead_code_except_test_report_contains_graph_confidence_and_risk(
     assert "risk_score" in symbol
     assert "graph_confidence" in symbol
     assert symbol["graph_confidence"]["call_in_degree"] == 0
+
+
+def test_dead_code_report_db_query_excludes_decorated_entry_points(
+    tmp_path: Path,
+) -> None:
+    ingestor = DecoratedEntryPointIngestor()
+    runner = AnalysisRunner(cast(IngestorProtocol, ingestor), tmp_path)
+
+    runner._dead_code_report_db(module_paths=None)
+
+    assert "coalesce(f.is_entry_point, false) = false" in ingestor.captured_query
+    assert "[:DECORATES|ANNOTATES]" in ingestor.captured_query
+    assert (
+        "HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE"
+        in ingestor.captured_query
+    )

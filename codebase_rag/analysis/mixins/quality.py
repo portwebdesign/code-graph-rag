@@ -104,9 +104,26 @@ class QualityMixin:
         endpoint_nodes = [
             node for node in nodes if cs.NodeLabel.ENDPOINT.value in node.labels
         ]
-        public_nodes = exported_nodes + [
-            node for node in endpoint_nodes if node not in exported_nodes
+        entrypoint_nodes = [
+            node
+            for node in nodes
+            if (
+                cs.NodeLabel.FUNCTION.value in node.labels
+                or cs.NodeLabel.METHOD.value in node.labels
+            )
+            and self._is_runtime_source_path(
+                str(node.properties.get(cs.KEY_PATH) or "")
+            )
+            and bool(node.properties.get(cs.KEY_IS_ENTRY_POINT))
         ]
+
+        public_nodes: list[NodeRecord] = []
+        seen_ids: set[int] = set()
+        for node in [*exported_nodes, *endpoint_nodes, *entrypoint_nodes]:
+            if node.node_id in seen_ids:
+                continue
+            seen_ids.add(node.node_id)
+            public_nodes.append(node)
 
         symbols = [
             {

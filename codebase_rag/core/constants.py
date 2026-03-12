@@ -2772,6 +2772,7 @@ class MCPToolName(StrEnum):
     WIPE_DATABASE = "wipe_database"
     INDEX_REPOSITORY = "index_repository"
     SYNC_GRAPH_UPDATES = "sync_graph_updates"
+    GET_SCHEMA_OVERVIEW = "get_schema_overview"
     QUERY_CODE_GRAPH = "query_code_graph"
     MULTI_HOP_ANALYSIS = "multi_hop_analysis"
     SEMANTIC_SEARCH = "semantic_search"

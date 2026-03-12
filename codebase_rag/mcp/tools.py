@@ -47,6 +47,7 @@ from codebase_rag.exporters.mermaid_exporter import MermaidExporter
 from codebase_rag.graph_db.cypher_queries import (
     CYPHER_GET_LATEST_ANALYSIS_REPORT,
     CYPHER_GET_LATEST_METRIC,
+    build_context_nodes_query,
 )
 from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure import tool_errors as te
@@ -78,6 +79,21 @@ from codebase_rag.tools.semantic_search import (
     create_semantic_search_tool,
     get_function_source_code,
     semantic_code_search,
+)
+
+_CORE_MCP_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        cs.MCPToolName.LIST_PROJECTS,
+        cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+        cs.MCPToolName.GET_SCHEMA_OVERVIEW,
+        cs.MCPToolName.QUERY_CODE_GRAPH,
+        cs.MCPToolName.MULTI_HOP_ANALYSIS,
+        cs.MCPToolName.IMPACT_GRAPH,
+        cs.MCPToolName.RUN_CYPHER,
+        cs.MCPToolName.SEMANTIC_SEARCH,
+        cs.MCPToolName.PLAN_TASK,
+        cs.MCPToolName.LIST_DIRECTORY,
+    }
 )
 
 
@@ -512,6 +528,10 @@ def _build_tool_metadata_catalog(
             input_schema=MCPInputSchema(
                 type=cs.MCPSchemaType.OBJECT,
                 properties={
+                    cs.MCPParamName.PROJECT_NAME: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_PROJECT_NAME,
+                    ),
                     cs.MCPParamName.REPO_PATH: MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
                         description=td.MCP_PARAM_REPO_PATH,
@@ -630,6 +650,30 @@ def _build_tool_metadata_catalog(
                 required=[cs.MCPParamName.USER_REQUESTED, cs.MCPParamName.REASON],
             ),
             handler=registry.sync_graph_updates,
+            returns_json=True,
+        ),
+        cs.MCPToolName.GET_SCHEMA_OVERVIEW: ToolMetadata(
+            name=cs.MCPToolName.GET_SCHEMA_OVERVIEW,
+            description=td.MCP_TOOLS[cs.MCPToolName.GET_SCHEMA_OVERVIEW],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    "scope": MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=(
+                            "Schema focus: 'global' (default), 'api', 'impact', or 'data'."
+                        ),
+                        default="global",
+                    ),
+                    "refresh": MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.BOOLEAN,
+                        description="When true, bypass the session cache and rebuild the schema overview.",
+                        default=False,
+                    ),
+                },
+                required=[],
+            ),
+            handler=registry.get_schema_overview,
             returns_json=True,
         ),
         cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
@@ -860,7 +904,7 @@ def _build_tool_metadata_catalog(
                         default=cs.MCP_DEFAULT_DIRECTORY,
                     ),
                 },
-                required=[cs.MCPParamName.REPO_PATH],
+                required=[],
             ),
             handler=registry.list_directory,
             returns_json=False,
@@ -1557,6 +1601,7 @@ _TOOL_DOMAIN_GROUPS: dict[str, tuple[str, ...]] = {
         cs.MCPToolName.GET_DEPENDENCY_STATS,
     ),
     "retrieval": (
+        cs.MCPToolName.GET_SCHEMA_OVERVIEW,
         cs.MCPToolName.SEMANTIC_SEARCH,
         cs.MCPToolName.CONTEXT7_DOCS,
         cs.MCPToolName.GET_FUNCTION_SOURCE,
@@ -1689,6 +1734,7 @@ class MCPToolsRegistry:
     _EXPLORATION_POLICY_UCB_BONUS = 0.2
     _TOOL_TIER_MAP = {
         cs.MCPToolName.LIST_PROJECTS: "tier1",
+        cs.MCPToolName.GET_SCHEMA_OVERVIEW: "tier1",
         cs.MCPToolName.QUERY_CODE_GRAPH: "tier1",
         cs.MCPToolName.MULTI_HOP_ANALYSIS: "tier1",
         cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL: "tier1",
@@ -1851,6 +1897,12 @@ class MCPToolsRegistry:
     def _tool_tier(cls, tool_name: str) -> str:
         return str(cls._TOOL_TIER_MAP.get(tool_name, "unknown"))
 
+    def _enabled_tool_names(self) -> set[str]:
+        toolset = str(settings.MCP_TOOLSET).strip().lower()
+        if toolset == "extended":
+            return set(self._tools.keys())
+        return set(_CORE_MCP_TOOL_NAMES)
+
     @classmethod
     def _normalize_client_profile_value(cls, client_profile: str | None) -> str:
         raw = str(client_profile or "").strip().lower()
@@ -1985,6 +2037,9 @@ class MCPToolsRegistry:
         }
 
     def _visible_tool_names(self, *, allow_phase_bypass: bool = False) -> set[str]:
+        enabled = self._enabled_tool_names()
+        if not bool(settings.MCP_ENABLE_VISIBILITY_GATES):
+            return enabled
         phase = self._current_execution_phase()
         visible: set[str] = {
             cs.MCPToolName.LIST_PROJECTS,
@@ -2094,7 +2149,7 @@ class MCPToolsRegistry:
         if plan_done or graph_evidence > 0 or code_evidence > 0:
             visible.add(cs.MCPToolName.MEMORY_ADD)
 
-        return visible
+        return visible & enabled
 
     def _staged_tool_visibility_contract(self) -> dict[str, object]:
         visible = sorted(self._visible_tool_names())
@@ -2217,6 +2272,8 @@ class MCPToolsRegistry:
         tool_name: str,
         arguments: dict[str, object] | None,
     ) -> dict[str, object] | None:
+        if not bool(settings.MCP_ENABLE_VISIBILITY_GATES):
+            return None
         visible_names = self._visible_tool_names()
         if tool_name in visible_names or self._is_preflight_exempt_tool(tool_name):
             return None
@@ -2329,6 +2386,8 @@ class MCPToolsRegistry:
         }
 
     def get_phase_gate_error(self, tool_name: str) -> str | None:
+        if not bool(settings.MCP_ENABLE_PHASE_GATES):
+            return None
         if tool_name in self._PHASE_EXEMPT_TOOLS:
             return None
         phase = self._current_execution_phase()
@@ -2623,10 +2682,10 @@ class MCPToolsRegistry:
 
         self.parsers, self.queries = load_parsers()
 
-        self.code_retriever = CodeRetriever(project_root, ingestor)
-        self.file_editor = FileEditor(project_root=project_root)
-        self.file_reader = FileReader(project_root=project_root)
-        self.file_writer = FileWriter(project_root=project_root)
+        self.code_retriever: CodeRetriever | None = None
+        self.file_editor: FileEditor | None = None
+        self.file_reader: FileReader | None = None
+        self.file_writer: FileWriter | None = None
         self.directory_lister = DirectoryLister(project_root=project_root)
 
         self._query_tool = create_query_tool(
@@ -2635,10 +2694,10 @@ class MCPToolsRegistry:
             console=None,
             render_output=False,
         )
-        self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
-        self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
-        self._file_reader_tool = create_file_reader_tool(file_reader=self.file_reader)
-        self._file_writer_tool = create_file_writer_tool(file_writer=self.file_writer)
+        self._code_tool = None
+        self._file_editor_tool = None
+        self._file_reader_tool = None
+        self._file_writer_tool = None
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
@@ -2687,6 +2746,8 @@ class MCPToolsRegistry:
         self._session_state: dict[str, object] = {
             "orchestrator_prompt": self._orchestrator_prompt,
             "client_profile": str(self._DEFAULT_CLIENT_PROFILE),
+            "selected_project_name": "",
+            "selected_project_root": "",
             "preflight_project_selected": False,
             "preflight_schema_summary_loaded": False,
             "preflight_schema_summary_rows": 0,
@@ -2713,6 +2774,7 @@ class MCPToolsRegistry:
             "memory_primed": False,
             "plan_task_count": 0,
             "graph_query_attempt_count": 0,
+            "schema_overview_cache": {},
             "session_contract": {},
             "execution_phase": "preflight",
             "execution_phase_history": [
@@ -2836,12 +2898,10 @@ class MCPToolsRegistry:
                     },
                     {
                         "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
-                        "args": {"repo_path": repo_root},
+                        "args": {"project_name": project_name},
                         "priority": 2,
                         "when": "after list_projects confirms target",
-                        "copy_paste": (
-                            f'select_active_project(repo_path="{_esc(repo_root)}")'
-                        ),
+                        "copy_paste": f'select_active_project(project_name="{_esc(project_name)}")',
                         "why": "initialize_project_scope_and_schema_preflight",
                     },
                 ]
@@ -2849,12 +2909,10 @@ class MCPToolsRegistry:
                 exact_next_calls = [
                     {
                         "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
-                        "args": {"repo_path": repo_root},
+                        "args": {"project_name": project_name},
                         "priority": 1,
                         "when": "project selected but schema preflight missing",
-                        "copy_paste": (
-                            f'select_active_project(repo_path="{_esc(repo_root)}")'
-                        ),
+                        "copy_paste": f'select_active_project(project_name="{_esc(project_name)}")',
                         "why": "rebuild_schema_preflight_context",
                     }
                 ]
@@ -2862,12 +2920,10 @@ class MCPToolsRegistry:
                 exact_next_calls = [
                     {
                         "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
-                        "args": {"repo_path": repo_root},
+                        "args": {"project_name": project_name},
                         "priority": 1,
                         "when": "preflight guard blocked unexpectedly",
-                        "copy_paste": (
-                            f'select_active_project(repo_path="{_esc(repo_root)}")'
-                        ),
+                        "copy_paste": f'select_active_project(project_name="{_esc(project_name)}")',
                         "why": "refresh_preflight_state",
                     }
                 ]
@@ -2882,8 +2938,10 @@ class MCPToolsRegistry:
             fallback_args: dict[str, object] = {}
             fallback_copy = f"{fallback_tool}()"
             if fallback_tool == cs.MCPToolName.SELECT_ACTIVE_PROJECT:
-                fallback_args = {"repo_path": repo_root}
-                fallback_copy = f'select_active_project(repo_path="{_esc(repo_root)}")'
+                fallback_args = {"project_name": project_name}
+                fallback_copy = (
+                    f'select_active_project(project_name="{_esc(project_name)}")'
+                )
             exact_next_calls = [
                 {
                     "tool": fallback_tool,
@@ -2951,6 +3009,261 @@ class MCPToolsRegistry:
             "ORDER BY from_node_type, relationship_type, to_node_type "
             "LIMIT " + str(bounded_limit)
         )
+
+    @staticmethod
+    def _schema_scope_profiles() -> dict[str, dict[str, object]]:
+        return {
+            "global": {
+                "labels": set(),
+                "keywords": (),
+                "summary": "Global graph schema bootstrap for the active project.",
+            },
+            "api": {
+                "labels": {
+                    "Endpoint",
+                    "Route",
+                    "Controller",
+                    "Function",
+                    "Method",
+                    "Service",
+                    "DataStore",
+                    "GraphQLOperation",
+                },
+                "keywords": (
+                    "HAS_ENDPOINT",
+                    "ROUTES_TO_CONTROLLER",
+                    "ROUTES_TO_ACTION",
+                    "REQUESTS_ENDPOINT",
+                    "USES_SERVICE",
+                    "PROVIDES_SERVICE",
+                ),
+                "summary": "API-focused schema bootstrap.",
+            },
+            "impact": {
+                "labels": {
+                    "Module",
+                    "Class",
+                    "Function",
+                    "Method",
+                    "Interface",
+                    "Enum",
+                },
+                "keywords": (
+                    "CALLS",
+                    "IMPORTS",
+                    "INHERITS",
+                    "IMPLEMENTS",
+                    "DEFINES",
+                    "DEFINES_METHOD",
+                ),
+                "summary": "Impact and refactor-focused schema bootstrap.",
+            },
+            "data": {
+                "labels": {
+                    "DataStore",
+                    "Queue",
+                    "Function",
+                    "Method",
+                    "Module",
+                    "Class",
+                },
+                "keywords": (
+                    "REQUESTS_ENDPOINT",
+                    "USES_SERVICE",
+                    "PROVIDES_SERVICE",
+                    "MUTATES_STATE",
+                    "HANDLES_ERROR",
+                    "DEPENDS_ON",
+                ),
+                "summary": "Data flow and integration-focused schema bootstrap.",
+            },
+        }
+
+    def _normalize_schema_scope(self, scope: str | None) -> str:
+        candidate = str(scope or "").strip().lower()
+        profiles = self._schema_scope_profiles()
+        return candidate if candidate in profiles else "global"
+
+    @staticmethod
+    def _schema_overview_seed_prefix() -> str:
+        return (
+            "MATCH (p:Project {name: $project_name}) "
+            "OPTIONAL MATCH (p)-[:CONTAINS_PACKAGE|CONTAINS_FOLDER|CONTAINS_FILE|CONTAINS_MODULE*0..]->(container) "
+            "WITH collect(DISTINCT p) + collect(DISTINCT container) AS seeds "
+            "UNWIND seeds AS s "
+            "MATCH (s)-[*0..2]-(n) "
+            "WITH DISTINCT n WHERE n IS NOT NULL "
+        )
+
+    def _schema_overview_relation_query(self, limit: int = 40) -> str:
+        bounded_limit = max(10, min(int(limit), 80))
+        return (
+            self._schema_overview_seed_prefix() + "OPTIONAL MATCH (n)-[r]->(m) "
+            "WITH DISTINCT head(labels(n)) AS from_node_type, type(r) AS relationship_type, head(labels(m)) AS to_node_type "
+            "WHERE relationship_type IS NOT NULL "
+            "RETURN from_node_type, relationship_type, to_node_type "
+            "ORDER BY from_node_type, relationship_type, to_node_type "
+            f"LIMIT {bounded_limit}"
+        )
+
+    def _schema_overview_label_count_query(self, limit: int = 20) -> str:
+        bounded_limit = max(5, min(int(limit), 40))
+        return (
+            self._schema_overview_seed_prefix() + "UNWIND labels(n) AS label "
+            "RETURN label, count(DISTINCT n) AS count "
+            "ORDER BY count DESC, label "
+            f"LIMIT {bounded_limit}"
+        )
+
+    @staticmethod
+    def _schema_property_catalog() -> dict[str, list[str]]:
+        return {
+            "Module": [
+                "qualified_name",
+                "name",
+                "path",
+                "pagerank",
+                "community_id",
+                "has_cycle",
+            ],
+            "Class": [
+                "qualified_name",
+                "name",
+                "path",
+                "start_line",
+                "end_line",
+                "visibility",
+                "docstring",
+                "signature",
+                "module_qn",
+                "pagerank",
+            ],
+            "Function": [
+                "qualified_name",
+                "name",
+                "path",
+                "start_line",
+                "end_line",
+                "signature",
+                "docstring",
+                "module_qn",
+                "pagerank",
+                "in_call_count",
+                "out_call_count",
+                "dead_code_score",
+                "is_reachable",
+            ],
+            "Method": [
+                "qualified_name",
+                "name",
+                "path",
+                "start_line",
+                "end_line",
+                "signature",
+                "docstring",
+                "visibility",
+                "module_qn",
+                "pagerank",
+                "in_call_count",
+                "out_call_count",
+                "dead_code_score",
+                "is_reachable",
+            ],
+            "Endpoint": [
+                "qualified_name",
+                "name",
+                "path",
+                "method",
+                "route",
+                "docstring",
+            ],
+            "Route": ["qualified_name", "name", "path", "method", "route"],
+            "Controller": ["qualified_name", "name", "path", "visibility", "module_qn"],
+            "Service": ["qualified_name", "name", "path", "module_qn", "pagerank"],
+            "DataStore": ["qualified_name", "name", "path", "module_qn", "pagerank"],
+            "Queue": ["qualified_name", "name", "path", "module_qn"],
+            "GraphQLOperation": [
+                "qualified_name",
+                "name",
+                "path",
+                "module_qn",
+                "docstring",
+            ],
+        }
+
+    @staticmethod
+    def _schema_important_labels() -> tuple[str, ...]:
+        return (
+            "Endpoint",
+            "Route",
+            "Controller",
+            "Service",
+            "DataStore",
+            "Queue",
+            "GraphQLOperation",
+            "Module",
+            "Class",
+            "Function",
+            "Method",
+        )
+
+    def _filter_schema_relation_rows(
+        self,
+        rows: list[dict[str, object]],
+        *,
+        scope: str,
+    ) -> list[dict[str, object]]:
+        if scope == "global":
+            return rows
+        profile = self._schema_scope_profiles().get(scope, {})
+        focus_labels = cast(set[str], profile.get("labels", set()))
+        focus_keywords = cast(tuple[str, ...], profile.get("keywords", ()))
+        filtered: list[dict[str, object]] = []
+        for row in rows:
+            from_label = str(row.get("from_node_type", "")).strip()
+            rel_type = str(row.get("relationship_type", "")).strip()
+            to_label = str(row.get("to_node_type", "")).strip()
+            if (
+                from_label in focus_labels
+                or to_label in focus_labels
+                or any(keyword in rel_type for keyword in focus_keywords)
+            ):
+                filtered.append(row)
+        return filtered or rows
+
+    def _build_schema_overview_summary_text(
+        self,
+        *,
+        project_name: str,
+        scope: str,
+        relation_rows: list[dict[str, object]],
+        label_counts: list[dict[str, object]],
+        property_summary: list[dict[str, object]],
+        important_labels: list[dict[str, object]],
+    ) -> str:
+        lines = [
+            f"Schema overview for {project_name} [{scope}]",
+            "Relations:",
+        ]
+        for row in relation_rows[:12]:
+            lines.append(
+                "  - "
+                f"{row.get('from_node_type', '?')} -[{row.get('relationship_type', '?')}]-> {row.get('to_node_type', '?')}"
+            )
+        lines.append("Label counts:")
+        for row in label_counts[:8]:
+            lines.append(f"  - {row.get('label', '?')}: {row.get('count', 0)}")
+        lines.append("Key properties:")
+        for row in property_summary[:6]:
+            label = str(row.get("label", "?"))
+            props = ", ".join(cast(list[str], row.get("key_properties", []))[:8])
+            lines.append(f"  - {label}: {props}")
+        lines.append("Important labels:")
+        for row in important_labels[:8]:
+            lines.append(
+                f"  - {row.get('label', '?')}: present={row.get('present', False)}, count={row.get('count', 0)}"
+            )
+        return "\n".join(lines[:40])
 
     @staticmethod
     def _schema_summary_markdown(rows: list[dict[str, object]]) -> str:
@@ -3038,7 +3351,7 @@ class MCPToolsRegistry:
             self._session_state.get("preflight_schema_context", "")
         ).strip()
         plan_context_parts = [
-            "Mandatory flow: query_code_graph -> run_cypher(read-only scoped) -> read_file(last resort)",
+            "Mandatory flow: query_code_graph -> multi_hop_analysis/impact_graph -> run_cypher(last resort)",
             "Use list_directory for atomic discovery before broad semantic fallback.",
         ]
         if schema_context:
@@ -3345,15 +3658,15 @@ class MCPToolsRegistry:
         resolved_repo = self._resolve_repo_root(repo_path)
         resolved_repo_str = str(resolved_repo)
         self.project_root = resolved_repo_str
-        self.code_retriever = CodeRetriever(resolved_repo_str, self.ingestor)
-        self.file_editor = FileEditor(project_root=resolved_repo_str)
-        self.file_reader = FileReader(project_root=resolved_repo_str)
-        self.file_writer = FileWriter(project_root=resolved_repo_str)
+        self.code_retriever = None
+        self.file_editor = None
+        self.file_reader = None
+        self.file_writer = None
         self.directory_lister = DirectoryLister(project_root=resolved_repo_str)
-        self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
-        self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
-        self._file_reader_tool = create_file_reader_tool(file_reader=self.file_reader)
-        self._file_writer_tool = create_file_writer_tool(file_writer=self.file_writer)
+        self._code_tool = None
+        self._file_editor_tool = None
+        self._file_reader_tool = None
+        self._file_writer_tool = None
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
@@ -3362,6 +3675,9 @@ class MCPToolsRegistry:
         self._context7_persistence = Context7Persistence(
             self.ingestor, resolved_repo_str
         )
+        self._session_state["selected_project_name"] = resolved_repo.name
+        self._session_state["selected_project_root"] = resolved_repo_str
+        self._session_state["schema_overview_cache"] = {}
         self._session_state["preflight_project_selected"] = False
         self._session_state["preflight_schema_summary_loaded"] = False
         self._session_state["preflight_schema_summary_rows"] = 0
@@ -3721,7 +4037,6 @@ class MCPToolsRegistry:
     ) -> dict[str, object]:
         project_name = self._active_project_name()
         error_text = str(policy_error or "")
-        repo_root = str(Path(self.project_root).resolve())
 
         def _esc(value: str) -> str:
             return value.replace("\\", "\\\\").replace('"', '\\"')
@@ -3729,8 +4044,10 @@ class MCPToolsRegistry:
         if "session_preflight_required" in error_text:
             return {
                 "tool": "select_active_project",
-                "args": {"repo_path": repo_root},
-                "copy_paste": (f'select_active_project(repo_path="{_esc(repo_root)}")'),
+                "args": {"project_name": project_name},
+                "copy_paste": (
+                    f'select_active_project(project_name="{_esc(project_name)}")'
+                ),
                 "why": "preflight_required",
             }
 
@@ -4002,17 +4319,14 @@ class MCPToolsRegistry:
         project_root: str,
         active_indexed: bool,
     ) -> list[dict[str, object]]:
-        repo_root_escaped = project_root.replace("\\", "\\\\").replace('"', '\\"')
         if not active_indexed:
             return [
                 {
                     "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
-                    "args": {"repo_path": project_root},
+                    "args": {"project_name": project_name},
                     "priority": 1,
                     "when": "active project must stay pinned for this session",
-                    "copy_paste": (
-                        f'select_active_project(repo_path="{repo_root_escaped}")'
-                    ),
+                    "copy_paste": f'select_active_project(project_name="{project_name}")',
                     "why": "confirm_active_project_scope",
                 }
             ]
@@ -4066,12 +4380,16 @@ class MCPToolsRegistry:
 
             agent_system_prompt = LOCAL_MCP_SYSTEM_PROMPT
         agent_tools = [
-            self._query_tool,
-            self._code_tool,
-            self._file_reader_tool,
-            self._directory_lister_tool,
-            self._semantic_search_tool,
-            self._get_function_source_tool,
+            tool
+            for tool in (
+                self._query_tool,
+                self._code_tool,
+                self._file_reader_tool,
+                self._directory_lister_tool,
+                self._semantic_search_tool,
+                self._get_function_source_tool,
+            )
+            if tool is not None
         ]
         try:
             self._planner_agent = PlannerAgent(
@@ -4104,19 +4422,176 @@ class MCPToolsRegistry:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
+    async def get_schema_overview(
+        self,
+        scope: str = "global",
+        refresh: bool = False,
+    ) -> dict[str, object]:
+        self._set_execution_phase("retrieval", "get_schema_overview")
+        project_name = self._active_project_name()
+        normalized_scope = self._normalize_schema_scope(scope)
+        cache_key = f"{project_name}:{normalized_scope}"
+        cache = cast(
+            dict[str, dict[str, object]],
+            self._session_state.get("schema_overview_cache", {}),
+        )
+        if not refresh and cache_key in cache:
+            cached_payload = dict(cache[cache_key])
+            cached_payload["cache_hit"] = True
+            return cached_payload
+
+        relation_query = self._schema_overview_relation_query(limit=40)
+        label_count_query = self._schema_overview_label_count_query(limit=20)
+        params = {cs.KEY_PROJECT_NAME: project_name}
+        try:
+            relation_rows_raw, label_rows_raw = await asyncio.gather(
+                asyncio.wait_for(
+                    asyncio.to_thread(self.ingestor.fetch_all, relation_query, params),
+                    timeout=20.0,
+                ),
+                asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.ingestor.fetch_all, label_count_query, params
+                    ),
+                    timeout=20.0,
+                ),
+            )
+        except Exception as exc:
+            self._record_tool_usefulness(
+                cs.MCPToolName.GET_SCHEMA_OVERVIEW,
+                success=False,
+                usefulness_score=0.0,
+            )
+            return {"error": str(exc), "scope": normalized_scope, "results": []}
+
+        relation_rows = [
+            cast(dict[str, object], row)
+            for row in relation_rows_raw
+            if isinstance(row, dict)
+        ]
+        relation_rows = self._filter_schema_relation_rows(
+            relation_rows,
+            scope=normalized_scope,
+        )
+        label_counts = [
+            {
+                "label": str(cast(dict[str, object], row).get("label", "")).strip(),
+                "count": self._coerce_int(cast(dict[str, object], row).get("count", 0)),
+            }
+            for row in label_rows_raw
+            if isinstance(row, dict)
+        ]
+        label_count_map = {
+            str(row.get("label", "")).strip(): self._coerce_int(row.get("count", 0))
+            for row in label_counts
+            if isinstance(row, dict)
+        }
+        profile = self._schema_scope_profiles().get(normalized_scope, {})
+        focus_labels = cast(set[str], profile.get("labels", set()))
+        if focus_labels:
+            filtered_label_counts = [
+                row
+                for row in label_counts
+                if str(row.get("label", "")).strip() in focus_labels
+            ]
+            if filtered_label_counts:
+                label_counts = filtered_label_counts
+
+        property_catalog = self._schema_property_catalog()
+        property_summary = [
+            {
+                "label": label,
+                "key_properties": property_catalog.get(label, []),
+            }
+            for label in [str(row.get("label", "")).strip() for row in label_counts]
+            if label in property_catalog
+        ]
+        important_labels = [
+            {
+                "label": label,
+                "present": label in label_count_map,
+                "count": label_count_map.get(label, 0),
+            }
+            for label in self._schema_important_labels()
+        ]
+        summary_text = self._build_schema_overview_summary_text(
+            project_name=project_name,
+            scope=normalized_scope,
+            relation_rows=relation_rows,
+            label_counts=label_counts,
+            property_summary=property_summary,
+            important_labels=important_labels,
+        )
+        schema_context = self._build_schema_context(relation_rows)
+        if schema_context:
+            self._session_state["preflight_schema_context"] = schema_context
+        relation_preview = self._schema_summary_preview_text(relation_rows, max_items=5)
+        top_label_preview = (
+            ", ".join(
+                f"{str(row.get('label', '?'))}:{self._coerce_int(row.get('count', 0))}"
+                for row in label_counts[:4]
+            )
+            or "no labels"
+        )
+        exact_next_calls = self._normalize_exact_next_calls(
+            [
+                {
+                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                    "args": {
+                        "natural_language_query": (
+                            f"Summarize the most important {normalized_scope} graph structures in {project_name}"
+                        ),
+                        "output_format": "json",
+                    },
+                    "priority": 1,
+                    "when": "use schema bootstrap to drive the first scoped graph query",
+                    "copy_paste": (
+                        "query_code_graph("
+                        f'natural_language_query="Summarize the most important {normalized_scope} graph structures in {project_name}", '
+                        'output_format="json")'
+                    ),
+                    "why": "convert_schema_bootstrap_into_graph_evidence",
+                }
+            ]
+        )
+        payload = {
+            "status": "ok",
+            "ui_summary": (
+                f"Schema overview [{normalized_scope}] for {project_name}: "
+                f"{len(relation_rows)} relations, {len(label_counts)} labels. "
+                f"Preview: {relation_preview}. Top labels: {top_label_preview}."
+            ),
+            "project_name": project_name,
+            "scope": normalized_scope,
+            "scope_summary": str(profile.get("summary", "")).strip(),
+            "relation_summary": relation_rows[:20],
+            "label_counts": label_counts[:12],
+            "property_summary": property_summary[:10],
+            "important_labels": important_labels,
+            "schema_context": schema_context,
+            "schema_bootstrap_summary": summary_text,
+            "exact_next_calls": exact_next_calls,
+            "next_best_action": self._project_next_best_action_from_exact_calls(
+                exact_next_calls
+            ),
+            "cache_hit": False,
+        }
+        cache[cache_key] = payload
+        self._session_state["schema_overview_cache"] = cache
+        self._record_tool_usefulness(
+            cs.MCPToolName.GET_SCHEMA_OVERVIEW,
+            success=True,
+            usefulness_score=0.9 if relation_rows else 0.5,
+        )
+        return payload
+
     async def select_active_project(
         self,
+        project_name: str | None = None,
         repo_path: str | None = None,
         client_profile: str | None = None,
     ) -> dict[str, object]:
         try:
-            if repo_path and repo_path.strip():
-                self._set_project_root(repo_path)
-            resolved_client_profile = self.set_client_profile(client_profile)
-
-            project_name = self._active_project_name()
-            project_root = str(Path(self.project_root).resolve())
-
             try:
                 indexed_projects = await asyncio.wait_for(
                     asyncio.to_thread(self.ingestor.list_projects),
@@ -4125,11 +4600,77 @@ class MCPToolsRegistry:
             except Exception:
                 indexed_projects = []
 
+            normalized_project_name = str(project_name or "").strip()
+            normalized_repo_path = str(repo_path or "").strip()
+            selected_project_name = self._active_project_name()
+            selected_project_root = self._active_project_root()
+            selection_mode = "current_root"
+
+            if normalized_project_name:
+                selection_mode = "project_name"
+                if normalized_project_name in indexed_projects:
+                    selected_project_name = normalized_project_name
+                    if (
+                        Path(self.project_root).resolve().name
+                        == normalized_project_name
+                    ):
+                        selected_project_root = str(Path(self.project_root).resolve())
+                    else:
+                        selected_project_root = ""
+                else:
+                    return {
+                        "error": f"Indexed project not found: {normalized_project_name}",
+                        "indexed_projects": {
+                            "count": len(indexed_projects),
+                            "names": indexed_projects,
+                        },
+                    }
+            elif normalized_repo_path:
+                if normalized_repo_path in indexed_projects:
+                    selection_mode = "project_name"
+                    selected_project_name = normalized_repo_path
+                    if Path(self.project_root).resolve().name == normalized_repo_path:
+                        selected_project_root = str(Path(self.project_root).resolve())
+                    else:
+                        selected_project_root = ""
+                else:
+                    try:
+                        selection_mode = "repo_path"
+                        self._set_project_root(normalized_repo_path)
+                        selected_project_name = Path(self.project_root).resolve().name
+                        selected_project_root = str(Path(self.project_root).resolve())
+                    except ValueError as exc:
+                        repo_name_candidate = Path(normalized_repo_path).name.strip()
+                        if (
+                            repo_name_candidate
+                            and repo_name_candidate in indexed_projects
+                        ):
+                            selection_mode = "project_name"
+                            selected_project_name = repo_name_candidate
+                            selected_project_root = ""
+                        else:
+                            return {
+                                "error": str(exc),
+                                "indexed_projects": {
+                                    "count": len(indexed_projects),
+                                    "names": indexed_projects,
+                                },
+                            }
+
+            self._session_state["selected_project_name"] = selected_project_name
+            self._session_state["selected_project_root"] = selected_project_root
+            resolved_client_profile = self.set_client_profile(client_profile)
+
+            project_name = self._active_project_name()
+            project_root = self._active_project_root()
+            root_resolution = "resolved" if project_root else "graph_only"
+
             active_indexed = project_name in indexed_projects
 
             # Warn early if no repo_path was supplied and the current root is not indexed
             if (
-                not (repo_path and repo_path.strip())
+                not normalized_project_name
+                and not normalized_repo_path
                 and not active_indexed
                 and indexed_projects
             ):
@@ -4137,16 +4678,19 @@ class MCPToolsRegistry:
                     "status": "no_active_project",
                     "ui_summary": (
                         f"No active project set (current root '{project_name}' is not indexed). "
-                        f"Call select_active_project(repo_path=<path>) with one of the indexed projects: "
+                        f"Call select_active_project(project_name=<name>) with one of the indexed projects: "
                         f"{indexed_projects}"
                     ),
                     "indexed_projects": {
                         "count": len(indexed_projects),
                         "names": indexed_projects,
                     },
-                    "hint": "Pass repo_path to select an indexed project.",
+                    "hint": "Pass project_name to select an indexed project.",
                 }
 
+            module_count = 0
+            class_count = 0
+            function_count = 0
             try:
                 module_count_result = await asyncio.wait_for(
                     asyncio.to_thread(
@@ -4184,58 +4728,13 @@ class MCPToolsRegistry:
             except Exception:
                 function_count_result = []
 
-            try:
-                latest_report = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.ingestor.fetch_all,
-                        CYPHER_GET_LATEST_ANALYSIS_REPORT,
-                        {cs.KEY_PROJECT_NAME: project_name},
-                    ),
-                    timeout=10.0,
-                )
-            except Exception:
-                latest_report = []
-
-            latest_analysis_timestamp = (
-                latest_report[0].get("analysis_timestamp") if latest_report else None
-            )
-
             self._session_state["preflight_project_selected"] = True
+            self._session_state["preflight_schema_summary_loaded"] = True
+            self._session_state["preflight_schema_summary_rows"] = 0
+            self._session_state["preflight_schema_context"] = ""
             self._set_execution_phase("retrieval", "select_active_project_completed")
-            try:
-                preflight = await asyncio.wait_for(
-                    self._run_session_schema_preflight(project_name),
-                    timeout=35.0,
-                )
-            except TimeoutError:
-                preflight = {"status": "timeout", "rows": 0}
-            self._persist_preflight_context(preflight)
-            preflight_rows = self._coerce_int(preflight.get("rows", 0))
-            preflight_status = str(preflight.get("status", "unknown"))
-            preview_rows_raw = preflight.get("schema_summary_preview", [])
-            preview_rows: list[dict[str, object]] = []
-            if isinstance(preview_rows_raw, list):
-                for item in preview_rows_raw:
-                    if isinstance(item, dict):
-                        preview_rows.append(cast(dict[str, object], item))
-            preview_text = self._schema_summary_preview_text(preview_rows, max_items=5)
-            try:
-                repo_semantics = self._repo_semantic_enricher.summarize(project_root)
-            except Exception as exc:
-                repo_semantics = {
-                    "summary": f"repo_semantics_unavailable: {exc}",
-                    "frameworks": [],
-                    "framework_metadata": {},
-                    "infra": {},
-                }
-            self._session_state["repo_semantics"] = repo_semantics
-            analysis_resources = await self.list_mcp_resources()
-            analysis_prompts = await self.list_mcp_prompts()
-            session_contract = self._build_session_contract(
-                project_name,
-                client_profile=resolved_client_profile,
-            )
-            self._session_state["session_contract"] = session_contract
+            self._session_state["repo_semantics"] = {}
+            self._session_state["session_contract"] = {}
             exact_next_calls = self._build_select_active_project_next_calls(
                 project_name=project_name,
                 project_root=project_root,
@@ -4244,11 +4743,18 @@ class MCPToolsRegistry:
             next_best_action = self._project_next_best_action_from_exact_calls(
                 exact_next_calls
             )
+            if module_count_result:
+                module_count = self._coerce_int(module_count_result[0].get("count", 0))
+            if class_count_result:
+                class_count = self._coerce_int(class_count_result[0].get("count", 0))
+            if function_count_result:
+                function_count = self._coerce_int(
+                    function_count_result[0].get("count", 0)
+                )
             ui_summary = (
                 f"Active project: {project_name} | indexed={active_indexed} | "
-                f"preflight={preflight_status} | schema_rows={preflight_rows}\n"
-                f"Schema preview: {preview_text}\n"
-                f"Recommended next tool: {next_best_action.get('tool', 'query_code_graph')}"
+                f"modules={module_count} | classes={class_count} | symbols={function_count} | "
+                f"next={next_best_action.get('tool', 'query_code_graph')}"
             )
 
             return {
@@ -4257,6 +4763,8 @@ class MCPToolsRegistry:
                 "active_project": {
                     "name": project_name,
                     "root": project_root,
+                    "root_resolution": root_resolution,
+                    "selection_mode": selection_mode,
                     "indexed": active_indexed,
                     "client_profile": resolved_client_profile,
                 },
@@ -4265,72 +4773,25 @@ class MCPToolsRegistry:
                     "names": indexed_projects,
                 },
                 "project_graph_stats": {
-                    "modules": (
-                        module_count_result[0]["count"] if module_count_result else 0
-                    ),
-                    "classes": (
-                        class_count_result[0]["count"] if class_count_result else 0
-                    ),
-                    "functions_and_methods": (
-                        function_count_result[0]["count"]
-                        if function_count_result
-                        else 0
-                    ),
+                    "modules": module_count,
+                    "classes": class_count,
+                    "functions_and_methods": function_count,
                 },
-                "latest_analysis_timestamp": latest_analysis_timestamp,
-                "session_preflight": preflight,
-                "repo_semantics": repo_semantics,
-                "analysis_resources": analysis_resources[:12],
-                "analysis_prompts": analysis_prompts,
-                "analysis_bundle_entrypoints": [
-                    cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
-                    cs.MCPToolName.ARCHITECTURE_BUNDLE,
-                    cs.MCPToolName.CHANGE_BUNDLE,
-                    cs.MCPToolName.RISK_BUNDLE,
-                    cs.MCPToolName.TEST_BUNDLE,
+                "startup_playbook": [
+                    "Use get_schema_overview for a compact project-scoped schema bootstrap.",
+                    "Use query_code_graph for scoped graph exploration.",
+                    "Use multi_hop_analysis for architecture, dependencies, and blast radius.",
+                    "Use impact_graph before edits or change evaluation.",
+                    "Use run_cypher only for explicit traversal control.",
                 ],
-                "session_contract": session_contract,
-                "initial_llm_policy_broadcast": cast(
-                    dict[str, object],
-                    session_contract.get("orchestrator_policy", {}),
-                ),
-                "bootstrap_playbook": {
-                    "summary": "Startup sequence complete. Stay graph-first.",
-                    "mandatory_sequence": ["list_projects", "select_active_project"],
-                    "next_focus": (
-                        "Use query_code_graph for first scoped exploration; use plan_task when the request is multi-step."
-                    ),
-                    "edit_rule": (
-                        "After source edits, refresh graph state before relying on GraphRAG answers for changed code."
-                    ),
-                },
                 "recommended_next_queries": [
                     f"Summarize the main modules, entry points, and dependency hotspots in {project_name}",
                     f"Which files or symbols in {project_name} have the highest blast radius?",
                     f"Show me the most central classes and functions in {project_name}",
-                    "After identifying a target symbol or file, run multi_hop_analysis for compressed dependency traversal.",
+                    "After identifying a target symbol or file, run multi_hop_analysis.",
                 ],
                 "exact_next_calls": exact_next_calls,
                 "next_best_action": next_best_action,
-                "execution_state": self._build_execution_state_contract(),
-                "staged_tool_visibility": self._staged_tool_visibility_contract(),
-                "policy": {
-                    "query_code_graph_scope_enforced": True,
-                    "run_cypher_scope_enforced": True,
-                    "run_cypher_write_requires_user_requested": True,
-                    "run_cypher_write_requires_reason": True,
-                    "run_cypher_write_allowlist_enforced": True,
-                    "index_repository_requires_user_requested": True,
-                    "index_repository_requires_reason": True,
-                    "index_repository_drift_proof_enforced": True,
-                    "completion_gate_refactor_batch_requires_plan": True,
-                    "confidence_gate_enabled": True,
-                    "context_confidence_gate_enabled": True,
-                    "pattern_reuse_gate_enabled": True,
-                    "soft_hard_guard_partition_enabled": True,
-                    "epsilon_exploration_enabled": True,
-                    "adaptive_epsilon_enabled": True,
-                },
             }
         except Exception as exc:
             return {"error": str(exc)}
@@ -5026,11 +5487,14 @@ class MCPToolsRegistry:
         exact_next_calls: list[dict[str, object]],
     ) -> list[dict[str, object]]:
         normalized: list[dict[str, object]] = []
+        enabled_tool_names = self._enabled_tool_names()
         for raw_item in exact_next_calls:
             if not isinstance(raw_item, dict):
                 continue
             tool_name = str(raw_item.get("tool", "")).strip()
             if not tool_name:
+                continue
+            if tool_name not in enabled_tool_names:
                 continue
             args = raw_item.get("args", {})
             if not isinstance(args, dict):
@@ -5053,6 +5517,38 @@ class MCPToolsRegistry:
             )
         )
         return normalized
+
+    def _ensure_code_tool(self) -> object:
+        if self._code_tool is None or self.code_retriever is None:
+            self.code_retriever = CodeRetriever(self.project_root, self.ingestor)
+            self._code_tool = create_code_retrieval_tool(
+                code_retriever=self.code_retriever
+            )
+        return self._code_tool
+
+    def _ensure_file_editor_tool(self) -> object:
+        if self._file_editor_tool is None or self.file_editor is None:
+            self.file_editor = FileEditor(project_root=self.project_root)
+            self._file_editor_tool = create_file_editor_tool(
+                file_editor=self.file_editor
+            )
+        return self._file_editor_tool
+
+    def _ensure_file_reader_tool(self) -> object:
+        if self._file_reader_tool is None or self.file_reader is None:
+            self.file_reader = FileReader(project_root=self.project_root)
+            self._file_reader_tool = create_file_reader_tool(
+                file_reader=self.file_reader
+            )
+        return self._file_reader_tool
+
+    def _ensure_file_writer_tool(self) -> object:
+        if self._file_writer_tool is None or self.file_writer is None:
+            self.file_writer = FileWriter(project_root=self.project_root)
+            self._file_writer_tool = create_file_writer_tool(
+                file_writer=self.file_writer
+            )
+        return self._file_writer_tool
 
     async def _auto_execute_exact_next_calls(
         self,
@@ -5538,7 +6034,26 @@ class MCPToolsRegistry:
         }
 
     def _active_project_name(self) -> str:
+        selected_name = str(
+            self._session_state.get("selected_project_name", "")
+        ).strip()
+        if selected_name:
+            return selected_name
         return Path(self.project_root).resolve().name
+
+    def _active_project_root(self) -> str:
+        selected_root = str(
+            self._session_state.get("selected_project_root", "")
+        ).strip()
+        if selected_root:
+            return selected_root
+        selected_name = str(
+            self._session_state.get("selected_project_name", "")
+        ).strip()
+        current_root = str(Path(self.project_root).resolve())
+        if not selected_name or Path(current_root).name == selected_name:
+            return current_root
+        return ""
 
     def _validate_project_scope_policy(
         self, cypher_query: str, parsed_params: dict[str, object] | None = None
@@ -6851,13 +7366,6 @@ class MCPToolsRegistry:
                 "summary": result_dict.get("summary", ""),
             }
             result_payload["query_digest_id"] = query_digest_id
-            result_payload["planner_usage_rate"] = self._planner_usage_rate()
-            result_payload["schema_context"] = str(
-                self._session_state.get("preflight_schema_context", "")
-            )
-            result_payload["session_contract"] = self._session_state.get(
-                "session_contract", {}
-            )
             if fallback_chain:
                 result_payload["fallback_chain"] = fallback_chain
                 result_payload["fallback_diagnostics"] = fallback_diagnostics
@@ -6956,6 +7464,43 @@ class MCPToolsRegistry:
                 asyncio.to_thread(semantic_code_search, query, bounded_top_k),
                 timeout=60.0,
             )
+            enriched_results: list[dict[str, object]] = []
+            metadata_by_id = await self._fetch_node_metadata_by_ids(
+                [
+                    self._coerce_int(item.get("node_id", -1))
+                    for item in results
+                    if isinstance(item, dict)
+                ]
+            )
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                raw_item = cast(dict[str, object], item)
+                node_id = self._coerce_int(raw_item.get("node_id", -1))
+                enriched_item = dict(raw_item)
+                node_meta = metadata_by_id.get(node_id, {})
+                if node_meta:
+                    enriched_item["node_meta"] = node_meta
+                    for key in (
+                        "path",
+                        "start_line",
+                        "end_line",
+                        "signature",
+                        "visibility",
+                        "module_qn",
+                        "namespace",
+                        "pagerank",
+                        "community_id",
+                        "has_cycle",
+                        "in_call_count",
+                        "out_call_count",
+                        "dead_code_score",
+                        "is_reachable",
+                    ):
+                        if key in node_meta:
+                            enriched_item[key] = node_meta[key]
+                enriched_results.append(enriched_item)
+            results = enriched_results
             if results:
                 self._session_bump("semantic_success_count")
                 score_values = [
@@ -7033,7 +7578,8 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_GET_CODE_SNIPPET.format(name=qualified_name))
         self._set_execution_phase("retrieval", "get_code_snippet")
         try:
-            snippet = await self._code_tool.function(qualified_name=qualified_name)
+            code_tool = cast(Any, self._ensure_code_tool())
+            snippet = await code_tool.function(qualified_name=qualified_name)
             result: CodeSnippetResultDict | None = snippet.model_dump()
             if result is None:
                 self._record_tool_usefulness(
@@ -7074,7 +7620,8 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_SURGICAL_REPLACE.format(path=file_path))
         self._set_execution_phase("execution", "surgical_replace_code")
         try:
-            result = await self._file_editor_tool.function(
+            file_editor_tool = cast(Any, self._ensure_file_editor_tool())
+            result = await file_editor_tool.function(
                 file_path=file_path,
                 target_code=target_code,
                 replacement_code=replacement_code,
@@ -7189,7 +7736,8 @@ class MCPToolsRegistry:
                     )
                     return header + paginated_content
             else:
-                result = await self._file_reader_tool.function(file_path=file_path)
+                file_reader_tool = cast(Any, self._ensure_file_reader_tool())
+                result = await file_reader_tool.function(file_path=file_path)
                 self._session_bump("evidence_reads")
                 self._session_bump("code_evidence_count")
                 path_depth = max(0, len(Path(file_path).parts) - 1)
@@ -7219,7 +7767,8 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_WRITE_FILE.format(path=file_path))
         self._set_execution_phase("execution", "write_file")
         try:
-            result = await self._file_writer_tool.function(
+            file_writer_tool = cast(Any, self._ensure_file_writer_tool())
+            result = await file_writer_tool.function(
                 file_path=file_path, content=content
             )
             if result.success:
@@ -7238,12 +7787,17 @@ class MCPToolsRegistry:
             return te.ERROR_WRAPPER.format(message=e)
 
     async def list_directory(
-        self, repo_path: str, directory_path: str = cs.MCP_DEFAULT_DIRECTORY
+        self,
+        repo_path: str | None = None,
+        directory_path: str = cs.MCP_DEFAULT_DIRECTORY,
     ) -> str:
         self._set_execution_phase("retrieval", "list_directory")
         try:
-            self._set_project_root(repo_path)
-            logger.info(lg.MCP_LIST_DIR.format(path=f"{repo_path}:{directory_path}"))
+            resolved_repo_path = str(repo_path or self.project_root)
+            self._set_project_root(resolved_repo_path)
+            logger.info(
+                lg.MCP_LIST_DIR.format(path=f"{resolved_repo_path}:{directory_path}")
+            )
             result = self._directory_lister_tool.function(directory_path=directory_path)
             self._session_bump("evidence_reads")
             self._record_tool_usefulness(
@@ -7440,12 +7994,6 @@ class MCPToolsRegistry:
                     usefulness_score=0.9,
                 )
                 result_payload: dict[str, object] = {"status": "ok", "results": []}
-                result_payload["schema_context"] = str(
-                    self._session_state.get("preflight_schema_context", "")
-                )
-                result_payload["session_contract"] = self._session_state.get(
-                    "session_contract", {}
-                )
                 if normalization_notes:
                     result_payload["scope_normalization"] = {
                         "applied": normalization_notes,
@@ -7486,13 +8034,6 @@ class MCPToolsRegistry:
             )
             response_payload: dict[str, object] = {"status": "ok", "results": results}
             response_payload["query_digest_id"] = query_digest_id
-            response_payload["planner_usage_rate"] = self._planner_usage_rate()
-            response_payload["schema_context"] = str(
-                self._session_state.get("preflight_schema_context", "")
-            )
-            response_payload["session_contract"] = self._session_state.get(
-                "session_contract", {}
-            )
             if normalization_notes:
                 response_payload["scope_normalization"] = {
                     "applied": normalization_notes,
@@ -7815,7 +8356,17 @@ class MCPToolsRegistry:
                 {cs.KEY_PROJECT_NAME: Path(self.project_root).resolve().name},
             )
             if not results:
-                return {"error": "analysis_report_not_found"}
+                overview = self._analysis_evidence.read_resource(
+                    "analysis://overview",
+                    session_state=self._session_state,
+                )
+                return {
+                    "run_id": None,
+                    "analysis_timestamp": None,
+                    "summary": overview.get("overview", overview),
+                    "analysis_overview": overview,
+                    "source": "artifacts",
+                }
             row = results[0]
             summary_raw = row.get("analysis_summary")
             summary = summary_raw
@@ -7986,15 +8537,21 @@ class MCPToolsRegistry:
         return bundle
 
     async def list_mcp_resources(self) -> list[dict[str, object]]:
+        if not bool(settings.MCP_ENABLE_RESOURCES):
+            return []
         return self._analysis_evidence.list_resources()
 
     async def read_mcp_resource(self, uri: str) -> dict[str, object]:
+        if not bool(settings.MCP_ENABLE_RESOURCES):
+            return {"error": "resources_disabled"}
         return self._analysis_evidence.read_resource(
             uri,
             session_state=self._session_state,
         )
 
     async def list_mcp_prompts(self) -> list[dict[str, object]]:
+        if not bool(settings.MCP_ENABLE_PROMPTS):
+            return []
         return self._analysis_evidence.list_prompts()
 
     async def get_mcp_prompt(
@@ -8002,6 +8559,8 @@ class MCPToolsRegistry:
         prompt_name: str,
         arguments: dict[str, str] | None = None,
     ) -> dict[str, object]:
+        if not bool(settings.MCP_ENABLE_PROMPTS):
+            return {"error": "prompts_disabled", "name": prompt_name}
         return self._analysis_evidence.get_prompt(
             prompt_name,
             arguments=arguments,
@@ -8480,141 +9039,214 @@ class MCPToolsRegistry:
         try:
             self._set_execution_phase("validation", "plan_task")
             self._session_bump("plan_task_count")
-            memory_patterns = await self.memory_query_patterns(
-                query=goal,
-                filter_tags="plan,refactor,success",
-                success_only=True,
-                limit=5,
-            )
-            self._set_execution_phase(
-                "validation",
-                "plan_task_resume_after_memory_query",
-            )
-            pattern_entries = memory_patterns.get("entries", [])
-            pattern_texts: list[str] = []
-            if isinstance(pattern_entries, list):
-                for item in pattern_entries:
-                    if isinstance(item, dict):
-                        item_dict = cast(dict[str, object], item)
-                        text = item_dict.get("text")
-                        if isinstance(text, str) and text.strip():
-                            pattern_texts.append(text.strip()[:300])
-            chain_success_rates_raw = memory_patterns.get("chain_success_rates", [])
-            chain_success_rates: list[dict[str, object]] = []
-            if isinstance(chain_success_rates_raw, list):
-                for item in chain_success_rates_raw:
-                    if isinstance(item, dict):
-                        chain_success_rates.append(cast(dict[str, object], item))
-
-            pattern_lines = (
-                [f"- {line}" for line in pattern_texts[:5]]
-                if pattern_texts
-                else ["- none"]
-            )
-            chain_lines: list[str] = []
-            for item in chain_success_rates[:5]:
-                signature = str(item.get("chain_signature", "")).strip()
-                success_rate = self._coerce_float(item.get("success_rate", 0.0))
-                total_count = self._coerce_int(item.get("total_count", 0))
-                if signature:
-                    chain_lines.append(
-                        f"- {signature} (success_rate={success_rate:.2f}, total={total_count})"
-                    )
-            if not chain_lines:
-                chain_lines = ["- none"]
-
-            mandatory_memory_block = (
-                "Memory pattern injection (mandatory):\n"
-                "Matched patterns:\n"
-                + "\n".join(pattern_lines)
-                + "\n"
-                + "Chain success-rate candidates:\n"
-                + "\n".join(chain_lines)
-            )
-
-            lowered_goal = str(goal).strip().lower()
-            evidence_packet = self._build_evidence_bundle_packet(
-                goal=goal,
-                context=context,
-                include_architecture=True,
-                include_change=any(
-                    token in lowered_goal
-                    for token in (
-                        "change",
-                        "edit",
-                        "fix",
-                        "impact",
-                        "refactor",
-                    )
-                )
-                or bool(self._collect_recent_impact_context().get("has_impact", False)),
-                include_risk=any(
-                    token in lowered_goal
-                    for token in ("dependency", "performance", "risk", "security")
-                ),
-                include_test=any(
-                    token in lowered_goal for token in ("coverage", "test", "tests")
-                ),
-            )
-
-            augmented_context = (
-                (context + "\n") if context else ""
-            ) + mandatory_memory_block
-            augmented_context += "\n" + self._format_evidence_packet_for_prompt(
-                evidence_packet,
-                title="Structured evidence packet:",
-            )
-
-            result = await asyncio.wait_for(
-                self._planner_agent.plan(goal, context=augmented_context),
-                timeout=max(30.0, float(settings.MCP_AGENT_TIMEOUT_SECONDS)),
-            )
-            planner_content = (
-                result.content
-                if hasattr(result, "content") and isinstance(result.content, dict)
-                else {}
-            )
-            planner_status = str(getattr(result, "status", "")).strip().lower()
-            if planner_status != "ok" or not self._planner_payload_has_substance(
-                planner_content
-            ):
+            normalized_goal = str(goal).strip()
+            normalized_context = str(context or "").strip()
+            if not normalized_goal:
                 self._session_state["plan_task_completed"] = False
                 self._record_tool_usefulness(
                     cs.MCPToolName.PLAN_TASK,
                     success=False,
                     usefulness_score=0.0,
                 )
-                return self._build_plan_task_failure_payload(
-                    reason="planner_empty_output",
-                    goal=goal,
-                    context=context,
-                    pattern_texts=pattern_texts,
-                    chain_success_rates=chain_success_rates,
+                return {"error": "goal_required"}
+
+            combined = f"{normalized_goal}\n{normalized_context}".strip().lower()
+
+            def _has_any(*tokens: str) -> bool:
+                return any(token in combined for token in tokens)
+
+            task_type = "analysis"
+            if _has_any("test", "coverage", "assert", "spec"):
+                task_type = "test_generation"
+            elif _has_any("fix", "debug", "error", "fail", "bug", "exception"):
+                task_type = "debugging"
+            elif _has_any("refactor", "edit", "change", "modify", "rename", "cleanup"):
+                task_type = "refactor"
+            elif _has_any(
+                "architecture",
+                "dependency",
+                "dependencies",
+                "service",
+                "module",
+                "topology",
+                "blast radius",
+                "impact",
+            ):
+                task_type = "architecture"
+
+            query_text = normalized_goal
+            escaped_query = query_text.replace("\\", "\\\\").replace('"', '\\"')
+            exact_next_calls: list[dict[str, object]] = []
+
+            if _has_any(
+                "directory", "directories", "folder", "folders", "tree", "layout"
+            ):
+                exact_next_calls.append(
+                    {
+                        "tool": cs.MCPToolName.LIST_DIRECTORY,
+                        "args": {"directory_path": cs.MCP_DEFAULT_DIRECTORY},
+                        "priority": len(exact_next_calls) + 1,
+                        "when": "start with a fast repository tree snapshot",
+                        "copy_paste": (
+                            f'{cs.MCPToolName.LIST_DIRECTORY}(directory_path="{cs.MCP_DEFAULT_DIRECTORY}")'
+                        ),
+                        "why": "lightweight structure inventory before graph exploration",
+                    }
                 )
 
+            exact_next_calls.append(
+                {
+                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                    "args": {
+                        "natural_language_query": query_text,
+                        "output_format": "json",
+                    },
+                    "priority": len(exact_next_calls) + 1,
+                    "when": "always collect project-scoped graph evidence first",
+                    "copy_paste": (
+                        "query_code_graph("
+                        f'natural_language_query="{escaped_query}", output_format="json")'
+                    ),
+                    "why": "primary GraphRAG entrypoint for scoped evidence",
+                }
+            )
+
+            if _has_any(
+                "architecture",
+                "dependency",
+                "dependencies",
+                "caller",
+                "callee",
+                "hop",
+                "chain",
+                "service",
+                "module",
+                "flow",
+            ):
+                exact_next_calls.append(
+                    {
+                        "tool": cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                        "args": {"depth": 3},
+                        "priority": len(exact_next_calls) + 1,
+                        "when": "after query_code_graph identifies the target symbol or file",
+                        "copy_paste": f'{cs.MCPToolName.MULTI_HOP_ANALYSIS}(qualified_name="...")',
+                        "why": "expand graph traversal across callers, imports, and dependencies",
+                    }
+                )
+            elif _has_any("impact", "blast", "affected", "change", "refactor", "edit"):
+                exact_next_calls.append(
+                    {
+                        "tool": cs.MCPToolName.IMPACT_GRAPH,
+                        "args": {"depth": 3},
+                        "priority": len(exact_next_calls) + 1,
+                        "when": "after query_code_graph identifies the target symbol or file",
+                        "copy_paste": f'{cs.MCPToolName.IMPACT_GRAPH}(qualified_name="...", depth=3)',
+                        "why": "measure blast radius before change decisions",
+                    }
+                )
+            elif _has_any(
+                "semantic", "similar", "find", "search", "where is", "locate"
+            ):
+                exact_next_calls.append(
+                    {
+                        "tool": cs.MCPToolName.SEMANTIC_SEARCH,
+                        "args": {"query": query_text, "top_k": 10},
+                        "priority": len(exact_next_calls) + 1,
+                        "when": "when symbol names are unknown and intent-based discovery is needed",
+                        "copy_paste": (
+                            f'{cs.MCPToolName.SEMANTIC_SEARCH}(query="{escaped_query}", top_k=10)'
+                        ),
+                        "why": "recover likely targets using vector search",
+                    }
+                )
+            else:
+                exact_next_calls.append(
+                    {
+                        "tool": cs.MCPToolName.RUN_CYPHER,
+                        "args": {"advanced_mode": True},
+                        "priority": len(exact_next_calls) + 1,
+                        "when": "only if direct traversal control is needed after graph evidence",
+                        "copy_paste": (
+                            f'{cs.MCPToolName.RUN_CYPHER}(cypher="MATCH (m:Module {{project_name: $project_name}}) '
+                            'RETURN m.name AS name, m.path AS path LIMIT 50", advanced_mode=true)'
+                        ),
+                        "why": "fallback for explicit scoped traversal",
+                    }
+                )
+
+            exact_next_calls = self._normalize_exact_next_calls(exact_next_calls[:3])
+            recommended_tool_chain = [
+                str(item.get("tool", "")).strip()
+                for item in exact_next_calls
+                if isinstance(item, dict) and str(item.get("tool", "")).strip()
+            ]
+            copy_paste_calls = [
+                str(item.get("copy_paste", "")).strip()
+                for item in exact_next_calls
+                if isinstance(item, dict) and str(item.get("copy_paste", "")).strip()
+            ]
+            required_evidence = ["project-scoped graph evidence"]
+            if any(
+                tool in recommended_tool_chain
+                for tool in (
+                    cs.MCPToolName.MULTI_HOP_ANALYSIS,
+                    cs.MCPToolName.IMPACT_GRAPH,
+                )
+            ):
+                required_evidence.append("resolved target symbol or file")
+
+            summary = (
+                "Fast deterministic plan created. Use graph-first evidence and only escalate "
+                "to explicit traversal when the target is clear."
+            )
+            response = {
+                "status": "ok",
+                "objective": normalized_goal,
+                "active_project": self._active_project_name(),
+                "task_type": task_type,
+                "summary": summary,
+                "steps": copy_paste_calls,
+                "required_evidence": required_evidence,
+                "evidence_priority": [
+                    "query_code_graph",
+                    "multi_hop_analysis",
+                    "impact_graph",
+                ],
+                "multi_hop_plan": (
+                    [
+                        "Use multi_hop_analysis after query_code_graph identifies a target."
+                    ]
+                    if cs.MCPToolName.MULTI_HOP_ANALYSIS in recommended_tool_chain
+                    else []
+                ),
+                "affected_symbols": [],
+                "recommended_tool_chain": recommended_tool_chain,
+                "copy_paste_calls": copy_paste_calls,
+                "risks": [
+                    "Do not switch to raw Cypher before project-scoped graph evidence exists."
+                ],
+                "tests": [],
+                "test_strategy": [
+                    "Stay in graph-first mode; validate targets before edits."
+                ],
+                "stop_conditions": [
+                    "Stop after the first tool returns a clear target symbol, file, or dependency path."
+                ],
+                "exact_next_calls": exact_next_calls,
+                "next_best_action": self._project_next_best_action_from_exact_calls(
+                    exact_next_calls
+                ),
+                "context_used": normalized_context,
+                "planner_mode": "fast_deterministic",
+                "timeout_seconds": int(settings.MCP_PLAN_TASK_TIMEOUT_SECONDS),
+            }
             self._session_state["plan_task_completed"] = True
             self._record_tool_usefulness(
                 cs.MCPToolName.PLAN_TASK,
                 success=True,
-                usefulness_score=1.0,
+                usefulness_score=0.9,
             )
-            if planner_content:
-                return {
-                    "status": result.status,
-                    **planner_content,
-                    "retrieved_patterns": pattern_texts[:5],
-                    "chain_success_rates": chain_success_rates[:5],
-                    "memory_injection_mandatory": True,
-                    "evidence_packet": evidence_packet,
-                }
-            return {
-                "status": result.status,
-                "content": result.content,
-                "retrieved_patterns": pattern_texts[:5],
-                "chain_success_rates": chain_success_rates[:5],
-                "memory_injection_mandatory": True,
-                "evidence_packet": evidence_packet,
-            }
+            return response
         except TimeoutError:
             self._session_state["plan_task_completed"] = False
             self._record_tool_usefulness(
@@ -8622,7 +9254,9 @@ class MCPToolsRegistry:
                 success=False,
                 usefulness_score=0.0,
             )
-            return {"error": "plan_task_timed_out_after_300s"}
+            return {
+                "error": f"plan_task_timed_out_after_{int(settings.MCP_PLAN_TASK_TIMEOUT_SECONDS)}s"
+            }
         except Exception as exc:
             self._session_state["plan_task_completed"] = False
             self._record_tool_usefulness(
@@ -8697,6 +9331,93 @@ class MCPToolsRegistry:
             return ""
         return candidate.replace("\\", "/")
 
+    def _build_node_meta_from_row(
+        self,
+        row: dict[str, object],
+        *,
+        prefix: str = "",
+    ) -> dict[str, object]:
+        qualified_name = str(row.get(f"{prefix}qualified_name", "") or "").strip()
+        name = str(row.get(f"{prefix}name", "") or "").strip()
+        path = self._normalize_path_value(row.get(f"{prefix}path"))
+        start_line = self._coerce_int(row.get(f"{prefix}start_line", 0))
+        end_line = self._coerce_int(row.get(f"{prefix}end_line", 0))
+        docstring = self._compact_text(row.get(f"{prefix}docstring", ""), limit=240)
+        signature = str(row.get(f"{prefix}signature", "") or "").strip()
+        visibility = str(row.get(f"{prefix}visibility", "") or "").strip()
+        module_qn = str(row.get(f"{prefix}module_qn", "") or "").strip()
+        namespace = str(row.get(f"{prefix}namespace", "") or "").strip()
+        symbol_kind = str(row.get(f"{prefix}symbol_kind", "") or "").strip()
+        pagerank = self._coerce_float(row.get(f"{prefix}pagerank", 0.0))
+        community_id = self._coerce_int(row.get(f"{prefix}community_id", -1))
+        has_cycle = bool(row.get(f"{prefix}has_cycle", False))
+        in_call_count = self._coerce_int(row.get(f"{prefix}in_call_count", 0))
+        out_call_count = self._coerce_int(row.get(f"{prefix}out_call_count", 0))
+        dead_code_score = self._coerce_float(row.get(f"{prefix}dead_code_score", 0.0))
+        is_reachable = bool(row.get(f"{prefix}is_reachable", True))
+
+        node_meta: dict[str, object] = {}
+        if qualified_name:
+            node_meta["qualified_name"] = qualified_name
+        if name:
+            node_meta["name"] = name
+        if path:
+            node_meta["path"] = path
+        if start_line > 0:
+            node_meta["start_line"] = start_line
+        if end_line > 0:
+            node_meta["end_line"] = end_line
+        if docstring:
+            node_meta["docstring"] = docstring
+        if signature:
+            node_meta["signature"] = signature
+        if visibility:
+            node_meta["visibility"] = visibility
+        if module_qn:
+            node_meta["module_qn"] = module_qn
+        if namespace:
+            node_meta["namespace"] = namespace
+        if symbol_kind:
+            node_meta["symbol_kind"] = symbol_kind
+        node_meta["pagerank"] = pagerank
+        node_meta["community_id"] = community_id
+        node_meta["has_cycle"] = has_cycle
+        node_meta["in_call_count"] = in_call_count
+        node_meta["out_call_count"] = out_call_count
+        node_meta["dead_code_score"] = dead_code_score
+        node_meta["is_reachable"] = is_reachable
+        return node_meta
+
+    async def _fetch_node_metadata_by_ids(
+        self,
+        node_ids: list[int],
+    ) -> dict[int, dict[str, object]]:
+        normalized_ids = sorted(
+            {int(node_id) for node_id in node_ids if int(node_id) >= 0}
+        )
+        if not normalized_ids:
+            return {}
+        query = build_context_nodes_query(normalized_ids)
+        params = {str(idx): node_id for idx, node_id in enumerate(normalized_ids)}
+        try:
+            rows = await asyncio.wait_for(
+                asyncio.to_thread(self.ingestor.fetch_all, query, params),
+                timeout=30.0,
+            )
+        except Exception:
+            return {}
+
+        metadata_by_id: dict[int, dict[str, object]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_dict = cast(dict[str, object], row)
+            node_id = self._coerce_int(row_dict.get("node_id", -1))
+            if node_id < 0:
+                continue
+            metadata_by_id[node_id] = self._build_node_meta_from_row(row_dict)
+        return metadata_by_id
+
     def _build_multi_hop_exact_next_calls(
         self,
         *,
@@ -8710,14 +9431,14 @@ class MCPToolsRegistry:
             qualified_name_escaped = qualified_name.replace('"', '\\"')
             exact_next_calls.append(
                 {
-                    "tool": cs.MCPToolName.GET_CODE_SNIPPET,
-                    "args": {"qualified_name": qualified_name},
+                    "tool": cs.MCPToolName.IMPACT_GRAPH,
+                    "args": {"qualified_name": qualified_name, "depth": 3},
                     "priority": 1,
-                    "when": "implementation confirmation is needed for the analyzed symbol",
+                    "when": "blast radius must be confirmed for the analyzed symbol",
                     "copy_paste": (
-                        f'get_code_snippet(qualified_name="{qualified_name_escaped}")'
+                        f'impact_graph(qualified_name="{qualified_name_escaped}", depth=3)'
                     ),
-                    "why": "inspect_target_symbol_source",
+                    "why": "confirm_symbol_blast_radius",
                 }
             )
         if affected_files:
@@ -8725,12 +9446,21 @@ class MCPToolsRegistry:
             path_escaped = target_path.replace("\\", "\\\\").replace('"', '\\"')
             exact_next_calls.append(
                 {
-                    "tool": cs.MCPToolName.READ_FILE,
-                    "args": {"file_path": target_path},
+                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                    "args": {
+                        "natural_language_query": (
+                            f"Show the main symbols, entry points, and callers in file {target_path}"
+                        ),
+                        "output_format": "json",
+                    },
                     "priority": 2,
-                    "when": "graph evidence narrowed the implementation to a concrete file",
-                    "copy_paste": f'read_file(file_path="{path_escaped}")',
-                    "why": "inspect_highest_priority_affected_file",
+                    "when": "graph evidence narrowed the analysis to a concrete file",
+                    "copy_paste": (
+                        "query_code_graph("
+                        f'natural_language_query="Show the main symbols, entry points, and callers in file {path_escaped}", '
+                        'output_format="json")'
+                    ),
+                    "why": "drill_into_highest_priority_affected_file",
                 }
             )
         if include_context7 and context7_query:
@@ -8932,7 +9662,24 @@ RETURN DISTINCT
     coalesce(target.path, target.file_path, '') AS node_path,
     labels(target) AS node_labels,
     type(last(relationships(p))) AS relation,
-    length(p) AS hop_count
+    length(p) AS hop_count,
+    coalesce(target.qualified_name, '') AS node_qualified_name,
+    coalesce(target.name, '') AS node_name,
+    coalesce(target.start_line, 0) AS node_start_line,
+    coalesce(target.end_line, 0) AS node_end_line,
+    coalesce(target.docstring, '') AS node_docstring,
+    coalesce(target.signature, target.signature_lite, '') AS node_signature,
+    coalesce(target.visibility, '') AS node_visibility,
+    coalesce(target.module_qn, '') AS node_module_qn,
+    coalesce(target.namespace, '') AS node_namespace,
+    coalesce(target.symbol_kind, toLower(labels(target)[0]), '') AS node_symbol_kind,
+    coalesce(target.pagerank, 0.0) AS node_pagerank,
+    coalesce(target.community_id, -1) AS node_community_id,
+    coalesce(target.has_cycle, false) AS node_has_cycle,
+    coalesce(target.in_call_count, 0) AS node_in_call_count,
+    coalesce(target.out_call_count, 0) AS node_out_call_count,
+    coalesce(target.dead_code_score, 0.0) AS node_dead_code_score,
+    coalesce(target.is_reachable, true) AS node_is_reachable
 LIMIT $limit
 """
         inbound_query = f"""
@@ -8950,7 +9697,24 @@ RETURN DISTINCT
     coalesce(source.path, source.file_path, '') AS node_path,
     labels(source) AS node_labels,
     type(last(relationships(p))) AS relation,
-    length(p) AS hop_count
+    length(p) AS hop_count,
+    coalesce(source.qualified_name, '') AS node_qualified_name,
+    coalesce(source.name, '') AS node_name,
+    coalesce(source.start_line, 0) AS node_start_line,
+    coalesce(source.end_line, 0) AS node_end_line,
+    coalesce(source.docstring, '') AS node_docstring,
+    coalesce(source.signature, source.signature_lite, '') AS node_signature,
+    coalesce(source.visibility, '') AS node_visibility,
+    coalesce(source.module_qn, '') AS node_module_qn,
+    coalesce(source.namespace, '') AS node_namespace,
+    coalesce(source.symbol_kind, toLower(labels(source)[0]), '') AS node_symbol_kind,
+    coalesce(source.pagerank, 0.0) AS node_pagerank,
+    coalesce(source.community_id, -1) AS node_community_id,
+    coalesce(source.has_cycle, false) AS node_has_cycle,
+    coalesce(source.in_call_count, 0) AS node_in_call_count,
+    coalesce(source.out_call_count, 0) AS node_out_call_count,
+    coalesce(source.dead_code_score, 0.0) AS node_dead_code_score,
+    coalesce(source.is_reachable, true) AS node_is_reachable
 LIMIT $limit
 """
         params = {
@@ -9004,6 +9768,7 @@ LIMIT $limit
         relation_counts: dict[str, int] = {}
         direction_counts = {"outbound": 0, "inbound": 0}
         critical_paths: list[dict[str, object]] = []
+        node_meta: dict[str, dict[str, object]] = {}
         for row in combined_rows:
             direction = str(row.get("direction", "")).strip().lower()
             if direction in direction_counts:
@@ -9017,6 +9782,9 @@ LIMIT $limit
             node_path = self._normalize_path_value(row.get("node_path"))
             if node_path:
                 file_counts[node_path] = file_counts.get(node_path, 0) + 1
+            row_meta = self._build_node_meta_from_row(row, prefix="node_")
+            if node_ref and row_meta:
+                node_meta[node_ref] = row_meta
             critical_paths.append(
                 {
                     "direction": direction,
@@ -9025,6 +9793,7 @@ LIMIT $limit
                     "node_ref": node_ref,
                     "node_path": node_path,
                     "node_labels": row.get("node_labels", []),
+                    "node_meta": row_meta,
                 }
             )
 
@@ -9101,6 +9870,7 @@ LIMIT $limit
             "affected_symbols": affected_symbols,
             "affected_files": affected_files,
             "recommended_reads": recommended_reads,
+            "node_meta": node_meta,
             "critical_paths": critical_paths[:12],
             "exact_next_calls": exact_next_calls,
             "next_best_action": next_best_action,
@@ -9844,6 +10614,7 @@ LIMIT $limit
     ) -> dict[str, object]:
         total_lines = 0
         results: list[str] = []
+        file_editor_tool = cast(Any, self._ensure_file_editor_tool())
         for idx, chunk in enumerate(payload, start=1):
             if not isinstance(chunk, dict):
                 return {"error": f"chunk_not_object_{idx}"}
@@ -9858,7 +10629,7 @@ LIMIT $limit
             )
             if total_lines > 200:
                 return {"error": "diff_limit_exceeded"}
-            result = await self._file_editor_tool.function(
+            result = await file_editor_tool.function(
                 file_path=file_path,
                 target_code=target_code,
                 replacement_code=replacement_code,
@@ -10499,6 +11270,7 @@ LIMIT $limit
         return response
 
     def get_tool_schemas(self) -> list[MCPToolSchema]:
+        enabled_names = self._enabled_tool_names()
         return [
             MCPToolSchema(
                 name=metadata.name,
@@ -10509,9 +11281,12 @@ LIMIT $limit
                 inputSchema=metadata.input_schema,
             )
             for metadata in self._tools.values()
+            if metadata.name in enabled_names
         ]
 
     def get_tool_handler(self, name: str) -> tuple[MCPHandlerType, bool] | None:
+        if name not in self._enabled_tool_names():
+            return None
         metadata = self._tools.get(name)
         return None if metadata is None else (metadata.handler, metadata.returns_json)
 
