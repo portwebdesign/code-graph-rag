@@ -567,13 +567,13 @@ claude mcp add --transport stdio code-graph-rag \
 |----|-----------|
 | `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. MANDATORY START: call this first in a fresh session, then call select_active_project. |
 | `select_active_project` | Preflight tool to set/confirm the active repository context and return project-scoped readiness info. Optionally accepts repo_path to switch active root and client_profile to tailor MCP behavior for VS Code, Cline, Copilot, Ollama, or HTTP clients, then reports active project, indexed status, project-scoped graph counts, latest analysis timestamp, and enforced safety policies. MANDATORY SECOND STEP after list_projects before using non-exempt tools. |
-| `get_schema_overview` | Return a compact, project-scoped graph schema bootstrap summary with relation patterns, label counts, key properties, and important labels for the current repository. |
+| `get_schema_overview` | Return a compact, project-scoped graph schema bootstrap summary with relation patterns, label counts, key properties, important labels, and frontend graph capabilities/preset Cypher examples for the current repository. |
 | `detect_project_drift` | Detect FS↔Graph drift for a repository/project before re-index decisions. Reports filesystem file counts, graph module/file counts, and drift signals. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
 | `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. Note: This preserves other projects - only the current project is re-indexed. This tool MUST be called only when the user explicitly asks for re-indexing and requires user_requested=true. A non-empty reason is required; for already indexed projects, drift confirmation is required. |
 | `sync_graph_updates` | Refresh graph state for the active repository without deleting project data first. Supports sync_mode='fast' (default, incremental/selective when possible) and sync_mode='full' (force full reparse for maximum consistency). |
-| `query_code_graph` | PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. MUST be used before read_file and before default run_cypher flow. Requires preflight: run list_projects -> select_active_project first. |
+| `query_code_graph` | PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. For React/Next.js repos, also ask things like 'Show the component tree', 'Which components pass props to child components?', 'Which hooks are used by this page?', or 'Map Next.js pages and layouts to routes'. MUST be used before read_file and before default run_cypher flow. Requires preflight: run list_projects -> select_active_project first. |
 | `multi_hop_analysis` | Build a compressed multi-hop evidence bundle around a symbol or file. Aggregates inbound/outbound relationships across CALLS/IMPORTS/INHERITS/USES, summarizes blast radius, highlights affected symbols/files, and recommends the next retrieval steps. Use this for complex architecture, dependency-chain, and impact analysis in large projects. |
 | `semantic_search` | Perform semantic (vector-based) code search using embeddings. Use this for intent-based discovery such as 'auth flow' or 'error handling'. |
 | `context7_docs` | Fetch Context7 documentation for an external library/framework and persist it into cache/graph/memory when configured. Use this only when repo evidence is insufficient and the task depends on external library behavior. |
@@ -674,6 +674,11 @@ The knowledge graph uses the following node types and relationships:
 | Class | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
 | Function | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
 | Method | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
+| Endpoint | `{qualified_name: string, name: string, framework: string, http_method: string, route_path: string, path: string}` |
+| Hook | `{qualified_name: string, name: string, hook_name: string}` |
+| Import | `{qualified_name: string, name: string, import_source: string, imported_symbol: string, local_name: string, module_qn: string}` |
+| Component | `{qualified_name: string, name: string, framework: string, path: string, module_qn: string}` |
+| Parameter | `{qualified_name: string, name: string, path: string, component_qn: string, prop_path: string}` |
 | Interface | `{qualified_name: string, name: string}` |
 | Enum | `{qualified_name: string, name: string}` |
 | Type | `{qualified_name: string, name: string}` |
@@ -718,7 +723,7 @@ The knowledge graph uses the following node types and relationships:
 | Project, Package, Folder | CONTAINS_FOLDER | Folder |
 | Project, Package, Folder | CONTAINS_FILE | File |
 | Project, Package, Folder | CONTAINS_MODULE | Module |
-| Module | DEFINES | Class, Function |
+| Module | DEFINES | Class, Function, Component |
 | Class | DEFINES_METHOD | Method |
 | Module | IMPORTS | Module |
 | Module | EXPORTS | Class, Function |
@@ -743,7 +748,18 @@ The knowledge graph uses the following node types and relationships:
 | Function, Method | THROWS | Type |
 | Function, Method, Class | DECORATES | Function, Method, Class |
 | Function, Method, Class | ANNOTATES | Function, Method, Class |
-| Function, Method | CALLS | Function, Method |
+| Function, Method, Component | CALLS | Function, Method |
+| Module, Import | RESOLVES_IMPORT | Module, Class, Function, Method |
+| Module, Component | USES_COMPONENT | Component |
+| Component | HAS_PARAMETER | Parameter |
+| Module | INCLUDES_ROUTER | Module |
+| Module | MOUNTS_ROUTER | Module |
+| Module, Function, Method | HAS_ENDPOINT | Endpoint |
+| Endpoint | ROUTES_TO_CONTROLLER | Class |
+| Endpoint | ROUTES_TO_ACTION | Function, Method, Class |
+| Module, Function, Method, Component | REQUESTS_ENDPOINT | Endpoint |
+| Module | EXPOSES_ENDPOINT | Endpoint |
+| Module | PREFIXES_ENDPOINT | Endpoint |
 | Project | HAS_METRIC | AnalysisMetric |
 | Project | HAS_RUN | AnalysisRun |
 | AnalysisRun | HAS_REPORT | AnalysisReport |

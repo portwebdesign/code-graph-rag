@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 from tree_sitter import Language, Parser
 
+from codebase_rag.core import constants as cs
 from codebase_rag.infrastructure.parser_loader import get_parser_and_language
 from codebase_rag.parsers.query.query_engine import QueryEngine, get_query_engine
+from codebase_rag.parsers.query.query_engine_adapter import _QUERY_NAME_MAP
 
 
 @pytest.fixture

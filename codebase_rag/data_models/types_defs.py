@@ -607,6 +607,25 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         NodeLabel.METHOD,
         "{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
     ),
+    NodeSchema(
+        NodeLabel.ENDPOINT,
+        "{qualified_name: string, name: string, framework: string, http_method: string, route_path: string, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.HOOK, "{qualified_name: string, name: string, hook_name: string}"
+    ),
+    NodeSchema(
+        NodeLabel.IMPORT,
+        "{qualified_name: string, name: string, import_source: string, imported_symbol: string, local_name: string, module_qn: string}",
+    ),
+    NodeSchema(
+        NodeLabel.COMPONENT,
+        "{qualified_name: string, name: string, framework: string, path: string, module_qn: string}",
+    ),
+    NodeSchema(
+        NodeLabel.PARAMETER,
+        "{qualified_name: string, name: string, path: string, component_qn: string, prop_path: string}",
+    ),
     NodeSchema(NodeLabel.INTERFACE, "{qualified_name: string, name: string}"),
     NodeSchema(NodeLabel.ENUM, "{qualified_name: string, name: string}"),
     NodeSchema(NodeLabel.TYPE, "{qualified_name: string, name: string}"),
@@ -662,7 +681,7 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
     RelationshipSchema(
         (NodeLabel.MODULE,),
         RelationshipType.DEFINES,
-        (NodeLabel.CLASS, NodeLabel.FUNCTION),
+        (NodeLabel.CLASS, NodeLabel.FUNCTION, NodeLabel.COMPONENT),
     ),
     RelationshipSchema(
         (NodeLabel.CLASS,),
@@ -785,9 +804,64 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
     ),
     RelationshipSchema(
-        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.COMPONENT),
         RelationshipType.CALLS,
         (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.IMPORT),
+        RelationshipType.RESOLVES_IMPORT,
+        (NodeLabel.MODULE, NodeLabel.CLASS, NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.COMPONENT),
+        RelationshipType.USES_COMPONENT,
+        (NodeLabel.COMPONENT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.COMPONENT,),
+        RelationshipType.HAS_PARAMETER,
+        (NodeLabel.PARAMETER,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.INCLUDES_ROUTER,
+        (NodeLabel.MODULE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.MOUNTS_ROUTER,
+        (NodeLabel.MODULE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.HAS_ENDPOINT,
+        (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT,),
+        RelationshipType.ROUTES_TO_CONTROLLER,
+        (NodeLabel.CLASS,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT,),
+        RelationshipType.ROUTES_TO_ACTION,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.CLASS),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.COMPONENT),
+        RelationshipType.REQUESTS_ENDPOINT,
+        (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.EXPOSES_ENDPOINT,
+        (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.MODULE,),
+        RelationshipType.PREFIXES_ENDPOINT,
+        (NodeLabel.ENDPOINT,),
     ),
     RelationshipSchema(
         (NodeLabel.PROJECT,),

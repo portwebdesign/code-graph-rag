@@ -121,6 +121,10 @@ MCP_QUERY_CODE_GRAPH = (
     "PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. "
     "Ask questions like 'What functions call UserService.create_user?' or "
     "'Show me all classes that implement the Repository interface'. "
+    "For React/Next.js repos, also ask things like 'Show the component tree', "
+    "'Which components pass props to child components?', "
+    "'Which hooks are used by this page?', or "
+    "'Map Next.js pages and layouts to routes'. "
     "MUST be used before read_file and before default run_cypher flow. "
     "Requires preflight: run list_projects -> select_active_project first."
 )
@@ -168,7 +172,8 @@ MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
 MCP_GET_SCHEMA_OVERVIEW = (
     "Return a compact, project-scoped graph schema bootstrap summary with relation patterns, "
-    "label counts, key properties, and important labels for the current repository."
+    "label counts, key properties, important labels, and frontend graph capabilities/preset Cypher examples "
+    "for the current repository."
 )
 
 MCP_PARAM_PROJECT_NAME = "Name of the indexed project (e.g., 'abey' or 'my-project')."

@@ -230,6 +230,17 @@ class TopologyGraphEnricher(ConfigParserMixin):
                 str(requester.get("endpoint_file_path", "")),
                 services,
             )
+            target_endpoint_qn = str(requester.get("endpoint_qn", "")).strip()
+            if source_service_name == target_service_name:
+                resolved_target = self._resolve_request_target_service(
+                    requester,
+                    endpoints,
+                    services,
+                    source_service_name,
+                )
+                if resolved_target is None:
+                    continue
+                target_service_name, target_endpoint_qn = resolved_target
             if source_service_name == target_service_name:
                 continue
             ingestor.ensure_relationship_batch(
@@ -245,7 +256,8 @@ class TopologyGraphEnricher(ConfigParserMixin):
                     self._service_qn(target_service_name),
                 ),
                 {
-                    "endpoint_qn": str(requester.get("endpoint_qn", "")).strip(),
+                    "endpoint_qn": target_endpoint_qn,
+                    "route_path": str(requester.get("route_path", "")).strip(),
                     "source_path": str(requester.get("source_path", "")).strip(),
                 },
             )
@@ -565,11 +577,52 @@ class TopologyGraphEnricher(ConfigParserMixin):
             RETURN
               coalesce(source.path, '') AS source_path,
               coalesce(e.path, '') AS endpoint_file_path,
-              coalesce(e.qualified_name, '') AS endpoint_qn
+              coalesce(e.qualified_name, '') AS endpoint_qn,
+              coalesce(e.route_path, '') AS route_path,
+              coalesce(e.http_method, '') AS http_method,
+              coalesce(e.framework, '') AS framework
             """,
             {cs.KEY_PROJECT_NAME: self.project_name},
         )
         return [cast(dict[str, object], row) for row in rows if isinstance(row, dict)]
+
+    def _resolve_request_target_service(
+        self,
+        requester: dict[str, object],
+        endpoints: list[dict[str, object]],
+        services: dict[str, dict[str, object]],
+        source_service_name: str,
+    ) -> tuple[str, str] | None:
+        route_path = str(requester.get("route_path", "")).strip()
+        http_method = str(requester.get("http_method", "")).strip().upper()
+        request_endpoint_qn = str(requester.get("endpoint_qn", "")).strip()
+        source_path = str(requester.get("source_path", "")).strip()
+        if not route_path:
+            return None
+
+        for endpoint in endpoints:
+            candidate_qn = str(endpoint.get("qualified_name", "")).strip()
+            candidate_path = str(endpoint.get("file_path", "")).strip()
+            candidate_route = str(endpoint.get("route_path", "")).strip()
+            candidate_framework = str(endpoint.get("framework", "")).strip().lower()
+            candidate_method = str(endpoint.get("http_method", "")).strip().upper()
+            if not candidate_qn or candidate_qn == request_endpoint_qn:
+                continue
+            if candidate_route != route_path:
+                continue
+            if http_method and candidate_method and http_method != candidate_method:
+                continue
+            if candidate_framework in {"http", "graphql"}:
+                continue
+            if candidate_path == source_path:
+                continue
+
+            target_service_name = self._match_service_for_path(candidate_path, services)
+            if not target_service_name or target_service_name == source_service_name:
+                continue
+            return target_service_name, candidate_qn
+
+        return None
 
     def _iter_repo_files(self, *, limit: int) -> list[Path]:
         files: list[Path] = []

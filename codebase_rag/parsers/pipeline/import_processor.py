@@ -12,9 +12,11 @@ and caching of standard library modules to distinguish between internal and exte
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 from tree_sitter import Node, QueryCursor
@@ -66,7 +68,7 @@ class ImportProcessor:
         import_mapping (dict[str, dict[str, str]]): The main mapping of module QN -> {local_name -> FQN}.
         import_nodes_created (set[str]): A set to track created external module nodes to avoid duplication.
         import_nodes_by_module (dict[str, list[str]]): Maps module QN to a list of its import node QNs.
-        import_symbol_links (list[dict[str, str]]): A list of records for linking import symbols to definitions.
+        import_symbol_links (list[dict[str, str | bool]]): A list of records for linking import symbols to definitions.
         std_lib_cache (dict[str, set[str]]): A cache for standard library modules for different languages.
         stdlib_extractor (StdlibExtractor): A utility to help identify standard library paths.
     """
@@ -88,15 +90,18 @@ class ImportProcessor:
             function_registry (FunctionRegistryTrieProtocol | None): A trie of known functions/classes.
         """
         self.ingestor = ingestor
-        self.repo_path = repo_path
+        self.repo_path = repo_path.resolve()
         self.project_name = project_name
         self.function_registry = function_registry
         self.import_mapping: dict[str, dict[str, str]] = {}
         self.import_nodes_created: set[str] = set()
         self.import_nodes_by_module: dict[str, list[str]] = {}
-        self.import_symbol_links: list[dict[str, str]] = []
+        self.import_symbol_links: list[dict[str, str | bool]] = []
         self.std_lib_cache: dict[str, set[str]] = {}
         self.stdlib_extractor = StdlibExtractor(function_registry)
+        self._module_file_cache: dict[str, Path | None] = {}
+        self._js_config_cache: dict[Path, dict[str, Any]] = {}
+        self._js_config_lookup_cache: dict[Path, list[Path]] = {}
 
         load_persistent_cache()
 
@@ -138,6 +143,210 @@ class ImportProcessor:
         """
         if module_qn in self.import_mapping:
             del self.import_mapping[module_qn]
+
+    def _module_file_path(self, module_qn: str) -> Path | None:
+        cached = self._module_file_cache.get(module_qn)
+        if module_qn in self._module_file_cache:
+            return cached
+
+        project_prefix = f"{self.project_name}{cs.SEPARATOR_DOT}"
+        if not module_qn.startswith(project_prefix):
+            self._module_file_cache[module_qn] = None
+            return None
+
+        relative_parts = module_qn[len(project_prefix) :].split(cs.SEPARATOR_DOT)
+        base_path = self.repo_path.joinpath(*relative_parts)
+        candidates = [
+            *[
+                base_path.with_suffix(ext)
+                for ext in (cs.EXT_JS, cs.EXT_JSX, cs.EXT_TS, cs.EXT_TSX)
+            ],
+            *[
+                base_path / f"{cs.INDEX_INDEX}{ext}"
+                for ext in (cs.EXT_JS, cs.EXT_JSX, cs.EXT_TS, cs.EXT_TSX)
+            ],
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                resolved = candidate.resolve()
+                self._module_file_cache[module_qn] = resolved
+                return resolved
+
+        self._module_file_cache[module_qn] = None
+        return None
+
+    def _js_config_paths_for_file(self, file_path: Path) -> list[Path]:
+        if file_path in self._js_config_lookup_cache:
+            return self._js_config_lookup_cache[file_path]
+
+        config_paths: list[Path] = []
+        current = file_path.parent
+        while True:
+            for config_name in ("tsconfig.json", "jsconfig.json"):
+                candidate = current / config_name
+                if candidate.is_file():
+                    config_paths.append(candidate.resolve())
+            if current in (self.repo_path, current.parent):
+                break
+            current = current.parent
+
+        self._js_config_lookup_cache[file_path] = config_paths
+        return config_paths
+
+    def _load_js_config(self, config_path: Path) -> dict[str, Any]:
+        cached = self._js_config_cache.get(config_path)
+        if cached is not None:
+            return cached
+
+        payload: dict[str, Any] = {
+            "config_dir": config_path.parent,
+            "base_url": ".",
+            "paths": [],
+        }
+        try:
+            raw = json.loads(config_path.read_text(encoding="utf-8", errors="ignore"))
+        except Exception:
+            self._js_config_cache[config_path] = payload
+            return payload
+
+        compiler_options = raw.get("compilerOptions", {})
+        if isinstance(compiler_options, dict):
+            base_url = compiler_options.get("baseUrl")
+            if isinstance(base_url, str) and base_url.strip():
+                payload["base_url"] = base_url.strip()
+            raw_paths = compiler_options.get("paths", {})
+            if isinstance(raw_paths, dict):
+                entries: list[dict[str, Any]] = []
+                for alias, targets in raw_paths.items():
+                    if not isinstance(alias, str):
+                        continue
+                    normalized_targets = (
+                        [target for target in targets if isinstance(target, str)]
+                        if isinstance(targets, list)
+                        else [targets]
+                        if isinstance(targets, str)
+                        else []
+                    )
+                    if not normalized_targets:
+                        continue
+                    entries.append({"alias": alias, "targets": normalized_targets})
+                payload["paths"] = entries
+
+        self._js_config_cache[config_path] = payload
+        return payload
+
+    def _resolve_js_alias_import(self, import_path: str, module_qn: str) -> str | None:
+        file_path = self._module_file_path(module_qn)
+        if file_path is None:
+            return None
+
+        for config_path in self._js_config_paths_for_file(file_path):
+            config = self._load_js_config(config_path)
+            resolved = self._resolve_js_alias_from_config(import_path, config)
+            if resolved:
+                return resolved
+        return None
+
+    def _resolve_js_alias_from_config(
+        self, import_path: str, config: dict[str, Any]
+    ) -> str | None:
+        entries = config.get("paths", [])
+        if not isinstance(entries, list):
+            return None
+
+        exact_entries = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and "*" not in str(entry.get("alias", ""))
+        ]
+        wildcard_entries = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and "*" in str(entry.get("alias", ""))
+        ]
+
+        for entry in [*exact_entries, *wildcard_entries]:
+            alias = str(entry.get("alias", "")).strip()
+            targets = entry.get("targets", [])
+            if not alias or not isinstance(targets, list):
+                continue
+
+            wildcard_value = ""
+            if "*" in alias:
+                alias_prefix, alias_suffix = alias.split("*", 1)
+                if not import_path.startswith(alias_prefix):
+                    continue
+                if alias_suffix and not import_path.endswith(alias_suffix):
+                    continue
+                end_index = (
+                    len(import_path) - len(alias_suffix)
+                    if alias_suffix
+                    else len(import_path)
+                )
+                wildcard_value = import_path[len(alias_prefix) : end_index]
+            elif import_path != alias:
+                continue
+
+            for target in targets:
+                if not isinstance(target, str):
+                    continue
+                resolved_target = target.replace("*", wildcard_value)
+                module_qn = self._resolve_js_alias_target_module_qn(
+                    resolved_target,
+                    cast(Path, config.get("config_dir", self.repo_path)),
+                    str(config.get("base_url", ".")),
+                )
+                if module_qn:
+                    return module_qn
+
+        return None
+
+    def _resolve_js_alias_target_module_qn(
+        self,
+        target: str,
+        config_dir: Path,
+        base_url: str,
+    ) -> str | None:
+        base_dir = (config_dir / base_url).resolve()
+        candidate = (base_dir / target).resolve()
+        resolved_path = self._resolve_js_module_target_path(candidate)
+        if resolved_path is None:
+            return None
+        try:
+            relative_path = Path(
+                os.path.relpath(
+                    resolved_path.resolve(),
+                    start=self.repo_path.resolve(),
+                )
+            )
+        except ValueError:
+            return None
+        if str(relative_path).startswith(".."):
+            return None
+
+        if resolved_path.stem == cs.INDEX_INDEX:
+            parts = relative_path.parent.parts
+        else:
+            parts = relative_path.with_suffix("").parts
+        return cs.SEPARATOR_DOT.join([self.project_name, *parts])
+
+    @staticmethod
+    def _resolve_js_module_target_path(candidate: Path) -> Path | None:
+        if candidate.is_file():
+            return candidate
+
+        suffix = candidate.suffix.lower()
+        if suffix:
+            return candidate if candidate.is_file() else None
+
+        for ext in (cs.EXT_JS, cs.EXT_JSX, cs.EXT_TS, cs.EXT_TSX, ".json"):
+            file_candidate = candidate.with_suffix(ext)
+            if file_candidate.is_file():
+                return file_candidate
+            index_candidate = candidate / f"{cs.INDEX_INDEX}{ext}"
+            if index_candidate.is_file():
+                return index_candidate
+        return None
 
     def _resolve_relative_import(self, relative_node: Node, module_qn: str) -> str:
         """
@@ -426,7 +635,7 @@ class ImportProcessor:
         if language == cs.SupportedLanguage.PYTHON:
             self._parse_python_imports(captures, module_qn)
         elif language in (cs.SupportedLanguage.JS, cs.SupportedLanguage.TS):
-            self._parse_js_imports(captures, module_qn)
+            self._parse_js_imports(captures, module_qn, language)
         elif language == cs.SupportedLanguage.GO:
             self._parse_go_imports(captures, module_qn)
         elif language == cs.SupportedLanguage.JAVA:
@@ -596,7 +805,12 @@ class ImportProcessor:
             return f"{base}.{partial_path}" if base else partial_path
         return base
 
-    def _parse_js_imports(self, captures: dict, module_qn: str) -> None:
+    def _parse_js_imports(
+        self,
+        captures: dict,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+    ) -> None:
         """
         Parses JavaScript/TypeScript `import` statements.
 
@@ -613,9 +827,158 @@ class ImportProcessor:
                 continue
 
             source_path = safe_decode_with_fallback(source_node).strip("'\"")
-            _ = self._resolve_js_module_path(source_path, module_qn)
+            resolved_source = self._resolve_js_module_path(source_path, module_qn)
+            import_text = safe_decode_with_fallback(node)
 
-            _ = node.child_by_field_name("import_clause")
+            default_match = re.match(
+                r"^\s*import\s+([A-Za-z_$][\w$]*)\s*(?:,|\s+from\b)",
+                import_text,
+            )
+            namespace_match = re.search(
+                r"import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\b",
+                import_text,
+            )
+            named_match = re.search(r"\{([^}]*)\}", import_text, re.DOTALL)
+
+            if default_match:
+                local_name = default_match.group(1)
+                if local_name != "type":
+                    self._register_js_import(
+                        module_qn=module_qn,
+                        source_path=source_path,
+                        resolved_source=resolved_source,
+                        local_name=local_name,
+                        full_name=f"{resolved_source}{cs.IMPORT_DEFAULT_SUFFIX}",
+                        imported_symbol="default",
+                        language=language,
+                        is_default=True,
+                    )
+
+            if namespace_match:
+                local_name = namespace_match.group(1)
+                self._register_js_import(
+                    module_qn=module_qn,
+                    source_path=source_path,
+                    resolved_source=resolved_source,
+                    local_name=local_name,
+                    full_name=resolved_source,
+                    imported_symbol="*",
+                    language=language,
+                    is_namespace=True,
+                )
+
+            if named_match:
+                for raw_item in named_match.group(1).split(","):
+                    item = raw_item.strip()
+                    if not item:
+                        continue
+                    item = re.sub(r"^\s*type\s+", "", item)
+                    if not item:
+                        continue
+                    if " as " in item:
+                        imported_name, local_name = [
+                            part.strip() for part in item.split(" as ", 1)
+                        ]
+                    else:
+                        imported_name = item
+                        local_name = item
+                    if not imported_name or not local_name:
+                        continue
+                    self._register_js_import(
+                        module_qn=module_qn,
+                        source_path=source_path,
+                        resolved_source=resolved_source,
+                        local_name=local_name,
+                        full_name=f"{resolved_source}{cs.SEPARATOR_DOT}{imported_name}",
+                        imported_symbol=imported_name,
+                        language=language,
+                    )
+
+            if not default_match and not namespace_match and not named_match:
+                # Side-effect imports still matter for module dependency resolution.
+                self._register_js_import(
+                    module_qn=module_qn,
+                    source_path=source_path,
+                    resolved_source=resolved_source,
+                    local_name="",
+                    full_name=resolved_source,
+                    imported_symbol="",
+                    language=language,
+                )
+
+    def _register_js_import(
+        self,
+        module_qn: str,
+        source_path: str,
+        resolved_source: str,
+        local_name: str,
+        full_name: str,
+        imported_symbol: str,
+        language: cs.SupportedLanguage,
+        is_default: bool = False,
+        is_namespace: bool = False,
+    ) -> None:
+        self.import_mapping.setdefault(module_qn, {})
+        if local_name:
+            self.import_mapping[module_qn][local_name] = full_name
+
+        if not self.ingestor:
+            return
+
+        import_index = len(self.import_nodes_by_module.get(module_qn, []))
+        import_name = local_name or source_path
+        sanitized_name = re.sub(r"[^A-Za-z0-9_]+", "_", import_name).strip("_")
+        if not sanitized_name:
+            sanitized_name = "side_effect"
+        import_qn = (
+            f"{module_qn}{cs.SEPARATOR_DOT}import.{sanitized_name}_{import_index}"
+        )
+
+        import_props = {
+            cs.KEY_QUALIFIED_NAME: import_qn,
+            cs.KEY_NAME: import_name,
+            cs.KEY_IMPORT_SOURCE: source_path,
+            cs.KEY_IMPORTED_SYMBOL: imported_symbol,
+            cs.KEY_LOCAL_NAME: local_name,
+            cs.KEY_IS_DEFAULT_IMPORT: is_default,
+            cs.KEY_IS_NAMESPACE_IMPORT: is_namespace,
+            cs.KEY_MODULE_QN: module_qn,
+            cs.KEY_SYMBOL_KIND: cs.NodeLabel.IMPORT.value.lower(),
+            cs.KEY_PARENT_QN: module_qn,
+        }
+        self.ingestor.ensure_node_batch(cs.NodeLabel.IMPORT, import_props)
+        self.import_nodes_by_module.setdefault(module_qn, []).append(import_qn)
+        self.import_symbol_links.append(
+            {
+                "import_qn": import_qn,
+                "full_name": full_name,
+                "local_name": local_name,
+                "module_qn": module_qn,
+                "language": language.value,
+                "is_default": is_default,
+                "is_namespace": is_namespace,
+            }
+        )
+
+        target_module = self._resolve_module_path(
+            full_name,
+            module_qn,
+            language,
+        )
+        self.ingestor.ensure_relationship_batch(
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, module_qn),
+            cs.RelationshipType.IMPORTS,
+            (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, target_module),
+            {
+                cs.KEY_IMPORTED_SYMBOL: imported_symbol,
+                cs.KEY_LOCAL_NAME: local_name,
+                cs.KEY_IS_DEFAULT_IMPORT: is_default,
+                cs.KEY_IS_NAMESPACE_IMPORT: is_namespace,
+                "import_kind": "static",
+                "confidence": 0.95,
+                "source_parser": "tree-sitter-js-ts",
+            },
+        )
 
     def _resolve_js_module_path(self, import_path: str, current_module: str) -> str:
         """
@@ -628,6 +991,10 @@ class ImportProcessor:
         Returns:
             The resolved, fully qualified module path.
         """
+        alias_resolved = self._resolve_js_alias_import(import_path, current_module)
+        if alias_resolved:
+            return alias_resolved
+
         if not import_path.startswith(
             cs.PATH_CURRENT_DIR
         ) and not import_path.startswith(cs.PATH_PARENT_DIR):

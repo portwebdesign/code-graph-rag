@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -11,7 +12,14 @@ from codebase_rag.tools.shell_command import (
     create_shell_command_tool,
 )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.integration]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="POSIX shell integration tests are not portable on Windows",
+    ),
+]
 
 
 @pytest.fixture(params=["asyncio"])

@@ -69,19 +69,24 @@ class TestMCPWorkflowEnforcement:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         mcp_registry._session_state["memory_primed"] = True
+        previous = settings.MCP_ENFORCE_COMPLEX_PLAN_GATE
+        settings.MCP_ENFORCE_COMPLEX_PLAN_GATE = True
 
-        payload = mcp_registry.get_workflow_gate_payload(
-            "query_code_graph",
-            {
-                "natural_language_query": "analyze multi-file dependency chain refactor impact"
-            },
-        )
+        try:
+            payload = mcp_registry.get_workflow_gate_payload(
+                "query_code_graph",
+                {
+                    "natural_language_query": "analyze multi-file dependency chain refactor impact"
+                },
+            )
 
-        assert payload is not None
-        exact_next_calls = cast(
-            list[dict[str, object]], payload.get("exact_next_calls", [])
-        )
-        assert exact_next_calls[0].get("tool") == "plan_task"
+            assert payload is not None
+            exact_next_calls = cast(
+                list[dict[str, object]], payload.get("exact_next_calls", [])
+            )
+            assert exact_next_calls[0].get("tool") == "plan_task"
+        finally:
+            settings.MCP_ENFORCE_COMPLEX_PLAN_GATE = previous
 
     def test_workflow_gate_requires_repo_evidence_before_context7(
         self, mcp_registry: MCPToolsRegistry

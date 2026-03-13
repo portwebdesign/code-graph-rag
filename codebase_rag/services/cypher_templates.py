@@ -134,6 +134,99 @@ class CypherTemplateBank:
             ),
         ),
         CypherTemplate(
+            name="frontend_component_tree",
+            query=(
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component) "
+                "OPTIONAL MATCH (c)-[:USES_COMPONENT]->(child:Component) "
+                "RETURN c.name AS component, c.qualified_name AS qualified_name, "
+                "coalesce(c.path, m.path, '') AS path, "
+                "collect(DISTINCT child.name)[0..12] AS child_components, "
+                "count(DISTINCT child) AS child_count, "
+                "coalesce(c.props, []) AS props, "
+                "coalesce(c.hooks_used, []) AS hooks_used "
+                "ORDER BY child_count DESC, component LIMIT 80"
+            ),
+            phrases_any=(
+                "component tree",
+                "render tree",
+                "component hierarchy",
+                "ui tree",
+            ),
+            direct_threshold=0.7,
+            prompt_hint=(
+                "For React/Next component topology, start at Module-[:DEFINES]->Component "
+                "and traverse USES_COMPONENT to child components. Return props and hooks_used when available."
+            ),
+        ),
+        CypherTemplate(
+            name="frontend_prop_flow",
+            query=(
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(parent:Component) "
+                "MATCH (parent)-[r:USES_COMPONENT]->(child:Component) "
+                "RETURN parent.name AS parent_component, child.name AS child_component, "
+                "coalesce(r.props_passed, []) AS props_passed, "
+                "coalesce(r.prop_bindings, {}) AS prop_bindings, "
+                "coalesce(parent.path, m.path, '') AS path "
+                "ORDER BY parent_component, child_component LIMIT 120"
+            ),
+            phrases_any=(
+                "prop flow",
+                "props flow",
+                "prop drill",
+                "prop drilling",
+            ),
+            direct_threshold=0.7,
+            prompt_hint=(
+                "For frontend prop questions, inspect USES_COMPONENT edges and return props_passed "
+                "plus prop_bindings between parent and child components."
+            ),
+        ),
+        CypherTemplate(
+            name="frontend_hook_usage",
+            query=(
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component) "
+                "MATCH (c)-[r:CALLS]->(f:Function) "
+                "WHERE coalesce(r.hook_name, '') <> '' OR f.name STARTS WITH 'use' "
+                "RETURN c.name AS component, coalesce(r.hook_name, f.name) AS hook_name, "
+                "f.qualified_name AS hook_qualified_name, "
+                "coalesce(c.path, m.path, '') AS path "
+                "ORDER BY component, hook_name LIMIT 120"
+            ),
+            phrases_any=(
+                "hook usage",
+                "which hooks",
+                "used hooks",
+                "react hooks",
+            ),
+            direct_threshold=0.7,
+            prompt_hint=(
+                "For React hook usage, traverse Component-[:CALLS]->Function and use hook_name "
+                "on the edge when available."
+            ),
+        ),
+        CypherTemplate(
+            name="next_route_component_map",
+            query=(
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component)-[:HAS_ENDPOINT]->(e:Endpoint) "
+                "RETURN e.route AS route, coalesce(e.method, 'GET') AS method, "
+                "coalesce(e.next_kind, '') AS next_kind, "
+                "c.name AS component, c.qualified_name AS qualified_name, "
+                "coalesce(c.path, m.path, '') AS path "
+                "ORDER BY route, next_kind, component LIMIT 120"
+            ),
+            phrases_any=(
+                "next route",
+                "page component",
+                "layout component",
+                "route to component",
+            ),
+            direct_threshold=0.7,
+            prompt_hint=(
+                "For Next.js page/layout/route mapping, traverse Component-[:HAS_ENDPOINT]->Endpoint "
+                "and return route, method, next_kind, and component identity."
+            ),
+        ),
+        CypherTemplate(
             name="blast_radius",
             query=None,
             phrases_any=(

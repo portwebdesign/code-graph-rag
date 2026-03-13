@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from codebase_rag.core.config import settings
 from codebase_rag.mcp.tools import MCPToolsRegistry
 
 pytestmark = [pytest.mark.anyio]
@@ -185,6 +186,8 @@ class TestMCPAnalysisTools:
     async def test_mcp_analysis_resources_and_resource_read(
         self, mcp_registry: MCPToolsRegistry, temp_test_repo: Path
     ) -> None:
+        previous = settings.MCP_ENABLE_RESOURCES
+        settings.MCP_ENABLE_RESOURCES = True
         report_dir = temp_test_repo / "output" / "analysis"
         report_dir.mkdir(parents=True, exist_ok=True)
         (report_dir / "security_report.json").write_text(
@@ -192,17 +195,22 @@ class TestMCPAnalysisTools:
             encoding="utf-8",
         )
 
-        resources = await mcp_registry.list_mcp_resources()
-        overview = await mcp_registry.read_mcp_resource("analysis://overview")
+        try:
+            resources = await mcp_registry.list_mcp_resources()
+            overview = await mcp_registry.read_mcp_resource("analysis://overview")
 
-        assert any(
-            str(item.get("uri", "")) == "analysis://overview" for item in resources
-        )
-        assert overview.get("artifact_count") == 1
+            assert any(
+                str(item.get("uri", "")) == "analysis://overview" for item in resources
+            )
+            assert overview.get("artifact_count") == 1
+        finally:
+            settings.MCP_ENABLE_RESOURCES = previous
 
     async def test_mcp_analysis_prompts_and_bundle_lookup(
         self, mcp_registry: MCPToolsRegistry, temp_test_repo: Path
     ) -> None:
+        previous = settings.MCP_ENABLE_PROMPTS
+        settings.MCP_ENABLE_PROMPTS = True
         report_dir = temp_test_repo / "output" / "analysis"
         report_dir.mkdir(parents=True, exist_ok=True)
         (report_dir / "api_report.json").write_text(
@@ -210,18 +218,21 @@ class TestMCPAnalysisTools:
             encoding="utf-8",
         )
 
-        prompts = await mcp_registry.list_mcp_prompts()
-        prompt = await mcp_registry.get_mcp_prompt(
-            "architecture_review",
-            {"goal": "map services and endpoints"},
-        )
-        bundle = await mcp_registry.architecture_bundle("map services")
+        try:
+            prompts = await mcp_registry.list_mcp_prompts()
+            prompt = await mcp_registry.get_mcp_prompt(
+                "architecture_review",
+                {"goal": "map services and endpoints"},
+            )
+            bundle = await mcp_registry.architecture_bundle("map services")
 
-        assert any(
-            str(item.get("name", "")) == "architecture_review" for item in prompts
-        )
-        messages = cast(list[dict[str, object]], prompt.get("messages", []))
-        assert messages
-        assert "Use normalized bundle findings" in str(messages[0].get("text", ""))
-        assert bundle.get("bundle") == "architecture_bundle"
-        assert "resource_uris" in bundle
+            assert any(
+                str(item.get("name", "")) == "architecture_review" for item in prompts
+            )
+            messages = cast(list[dict[str, object]], prompt.get("messages", []))
+            assert messages
+            assert "Use normalized bundle findings" in str(messages[0].get("text", ""))
+            assert bundle.get("bundle") == "architecture_bundle"
+            assert "resource_uris" in bundle
+        finally:
+            settings.MCP_ENABLE_PROMPTS = previous

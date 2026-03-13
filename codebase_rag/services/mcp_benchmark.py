@@ -124,13 +124,24 @@ async def run_mcp_benchmarks(
             repo_path=str(repo_root),
             client_profile=case.profile,
         )
-        session_contract = cast(dict, result.get("session_contract", {}))
+        session_contract = cast(
+            dict,
+            result.get("session_contract", {})
+            or registry._session_state.get("session_contract", {}),
+        )
+        if not session_contract:
+            session_contract = cast(
+                dict,
+                registry._build_session_contract(repo_root.name, case.profile),
+            )
         response_profiles = cast(dict, session_contract.get("response_profiles", {}))
         test_generate = cast(dict, response_profiles.get("test_generate", {}))
         client_profile_policy = cast(
             dict, session_contract.get("client_profile_policy", {})
         )
         state_machine = cast(dict, session_contract.get("state_machine", {}))
+        if not state_machine:
+            state_machine = cast(dict, registry._state_machine_contract())
         repo_semantics = cast(dict, session_contract.get("repo_semantics", {}))
 
         checks = {

@@ -37,6 +37,36 @@ class EndpointMatch:
     metadata: dict[str, str] | None = None
 
 
+@dataclass
+class FastAPILocalEndpoint:
+    router_name: str
+    method: str
+    path: str
+    handler_name: str
+
+
+@dataclass
+class FastAPIInclude:
+    target_name: str
+    source_name: str
+    source_module_qn: str
+    source_var_name: str
+    prefix: str = ""
+    source_expression: str = ""
+    composition_kind: str = "direct"
+
+
+@dataclass
+class FastAPIModuleManifest:
+    module_qn: str
+    relative_path: str
+    router_vars: set[str]
+    app_vars: set[str]
+    import_aliases: dict[str, tuple[str, str]]
+    local_endpoints: list[FastAPILocalEndpoint]
+    include_edges: list[FastAPIInclude]
+
+
 class FrameworkLinker:
     """
     Orchestrates the linking of framework-specific components in the code graph.
@@ -81,6 +111,23 @@ class FrameworkLinker:
         self._template_index: dict[str, str] | None = None
         self._asset_index: dict[str, str] | None = None
         self._env_values = self._load_env_values()
+        self._fastapi_manifests: dict[str, FastAPIModuleManifest] = {}
+
+    _SKIP_DIR_PARTS = {
+        ".git",
+        ".idea",
+        ".next",
+        ".venv",
+        "__pycache__",
+        "build",
+        "coverage",
+        "dist",
+        "generated",
+        "node_modules",
+        "site-packages",
+        "vendor",
+        "venv",
+    }
 
     def link_repo(self) -> None:
         """
@@ -92,6 +139,8 @@ class FrameworkLinker:
         self._link_tailwind_assets()
         for file_path in self.repo_path.rglob("*"):
             if not file_path.is_file():
+                continue
+            if self._should_skip_framework_file(file_path):
                 continue
             if file_path.suffix.lower() not in {
                 cs.EXT_CS,
@@ -119,6 +168,7 @@ class FrameworkLinker:
                 service_map = self._link_csharp_di(file_path, source)
                 self._link_csharp_di_consumers(file_path, source, service_map)
             elif file_path.suffix.lower() == cs.EXT_PY:
+                self._collect_fastapi_module(file_path, source)
                 self._link_django_views(file_path, source)
             elif file_path.suffix.lower() == cs.EXT_GO:
                 endpoints = self._extract_go_endpoints(source)
@@ -152,6 +202,25 @@ class FrameworkLinker:
 
                 next_endpoints = self._extract_next_api_endpoints(file_path, source)
                 self._link_next_endpoints(file_path, next_endpoints)
+
+                if file_path.suffix.lower() in {
+                    cs.EXT_JS,
+                    cs.EXT_JSX,
+                    cs.EXT_TS,
+                    cs.EXT_TSX,
+                }:
+                    self._link_js_ts_requests(file_path, [])
+
+        self._materialize_fastapi_routes()
+
+    def _should_skip_framework_file(self, file_path: Path) -> bool:
+        try:
+            parts = {
+                part.lower() for part in file_path.relative_to(self.repo_path).parts
+            }
+        except ValueError:
+            return True
+        return not self._SKIP_DIR_PARTS.isdisjoint(parts)
 
     def _endpoint_qn(self, framework: str, method: str, path: str) -> str:
         """Generates a unique qualified name for an endpoint."""
@@ -342,8 +411,13 @@ class FrameworkLinker:
             endpoint.path
         )
         endpoint_path = normalized_path or endpoint.path
+        endpoint_identity = endpoint_path
+        if endpoint.metadata and endpoint.metadata.get("endpoint_identity"):
+            endpoint_identity = (
+                f"{endpoint_path}#{endpoint.metadata['endpoint_identity']}"
+            )
         endpoint_qn = self._endpoint_qn(
-            endpoint.framework, endpoint.method, endpoint_path
+            endpoint.framework, endpoint.method, endpoint_identity
         )
         props = {
             cs.KEY_QUALIFIED_NAME: endpoint_qn,
@@ -492,6 +566,658 @@ class FrameworkLinker:
             if self.function_registry.get(qn) == NodeType.CLASS:
                 return qn
         return candidates[0] if candidates else None
+
+    def _find_handler_qn_in_module(
+        self, module_qn: str, handler_name: str
+    ) -> str | None:
+        """Resolves a handler qualified name preferring the specific source module."""
+        candidates = self.function_registry.find_ending_with(handler_name)
+        preferred_prefix = f"{module_qn}{cs.SEPARATOR_DOT}"
+        for qn in candidates:
+            if qn.startswith(preferred_prefix):
+                return qn
+        return candidates[0] if candidates else None
+
+    def _collect_fastapi_module(self, file_path: Path, source: str) -> None:
+        """Collect FastAPI router/app composition metadata for later graph materialization."""
+        if "fastapi" not in source.lower() and "include_router(" not in source:
+            return
+
+        module_qn = self._module_qn_for_path(file_path)
+        relative_path = str(file_path.relative_to(self.repo_path)).replace("\\", "/")
+        router_vars, app_vars = self._extract_fastapi_router_vars(source)
+        (
+            factory_returns,
+            local_aliases,
+            factory_router_aliases,
+            factory_app_aliases,
+        ) = self._extract_fastapi_factory_aliases(source, router_vars, app_vars)
+        router_vars.update(factory_router_aliases)
+        app_vars.update(factory_app_aliases)
+        import_aliases = self._extract_fastapi_import_aliases(
+            file_path, module_qn, source
+        )
+        loop_bindings = self._extract_fastapi_loop_bindings(source)
+        local_endpoints = self._extract_fastapi_local_endpoints(source)
+        include_edges = self._extract_fastapi_include_edges(
+            source,
+            router_vars=router_vars,
+            app_vars=app_vars,
+            import_aliases=import_aliases,
+            local_aliases=local_aliases,
+            factory_returns=factory_returns,
+            loop_bindings=loop_bindings,
+            module_qn=module_qn,
+        )
+
+        if (
+            not router_vars
+            and not app_vars
+            and not local_endpoints
+            and not include_edges
+        ):
+            return
+
+        self._fastapi_manifests[module_qn] = FastAPIModuleManifest(
+            module_qn=module_qn,
+            relative_path=relative_path,
+            router_vars=router_vars,
+            app_vars=app_vars,
+            import_aliases=import_aliases,
+            local_endpoints=local_endpoints,
+            include_edges=include_edges,
+        )
+
+    @staticmethod
+    def _extract_fastapi_router_vars(source: str) -> tuple[set[str], set[str]]:
+        router_vars: set[str] = set()
+        app_vars: set[str] = set()
+        assign_pattern = re.compile(
+            r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<factory>APIRouter|FastAPI)\s*\(",
+            re.MULTILINE,
+        )
+        for match in assign_pattern.finditer(source):
+            name = match.group("name")
+            factory = match.group("factory")
+            if factory == "APIRouter":
+                router_vars.add(name)
+            elif factory == "FastAPI":
+                app_vars.add(name)
+        return router_vars, app_vars
+
+    @staticmethod
+    def _extract_fastapi_factory_aliases(
+        source: str,
+        router_vars: set[str],
+        app_vars: set[str],
+    ) -> tuple[dict[str, str], dict[str, str], set[str], set[str]]:
+        function_returns: dict[str, str] = {}
+        local_aliases: dict[str, str] = {}
+        router_aliases: set[str] = set()
+        app_aliases: set[str] = set()
+
+        function_pattern = re.compile(
+            r"(?:async\s+def|def)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\([^\)]*\)\s*(?:->\s*[^:]+)?\s*:[\t ]*(?:\n(?P<body>(?:[ \t]+.*\n?)+))",
+            re.MULTILINE,
+        )
+        return_pattern = re.compile(
+            r"^\s*return\s+(?P<value>[A-Za-z_][A-Za-z0-9_]*)\s*$", re.MULTILINE
+        )
+        for match in function_pattern.finditer(source):
+            function_name = match.group("name")
+            body = match.group("body") or ""
+            return_match = return_pattern.search(body)
+            if not return_match:
+                continue
+            returned_name = return_match.group("value")
+            if returned_name in router_vars or returned_name in app_vars:
+                function_returns[function_name] = returned_name
+
+        assign_pattern = re.compile(
+            r"^\s*(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<factory>[A-Za-z_][A-Za-z0-9_]*)\s*\([^\)]*\)\s*$",
+            re.MULTILINE,
+        )
+        for match in assign_pattern.finditer(source):
+            alias = match.group("alias")
+            factory_name = match.group("factory")
+            returned_name = function_returns.get(factory_name)
+            if not returned_name:
+                continue
+            local_aliases[alias] = returned_name
+            if returned_name in router_vars:
+                router_aliases.add(alias)
+            if returned_name in app_vars:
+                app_aliases.add(alias)
+
+        return function_returns, local_aliases, router_aliases, app_aliases
+
+    @staticmethod
+    def _extract_fastapi_loop_bindings(source: str) -> dict[str, list[str]]:
+        loop_bindings: dict[str, list[str]] = {}
+        loop_pattern = re.compile(
+            r"for\s+(?P<var>[A-Za-z_][A-Za-z0-9_]*)\s+in\s+(?P<container>\([\s\S]*?\)|\[[\s\S]*?\])\s*:",
+            re.MULTILINE,
+        )
+        for match in loop_pattern.finditer(source):
+            loop_var = match.group("var")
+            container = match.group("container").strip()[1:-1]
+            items = [
+                item.strip()
+                for item in container.split(",")
+                if item.strip() and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", item.strip())
+            ]
+            if items:
+                loop_bindings[loop_var] = items
+        return loop_bindings
+
+    def _extract_fastapi_import_aliases(
+        self,
+        file_path: Path,
+        module_qn: str,
+        source: str,
+    ) -> dict[str, tuple[str, str]]:
+        aliases: dict[str, tuple[str, str]] = {}
+        from_pattern = re.compile(
+            r"^\s*from\s+(?P<module>[A-Za-z0-9_\.]+|\.+[A-Za-z0-9_\.]+)\s+import\s+(?P<names>[^\n]+)$",
+            re.MULTILINE,
+        )
+        alias_pattern = re.compile(
+            r"^(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?:\s+as\s+(?P<alias>[A-Za-z_][A-Za-z0-9_]*))?$"
+        )
+        for match in from_pattern.finditer(source):
+            module_name = match.group("module").strip()
+            resolved_module_qn = self._resolve_python_import_module_qn(
+                file_path, module_qn, module_name
+            )
+            if not resolved_module_qn:
+                continue
+            imported_names = [part.strip() for part in match.group("names").split(",")]
+            for imported in imported_names:
+                alias_match = alias_pattern.match(imported)
+                if not alias_match:
+                    continue
+                imported_name = alias_match.group("name")
+                alias_name = alias_match.group("alias") or imported_name
+                if imported_name not in {"router", "app"}:
+                    continue
+                aliases[alias_name] = (resolved_module_qn, imported_name)
+        return aliases
+
+    def _resolve_python_import_module_qn(
+        self,
+        file_path: Path,
+        module_qn: str,
+        import_module: str,
+    ) -> str | None:
+        if not import_module:
+            return None
+        if not import_module.startswith("."):
+            return f"{self.project_name}{cs.SEPARATOR_DOT}{import_module}"
+
+        current_package_parts = list(file_path.relative_to(self.repo_path).parent.parts)
+        level = len(import_module) - len(import_module.lstrip("."))
+        suffix = import_module[level:]
+        if level > 1:
+            trim_count = level - 1
+            if trim_count > len(current_package_parts):
+                return None
+            current_package_parts = current_package_parts[
+                : len(current_package_parts) - trim_count
+            ]
+        combined_parts = list(current_package_parts)
+        if suffix:
+            combined_parts.extend([part for part in suffix.split(".") if part])
+        if not combined_parts:
+            return None
+        return f"{self.project_name}{cs.SEPARATOR_DOT}{cs.SEPARATOR_DOT.join(combined_parts)}"
+
+    def _extract_fastapi_local_endpoints(
+        self, source: str
+    ) -> list[FastAPILocalEndpoint]:
+        endpoints: list[FastAPILocalEndpoint] = []
+        pattern = re.compile(
+            r"@(?P<router>[A-Za-z_][A-Za-z0-9_]*)\.(?P<method>get|post|put|delete|patch|api_route)\((?P<args>[\s\S]*?)\)\s*(?:async\s+def|def)\s+(?P<handler>[A-Za-z_][A-Za-z0-9_]*)",
+            re.IGNORECASE,
+        )
+        for match in pattern.finditer(source):
+            router_name = match.group("router")
+            method = match.group("method").upper()
+            args = match.group("args")
+            path = self._extract_first_string_arg(args)
+            if not path:
+                continue
+            if method == "API_ROUTE":
+                method = self._extract_api_route_method(args)
+            endpoints.append(
+                FastAPILocalEndpoint(
+                    router_name=router_name,
+                    method=method,
+                    path=path,
+                    handler_name=match.group("handler"),
+                )
+            )
+        return endpoints
+
+    def _extract_fastapi_include_edges(
+        self,
+        source: str,
+        *,
+        router_vars: set[str],
+        app_vars: set[str],
+        import_aliases: dict[str, tuple[str, str]],
+        local_aliases: dict[str, str],
+        factory_returns: dict[str, str],
+        loop_bindings: dict[str, list[str]],
+        module_qn: str,
+    ) -> list[FastAPIInclude]:
+        include_edges: list[FastAPIInclude] = []
+        prefix_pattern = re.compile(r"prefix\s*=\s*['\"]([^'\"]+)['\"]")
+        for target_name, args in self._iter_fastapi_include_calls(source):
+            if target_name not in router_vars and target_name not in app_vars:
+                continue
+            arg_list = self._split_fastapi_call_arguments(args)
+            if not arg_list:
+                continue
+            source_expression = arg_list[0]
+            prefix_match = prefix_pattern.search(args or "")
+            prefix = prefix_match.group(1).strip() if prefix_match else ""
+            for (
+                source_name,
+                source_module_qn,
+                source_var_name,
+                composition_kind,
+            ) in self._resolve_fastapi_include_sources(
+                source_expression,
+                router_vars=router_vars,
+                app_vars=app_vars,
+                import_aliases=import_aliases,
+                local_aliases=local_aliases,
+                factory_returns=factory_returns,
+                loop_bindings=loop_bindings,
+                module_qn=module_qn,
+            ):
+                include_edges.append(
+                    FastAPIInclude(
+                        target_name=target_name,
+                        source_name=source_name,
+                        source_module_qn=source_module_qn,
+                        source_var_name=source_var_name,
+                        prefix=prefix,
+                        source_expression=source_expression,
+                        composition_kind=composition_kind,
+                    )
+                )
+        return include_edges
+
+    @staticmethod
+    def _iter_fastapi_include_calls(source: str) -> list[tuple[str, str]]:
+        calls: list[tuple[str, str]] = []
+        pattern = re.compile(r"(?P<target>[A-Za-z_][A-Za-z0-9_]*)\.include_router\(")
+        index = 0
+        while True:
+            match = pattern.search(source, index)
+            if not match:
+                break
+            target_name = match.group("target")
+            args_start = match.end()
+            args_end = FrameworkLinker._find_matching_paren(source, args_start - 1)
+            if args_end == -1:
+                index = match.end()
+                continue
+            calls.append((target_name, source[args_start:args_end]))
+            index = args_end + 1
+        return calls
+
+    @staticmethod
+    def _find_matching_paren(source: str, open_index: int) -> int:
+        depth = 0
+        in_string: str | None = None
+        escaped = False
+        for index in range(open_index, len(source)):
+            char = source[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == in_string:
+                    in_string = None
+                continue
+            if char in {"'", '"'}:
+                in_string = char
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    return index
+        return -1
+
+    @staticmethod
+    def _split_fastapi_call_arguments(args: str) -> list[str]:
+        parts: list[str] = []
+        current: list[str] = []
+        paren_depth = 0
+        bracket_depth = 0
+        brace_depth = 0
+        in_string: str | None = None
+        escaped = False
+        for char in args:
+            if in_string:
+                current.append(char)
+                if escaped:
+                    escaped = False
+                    continue
+                if char == "\\":
+                    escaped = True
+                    continue
+                if char == in_string:
+                    in_string = None
+                continue
+            if char in {"'", '"'}:
+                in_string = char
+                current.append(char)
+                continue
+            if char == "(":
+                paren_depth += 1
+            elif char == ")":
+                paren_depth -= 1
+            elif char == "[":
+                bracket_depth += 1
+            elif char == "]":
+                bracket_depth -= 1
+            elif char == "{":
+                brace_depth += 1
+            elif char == "}":
+                brace_depth -= 1
+            if (
+                char == ","
+                and paren_depth == 0
+                and bracket_depth == 0
+                and brace_depth == 0
+            ):
+                part = "".join(current).strip()
+                if part:
+                    parts.append(part)
+                current = []
+                continue
+            current.append(char)
+        tail = "".join(current).strip()
+        if tail:
+            parts.append(tail)
+        return parts
+
+    def _resolve_fastapi_include_sources(
+        self,
+        expression: str,
+        *,
+        router_vars: set[str],
+        app_vars: set[str],
+        import_aliases: dict[str, tuple[str, str]],
+        local_aliases: dict[str, str],
+        factory_returns: dict[str, str],
+        loop_bindings: dict[str, list[str]],
+        module_qn: str,
+    ) -> list[tuple[str, str, str, str]]:
+        expr = expression.strip()
+        if not expr:
+            return []
+        if expr in loop_bindings:
+            results: list[tuple[str, str, str, str]] = []
+            for item in loop_bindings[expr]:
+                results.extend(
+                    self._resolve_fastapi_include_sources(
+                        item,
+                        router_vars=router_vars,
+                        app_vars=app_vars,
+                        import_aliases=import_aliases,
+                        local_aliases=local_aliases,
+                        factory_returns=factory_returns,
+                        loop_bindings=loop_bindings,
+                        module_qn=module_qn,
+                    )
+                )
+            return results
+        if expr in import_aliases:
+            source_module_qn, source_var_name = import_aliases[expr]
+            return [(expr, source_module_qn, source_var_name, "import_alias")]
+        if expr in local_aliases:
+            return [(expr, module_qn, local_aliases[expr], "factory_alias")]
+        if expr in router_vars or expr in app_vars:
+            return [(expr, module_qn, expr, "direct")]
+
+        call_match = re.match(
+            r"^(?P<callee>[A-Za-z_][A-Za-z0-9_]*)\((?P<args>[\s\S]*)\)$", expr
+        )
+        if not call_match:
+            return []
+        callee = call_match.group("callee")
+        call_args = call_match.group("args")
+        arg_list = self._split_fastapi_call_arguments(call_args)
+        if callee == "clone_router" and arg_list:
+            results = self._resolve_fastapi_include_sources(
+                arg_list[0],
+                router_vars=router_vars,
+                app_vars=app_vars,
+                import_aliases=import_aliases,
+                local_aliases=local_aliases,
+                factory_returns=factory_returns,
+                loop_bindings=loop_bindings,
+                module_qn=module_qn,
+            )
+            return [
+                (source_name, source_module_qn, source_var_name, "clone_router")
+                for source_name, source_module_qn, source_var_name, _ in results
+            ]
+        if callee in factory_returns:
+            return [(callee, module_qn, factory_returns[callee], "factory_call")]
+        return []
+
+    @staticmethod
+    def _extract_first_string_arg(args: str) -> str | None:
+        match = re.search(r"['\"]([^'\"]+)['\"]", args)
+        if not match:
+            return None
+        return match.group(1)
+
+    @staticmethod
+    def _extract_api_route_method(args: str) -> str:
+        match = re.search(r"methods\s*=\s*\[([^\]]+)\]", args)
+        if not match:
+            return "ANY"
+        methods_raw = match.group(1)
+        methods = [m.strip().strip("'\"") for m in methods_raw.split(",") if m.strip()]
+        if not methods:
+            return "ANY"
+        return methods[0].upper()
+
+    def _materialize_fastapi_routes(self) -> None:
+        if not self._fastapi_manifests:
+            return
+
+        inbound_modules: dict[str, int] = {}
+        for manifest in self._fastapi_manifests.values():
+            for edge in manifest.include_edges:
+                rel_type = (
+                    cs.RelationshipType.MOUNTS_ROUTER
+                    if edge.target_name in manifest.app_vars
+                    else cs.RelationshipType.INCLUDES_ROUTER
+                )
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, manifest.module_qn),
+                    rel_type,
+                    (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, edge.source_module_qn),
+                    {
+                        "target_name": edge.target_name,
+                        "source_name": edge.source_name,
+                        "source_var": edge.source_var_name,
+                        "source_expression": edge.source_expression,
+                        "composition_kind": edge.composition_kind,
+                        "prefix": edge.prefix,
+                        "framework": "fastapi",
+                        "source_parser": "framework_linker",
+                    },
+                )
+                inbound_modules[edge.source_module_qn] = (
+                    inbound_modules.get(edge.source_module_qn, 0) + 1
+                )
+
+        roots: list[tuple[str, str]] = []
+        for manifest in self._fastapi_manifests.values():
+            for app_var in manifest.app_vars:
+                roots.append((manifest.module_qn, app_var))
+            if inbound_modules.get(manifest.module_qn, 0) == 0:
+                for router_var in manifest.router_vars:
+                    roots.append((manifest.module_qn, router_var))
+
+        seen_roots: set[tuple[str, str]] = set()
+        for root in roots:
+            if root in seen_roots:
+                continue
+            seen_roots.add(root)
+            self._walk_fastapi_exports(
+                module_qn=root[0],
+                var_name=root[1],
+                accumulated_prefix="",
+                module_chain=[],
+                prefix_chain=[],
+                seen_states=set(),
+            )
+
+    def _walk_fastapi_exports(
+        self,
+        *,
+        module_qn: str,
+        var_name: str,
+        accumulated_prefix: str,
+        module_chain: list[tuple[str, str]],
+        prefix_chain: list[tuple[str, str, str]],
+        seen_states: set[tuple[str, str, str]],
+    ) -> None:
+        state = (module_qn, var_name, accumulated_prefix)
+        if state in seen_states:
+            return
+        seen_states.add(state)
+
+        manifest = self._fastapi_manifests.get(module_qn)
+        if manifest is None:
+            return
+
+        current_chain = [*module_chain, (module_qn, manifest.relative_path)]
+
+        for endpoint in manifest.local_endpoints:
+            if endpoint.router_name != var_name:
+                continue
+            final_path = self._join_paths(accumulated_prefix, endpoint.path)
+            self._materialize_fastapi_endpoint(
+                module_qn=module_qn,
+                module_path=manifest.relative_path,
+                endpoint=endpoint,
+                final_path=final_path,
+                module_chain=current_chain,
+                prefix_chain=prefix_chain,
+            )
+
+        for edge in manifest.include_edges:
+            if edge.target_name != var_name:
+                continue
+            next_prefix = accumulated_prefix
+            next_prefix_chain = list(prefix_chain)
+            if edge.prefix:
+                next_prefix = self._join_paths(accumulated_prefix, edge.prefix)
+                next_prefix_chain.append(
+                    (module_qn, manifest.relative_path, edge.prefix)
+                )
+            self._walk_fastapi_exports(
+                module_qn=edge.source_module_qn,
+                var_name=edge.source_var_name,
+                accumulated_prefix=next_prefix,
+                module_chain=current_chain,
+                prefix_chain=next_prefix_chain,
+                seen_states=seen_states,
+            )
+
+    def _materialize_fastapi_endpoint(
+        self,
+        *,
+        module_qn: str,
+        module_path: str,
+        endpoint: FastAPILocalEndpoint,
+        final_path: str,
+        module_chain: list[tuple[str, str]],
+        prefix_chain: list[tuple[str, str, str]],
+    ) -> None:
+        endpoint_qn = self._ensure_endpoint_node(
+            EndpointMatch(
+                framework="fastapi",
+                method=endpoint.method,
+                path=final_path,
+                handler_name=endpoint.handler_name,
+                metadata={
+                    "source_module": module_qn,
+                    "source_parser": "framework_linker",
+                    "local_route_path": endpoint.path,
+                    "handler_name": endpoint.handler_name,
+                },
+            ),
+            module_path,
+        )
+
+        handler_qn = self._find_handler_qn_in_module(module_qn, endpoint.handler_name)
+        handler_type = self.function_registry.get(handler_qn) if handler_qn else None
+        endpoint_props = {
+            cs.KEY_RELATION_TYPE: "fastapi",
+            "http_method": endpoint.method,
+            "route_path": final_path,
+            "local_route_path": endpoint.path,
+            "framework": "fastapi",
+            "source_parser": "framework_linker",
+        }
+
+        if handler_qn and handler_type:
+            self.ingestor.ensure_relationship_batch(
+                (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
+                cs.RelationshipType.HAS_ENDPOINT,
+                (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                endpoint_props,
+            )
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                cs.RelationshipType.ROUTES_TO_ACTION,
+                (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
+                endpoint_props,
+            )
+
+        for exposed_module_qn, exposed_module_path in module_chain:
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, exposed_module_qn),
+                cs.RelationshipType.EXPOSES_ENDPOINT,
+                (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                {
+                    "framework": "fastapi",
+                    "route_path": final_path,
+                    "source_module_path": exposed_module_path,
+                    "source_parser": "framework_linker",
+                },
+            )
+
+        for prefix_module_qn, prefix_module_path, prefix in prefix_chain:
+            self.ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.MODULE, cs.KEY_QUALIFIED_NAME, prefix_module_qn),
+                cs.RelationshipType.PREFIXES_ENDPOINT,
+                (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                {
+                    "framework": "fastapi",
+                    "prefix": prefix,
+                    "route_path": final_path,
+                    "local_route_path": endpoint.path,
+                    "source_module_path": prefix_module_path,
+                    "source_parser": "framework_linker",
+                },
+            )
 
     def _extract_csharp_endpoints(self, source: str) -> list[EndpointMatch]:
         """Extracts ASP.NET Core endpoints from C# source code."""
@@ -1022,7 +1748,7 @@ class FrameworkLinker:
     def _extract_next_api_endpoints(
         self, file_path: Path, source: str
     ) -> list[EndpointMatch]:
-        """Extracts Next.js API routes (Pages Router and App Router)."""
+        """Extracts Next.js routes for API handlers, pages, and layouts."""
         path_str = str(file_path).replace("\\", "/")
         endpoints: list[EndpointMatch] = []
 
@@ -1038,24 +1764,20 @@ class FrameworkLinker:
                     method="ALL",
                     path=api_path,
                     handler_name="handler",
+                    metadata={
+                        "next_kind": "pages_api",
+                        "endpoint_identity": f"pages_api:{file_path.relative_to(self.repo_path).as_posix()}",
+                    },
                 )
             )
             return endpoints
 
-        if "/app/api/" in path_str and (
-            path_str.endswith("/route.ts")
-            or path_str.endswith("/route.js")
-            or path_str.endswith("/route.tsx")
-            or path_str.endswith("/route.jsx")
-        ):
-            route = path_str.split("/app/api/")[1]
-            route = (
-                route.replace("/route.ts", "")
-                .replace("/route.js", "")
-                .replace("/route.tsx", "")
-                .replace("/route.jsx", "")
-            )
-            api_path = f"/api/{route}" if route else "/api"
+        next_kind = self._next_file_kind(file_path)
+        route_path = self._next_route_path(file_path)
+        if not next_kind or not route_path:
+            return endpoints
+
+        if next_kind == "route":
             method_pattern = re.compile(
                 r"export\s+async\s+function\s+(GET|POST|PUT|DELETE|PATCH)|export\s+function\s+(GET|POST|PUT|DELETE|PATCH)",
                 re.IGNORECASE,
@@ -1072,10 +1794,28 @@ class FrameworkLinker:
                     EndpointMatch(
                         framework="next",
                         method=method,
-                        path=api_path,
+                        path=route_path,
                         handler_name=method if method != "ALL" else None,
+                        metadata={
+                            "next_kind": "route",
+                            "endpoint_identity": f"route:{file_path.relative_to(self.repo_path).as_posix()}:{method}",
+                        },
                     )
                 )
+            return endpoints
+
+        if next_kind in {"page", "layout"}:
+            endpoints.append(
+                EndpointMatch(
+                    framework="next",
+                    method="GET",
+                    path=route_path,
+                    metadata={
+                        "next_kind": next_kind,
+                        "endpoint_identity": f"{next_kind}:{file_path.relative_to(self.repo_path).as_posix()}",
+                    },
+                )
+            )
             return endpoints
 
         return endpoints
@@ -1090,8 +1830,11 @@ class FrameworkLinker:
         module_qn = self._module_qn_for_path(file_path)
         for endpoint in endpoints:
             endpoint_qn = self._ensure_endpoint_node(endpoint, relative_path)
+            relation_type = "next_api"
+            if endpoint.metadata and endpoint.metadata.get("next_kind"):
+                relation_type = f"next_{endpoint.metadata['next_kind']}"
             endpoint_props = {
-                cs.KEY_RELATION_TYPE: "next_api",
+                cs.KEY_RELATION_TYPE: relation_type,
                 "http_method": endpoint.method,
                 "route_path": endpoint.path,
                 "auth_required": False,
@@ -1117,6 +1860,62 @@ class FrameworkLinker:
                     (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
                     endpoint_props,
                 )
+
+    def _next_file_kind(self, file_path: Path) -> str | None:
+        relative_path = file_path.relative_to(self.repo_path).as_posix()
+        if relative_path.startswith("pages/api/") or "/pages/api/" in relative_path:
+            return "pages_api"
+        if (relative_path.startswith("app/") or "/app/" in relative_path) and (
+            relative_path.endswith("/route.js")
+            or relative_path.endswith("/route.jsx")
+            or relative_path.endswith("/route.ts")
+            or relative_path.endswith("/route.tsx")
+        ):
+            return "route"
+        if (relative_path.startswith("app/") or "/app/" in relative_path) and (
+            relative_path.endswith("/page.js")
+            or relative_path.endswith("/page.jsx")
+            or relative_path.endswith("/page.ts")
+            or relative_path.endswith("/page.tsx")
+        ):
+            return "page"
+        if (relative_path.startswith("app/") or "/app/" in relative_path) and (
+            relative_path.endswith("/layout.js")
+            or relative_path.endswith("/layout.jsx")
+            or relative_path.endswith("/layout.ts")
+            or relative_path.endswith("/layout.tsx")
+        ):
+            return "layout"
+        return None
+
+    def _next_route_path(self, file_path: Path) -> str | None:
+        relative_parts = file_path.relative_to(self.repo_path).parts
+        if "app" not in relative_parts:
+            return None
+        app_index = relative_parts.index("app")
+        route_segments: list[str] = []
+        for segment in relative_parts[app_index + 1 : -1]:
+            normalized = self._normalize_next_route_segment(segment)
+            if normalized is None:
+                continue
+            route_segments.append(normalized)
+        if not route_segments:
+            return "/"
+        return "/" + "/".join(route_segments)
+
+    @staticmethod
+    def _normalize_next_route_segment(segment: str) -> str | None:
+        if segment.startswith("@"):
+            return None
+        if segment.startswith("(") and segment.endswith(")"):
+            return None
+        if segment.startswith("[[...") and segment.endswith("]]"):
+            return "{param}"
+        if segment.startswith("[...") and segment.endswith("]"):
+            return "{param}"
+        if segment.startswith("[") and segment.endswith("]"):
+            return "{param}"
+        return segment
 
     def _link_tailwind_assets(self) -> None:
         """Links the project to Tailwind CSS if configured."""

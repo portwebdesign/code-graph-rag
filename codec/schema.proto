@@ -123,6 +123,14 @@ message GraphCodeIndex {
       DEPENDS_ON_EXTERNAL = 11;
       IMPLEMENTS_MODULE = 12;
       IMPLEMENTS = 13;
+      HAS_ENDPOINT = 14;
+      ROUTES_TO_CONTROLLER = 15;
+      ROUTES_TO_ACTION = 16;
+      REQUESTS_ENDPOINT = 17;
+      INCLUDES_ROUTER = 18;
+      MOUNTS_ROUTER = 19;
+      EXPOSES_ENDPOINT = 20;
+      PREFIXES_ENDPOINT = 21;
     }
 
     RelationshipType type = 1;

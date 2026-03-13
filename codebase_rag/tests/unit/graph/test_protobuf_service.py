@@ -45,6 +45,34 @@ SAMPLE_RELATIONSHIPS = [
 ]
 
 
+def test_protobuf_ingestor_supports_router_composition_relationship_enum(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "out_router_rels"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ingestor = ProtobufFileIngestor(str(output_dir), split_index=False)
+
+    ingestor.ensure_relationship_batch(
+        ("Module", "qualified_name", "test_project.app_factory"),
+        "MOUNTS_ROUTER",
+        ("Module", "qualified_name", "test_project.routes.v1"),
+        {"framework": "fastapi", "prefix": "/api/v1"},
+    )
+
+    ingestor.flush_all()
+
+    output_file = output_dir / "index.bin"
+    deserialized_index = pb.GraphCodeIndex()
+    with open(output_file, "rb") as f:
+        deserialized_index.ParseFromString(f.read())
+
+    assert len(deserialized_index.relationships) == 1
+    rel = deserialized_index.relationships[0]
+    assert rel.type == pb.Relationship.RelationshipType.Value("MOUNTS_ROUTER")
+    assert rel.properties["framework"] == "fastapi"
+    assert rel.properties["prefix"] == "/api/v1"
+
+
 def test_protobuf_ingestor_joint_serialization_and_deserialization(
     tmp_path: Path,
 ) -> None:
@@ -65,9 +93,11 @@ def test_protobuf_ingestor_joint_serialization_and_deserialization(
             cast(tuple[str, str, Any], rel_data["from_spec"]),
             str(rel_data["rel_type"]),
             cast(tuple[str, str, Any], rel_data["to_spec"]),
-            cast(dict[str, Any], rel_data["properties"])
-            if rel_data["properties"]
-            else None,
+            (
+                cast(dict[str, Any], rel_data["properties"])
+                if rel_data["properties"]
+                else None
+            ),
         )
 
     ingestor.flush_all()
@@ -134,9 +164,11 @@ def test_protobuf_ingestor_split_index_serialization_and_deserialization(
             cast(tuple[str, str, Any], rel_data["from_spec"]),
             str(rel_data["rel_type"]),
             cast(tuple[str, str, Any], rel_data["to_spec"]),
-            cast(dict[str, Any], rel_data["properties"])
-            if rel_data["properties"]
-            else None,
+            (
+                cast(dict[str, Any], rel_data["properties"])
+                if rel_data["properties"]
+                else None
+            ),
         )
 
     ingestor.flush_all()

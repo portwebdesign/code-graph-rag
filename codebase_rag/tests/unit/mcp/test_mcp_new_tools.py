@@ -124,30 +124,41 @@ class TestMCPNewTools:
     def test_core_toolset_is_visible_after_project_selection(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
+        previous = settings.MCP_TOOLSET
+        settings.MCP_TOOLSET = "extended"
         mcp_registry._session_state["preflight_project_selected"] = True
         mcp_registry._session_state["preflight_schema_summary_loaded"] = False
 
-        visible_tools = mcp_registry._visible_tool_names()
+        try:
+            visible_tools = mcp_registry._visible_tool_names()
 
-        assert "list_projects" in visible_tools
-        assert "select_active_project" in visible_tools
-        assert "get_schema_overview" in visible_tools
-        assert "query_code_graph" in visible_tools
-        assert "multi_hop_analysis" in visible_tools
-        assert "impact_graph" in visible_tools
-        assert "run_cypher" in visible_tools
-        assert "semantic_search" in visible_tools
-        assert "plan_task" in visible_tools
-        assert "list_directory" in visible_tools
-        assert "read_file" not in visible_tools
-        assert "test_generate" not in visible_tools
+            assert "list_projects" in visible_tools
+            assert "select_active_project" in visible_tools
+            assert "get_schema_overview" in visible_tools
+            assert "query_code_graph" in visible_tools
+            assert "multi_hop_analysis" in visible_tools
+            assert "impact_graph" in visible_tools
+            assert "run_cypher" in visible_tools
+            assert "semantic_search" in visible_tools
+            assert "plan_task" in visible_tools
+            assert "list_directory" in visible_tools
+            assert "read_file" not in visible_tools
+            assert "test_generate" not in visible_tools
 
-        assert (
-            mcp_registry.get_visibility_gate_payload("list_analysis_artifacts", None)
-            is None
-        )
-        assert mcp_registry.get_visibility_gate_payload("security_scan", None) is None
-        assert mcp_registry.get_visibility_gate_payload("test_generate", None) is None
+            assert (
+                mcp_registry.get_visibility_gate_payload(
+                    "list_analysis_artifacts", None
+                )
+                is None
+            )
+            assert (
+                mcp_registry.get_visibility_gate_payload("security_scan", None) is None
+            )
+            payload = mcp_registry.get_visibility_gate_payload("test_generate", None)
+            assert payload is not None
+            assert payload.get("blocked_tool") == "test_generate"
+        finally:
+            settings.MCP_TOOLSET = previous
 
     async def test_select_active_project_applies_ollama_client_profile(
         self, mcp_registry: MCPToolsRegistry
@@ -367,6 +378,69 @@ class TestMCPNewTools:
         assert any(row.get("label") == "Function" for row in property_summary)
         assert second.get("cache_hit") is True
         assert ingestor.fetch_all.call_count == 2
+
+    async def test_get_schema_overview_exposes_frontend_section_and_presets(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.side_effect = [
+            [
+                {
+                    "from_node_type": "Module",
+                    "relationship_type": "DEFINES",
+                    "to_node_type": "Component",
+                },
+                {
+                    "from_node_type": "Component",
+                    "relationship_type": "USES_COMPONENT",
+                    "to_node_type": "Component",
+                },
+                {
+                    "from_node_type": "Component",
+                    "relationship_type": "HAS_ENDPOINT",
+                    "to_node_type": "Endpoint",
+                },
+            ],
+            [
+                {"label": "Component", "count": 9},
+                {"label": "Parameter", "count": 14},
+                {"label": "Endpoint", "count": 4},
+                {"label": "Function", "count": 18},
+            ],
+        ]
+
+        result = await mcp_registry.get_schema_overview(scope="frontend")
+
+        assert result.get("status") == "ok"
+        assert result.get("scope") == "frontend"
+        frontend_schema = cast(dict[str, object], result.get("frontend_schema", {}))
+        assert frontend_schema.get("detected") is True
+        capabilities = cast(
+            list[dict[str, object]], frontend_schema.get("capabilities", [])
+        )
+        assert any(item.get("name") == "component_tree" for item in capabilities)
+        assert any(item.get("name") == "hook_usage" for item in capabilities)
+        presets = cast(
+            list[dict[str, object]], result.get("frontend_cypher_presets", [])
+        )
+        assert any(item.get("name") == "prop_flow" for item in presets)
+        assert any(item.get("name") == "next_route_component_map" for item in presets)
+        schema_context = str(result.get("schema_context", ""))
+        assert "USES_COMPONENT" in schema_context
+        assert "HAS_PARAMETER" in schema_context
+        exact_next_calls = cast(
+            list[dict[str, object]], result.get("exact_next_calls", [])
+        )
+        assert exact_next_calls
+        assert exact_next_calls[0].get("tool") == "query_code_graph"
+        assert (
+            "component tree"
+            in str(
+                cast(dict[str, object], exact_next_calls[0].get("args", {})).get(
+                    "natural_language_query", ""
+                )
+            ).lower()
+        )
 
     async def test_detect_project_drift_returns_payload(
         self, mcp_registry: MCPToolsRegistry
@@ -1489,7 +1563,7 @@ class TestMCPNewTools:
         async def fake_replace(**_: object) -> str:
             return "Successfully applied surgical code replacement in: sample.py"
 
-        mcp_registry._file_editor_tool.function = fake_replace
+        mcp_registry._file_editor_tool = SimpleNamespace(function=fake_replace)
 
         result = await mcp_registry.apply_diff_safe("sample.py", payload)
 
@@ -2177,6 +2251,9 @@ class TestMCPNewTools:
     async def test_orchestrate_realtime_flow_prefers_exact_next_calls_chain(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
+        previous = settings.MCP_TOOLSET
+        settings.MCP_TOOLSET = "extended"
+
         async def fake_sync_graph_updates(
             user_requested: bool,
             reason: str,
@@ -2230,23 +2307,28 @@ class TestMCPNewTools:
         _registry_any(mcp_registry).validate_done_decision = fake_validate_done_decision
         _registry_any(mcp_registry).memory_add = fake_memory_add
 
-        result = await mcp_registry.orchestrate_realtime_flow(
-            action="write_file",
-            result="partial_success",
-            user_requested=True,
-            sync_reason="refresh graph",
-            auto_execute_next=True,
-            verify_drift=False,
-            debounce_seconds=0,
-        )
+        try:
+            result = await mcp_registry.orchestrate_realtime_flow(
+                action="write_file",
+                result="partial_success",
+                user_requested=True,
+                sync_reason="refresh graph",
+                auto_execute_next=True,
+                verify_drift=False,
+                debounce_seconds=0,
+            )
 
-        assert result.get("status") == "ok"
-        auto_next = cast(dict[str, object], result.get("auto_next", {}))
-        assert auto_next.get("executed") is False
-        assert auto_next.get("mode") == "exact_next_calls"
-        attempts = cast(list[dict[str, object]], auto_next.get("attempts", []))
-        assert attempts[0].get("tool") == "memory_add"
-        assert attempts[0].get("reason") == "tool_not_visible_in_current_session_stage"
+            assert result.get("status") == "ok"
+            auto_next = cast(dict[str, object], result.get("auto_next", {}))
+            assert auto_next.get("executed") is False
+            assert auto_next.get("mode") == "exact_next_calls"
+            attempts = cast(list[dict[str, object]], auto_next.get("attempts", []))
+            assert attempts[0].get("tool") == "memory_add"
+            assert (
+                attempts[0].get("reason") == "tool_not_visible_in_current_session_stage"
+            )
+        finally:
+            settings.MCP_TOOLSET = previous
 
     async def test_auto_execute_next_best_action_supports_run_cypher(
         self, mcp_registry: MCPToolsRegistry
@@ -2278,6 +2360,9 @@ class TestMCPNewTools:
     async def test_auto_execute_exact_next_calls_enforces_tier_visibility(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
+        previous = settings.MCP_TOOLSET
+        settings.MCP_TOOLSET = "extended"
+
         async def fake_memory_add(
             entry: str,
             tags: str | None = None,
@@ -2286,41 +2371,51 @@ class TestMCPNewTools:
 
         _registry_any(mcp_registry).memory_add = fake_memory_add
 
-        result = await mcp_registry._auto_execute_exact_next_calls(
-            [
-                {
-                    "tool": "read_file",
-                    "args": {
-                        "file_path": "sample.py",
-                        "query_digest_id": "qd_1",
+        try:
+            result = await mcp_registry._auto_execute_exact_next_calls(
+                [
+                    {
+                        "tool": "read_file",
+                        "args": {
+                            "file_path": "sample.py",
+                            "query_digest_id": "qd_1",
+                        },
+                        "priority": 1,
+                        "when": "first",
                     },
-                    "priority": 1,
-                    "when": "first",
-                },
-                {
-                    "tool": "memory_add",
-                    "args": {
-                        "entry": "from_tiered_chain",
-                        "tags": "tiering",
+                    {
+                        "tool": "memory_add",
+                        "args": {
+                            "entry": "from_tiered_chain",
+                            "tags": "tiering",
+                        },
+                        "priority": 2,
+                        "when": "fallback",
                     },
-                    "priority": 2,
-                    "when": "fallback",
-                },
-            ],
-            max_candidates=3,
-        )
+                ],
+                max_candidates=3,
+            )
 
-        assert result.get("executed") is False
-        attempts = cast(list[dict[str, object]], result.get("attempts", []))
-        assert len(attempts) >= 2
-        assert attempts[0].get("tool") == "read_file"
-        assert attempts[0].get("reason") == "tool_not_visible_in_current_session_stage"
-        assert attempts[1].get("tool") == "memory_add"
-        assert attempts[1].get("reason") == "tool_not_visible_in_current_session_stage"
+            assert result.get("executed") is False
+            attempts = cast(list[dict[str, object]], result.get("attempts", []))
+            assert len(attempts) >= 2
+            assert attempts[0].get("tool") == "read_file"
+            assert (
+                attempts[0].get("reason") == "tool_not_visible_in_current_session_stage"
+            )
+            assert attempts[1].get("tool") == "memory_add"
+            assert (
+                attempts[1].get("reason") == "tool_not_visible_in_current_session_stage"
+            )
+        finally:
+            settings.MCP_TOOLSET = previous
 
     async def test_orchestrate_realtime_flow_applies_max_tool_chain_guard(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
+        previous = settings.MCP_TOOLSET
+        settings.MCP_TOOLSET = "extended"
+
         async def fake_sync_graph_updates(
             user_requested: bool,
             reason: str,
@@ -2354,27 +2449,30 @@ class TestMCPNewTools:
         _registry_any(mcp_registry).sync_graph_updates = fake_sync_graph_updates
         _registry_any(mcp_registry).validate_done_decision = fake_validate_done_decision
 
-        result = await mcp_registry.orchestrate_realtime_flow(
-            action="write_file",
-            result="partial_success",
-            user_requested=True,
-            sync_reason="refresh graph",
-            auto_execute_next=True,
-            verify_drift=False,
-            debounce_seconds=0,
-        )
+        try:
+            result = await mcp_registry.orchestrate_realtime_flow(
+                action="write_file",
+                result="partial_success",
+                user_requested=True,
+                sync_reason="refresh graph",
+                auto_execute_next=True,
+                verify_drift=False,
+                debounce_seconds=0,
+            )
 
-        assert result.get("status") == "ok"
-        guard = cast(dict[str, object], result.get("tool_chain_guard", {}))
-        assert guard.get("max_steps") == 8
-        assert guard.get("remaining_for_auto_next") == 5
-        auto_next = cast(dict[str, object], result.get("auto_next", {}))
-        assert auto_next.get("executed") is False
-        assert auto_next.get("candidate_limit") == 5
-        assert auto_next.get("total_candidates") == 10
-        assert auto_next.get("truncated") is True
-        attempts = cast(list[dict[str, object]], auto_next.get("attempts", []))
-        assert len(attempts) == 5
+            assert result.get("status") == "ok"
+            guard = cast(dict[str, object], result.get("tool_chain_guard", {}))
+            assert guard.get("max_steps") == 8
+            assert guard.get("remaining_for_auto_next") == 5
+            auto_next = cast(dict[str, object], result.get("auto_next", {}))
+            assert auto_next.get("executed") is False
+            assert auto_next.get("candidate_limit") == 5
+            assert auto_next.get("total_candidates") == 10
+            assert auto_next.get("truncated") is True
+            attempts = cast(list[dict[str, object]], auto_next.get("attempts", []))
+            assert len(attempts) == 5
+        finally:
+            settings.MCP_TOOLSET = previous
 
     async def test_refactor_batch_ok(
         self, mcp_registry: MCPToolsRegistry, monkeypatch: pytest.MonkeyPatch
@@ -2402,7 +2500,7 @@ class TestMCPNewTools:
             "codebase_rag.mcp.tools.semantic_code_search", fake_semantic_search
         )
 
-        mcp_registry._file_editor_tool.function = fake_replace
+        mcp_registry._file_editor_tool = SimpleNamespace(function=fake_replace)
         mcp_registry._session_state["code_evidence_count"] = 2
         mcp_registry._session_state["graph_evidence_count"] = 2
         mcp_registry._session_state["semantic_success_count"] = 2

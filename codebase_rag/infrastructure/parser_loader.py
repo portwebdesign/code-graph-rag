@@ -211,7 +211,7 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
         LanguageImport(
             cs.SupportedLanguage.TS,
             cs.TreeSitterModule.TS,
-            cs.LANG_ATTR_TYPESCRIPT,
+            cs.LANG_ATTR_TSX,
             cs.SupportedLanguage.TS,
         ),
         LanguageImport(

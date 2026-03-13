@@ -46,11 +46,16 @@ def mcp_registry(temp_test_repo: Path) -> MCPToolsRegistry:
 
     mock_cypher_gen.generate = mock_generate
 
-    return MCPToolsRegistry(
+    registry = MCPToolsRegistry(
         project_root=str(temp_test_repo),
         ingestor=mock_ingestor,
         cypher_gen=mock_cypher_gen,
     )
+    registry._session_state["graph_evidence_count"] = 1
+    registry._session_state["last_graph_query_digest_id"] = "qd_integration"
+    registry._session_state["preflight_project_selected"] = True
+    registry._session_state["preflight_schema_summary_loaded"] = True
+    return registry
 
 
 class TestMCPToolsIntegration:
@@ -114,6 +119,10 @@ class TestToolConsistency:
         self, mcp_registry: MCPToolsRegistry
     ) -> None:
         """Verify all tools have consistent takes_ctx settings."""
+        mcp_registry._ensure_code_tool()
+        mcp_registry._ensure_file_editor_tool()
+        mcp_registry._ensure_file_reader_tool()
+        mcp_registry._ensure_file_writer_tool()
         tools = {
             "query": mcp_registry._query_tool,
             "code": mcp_registry._code_tool,

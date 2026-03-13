@@ -661,7 +661,7 @@ def _build_tool_metadata_catalog(
                     "scope": MCPInputSchemaProperty(
                         type=cs.MCPSchemaType.STRING,
                         description=(
-                            "Schema focus: 'global' (default), 'api', 'impact', or 'data'."
+                            "Schema focus: 'global' (default), 'frontend', 'api', 'impact', or 'data'."
                         ),
                         default="global",
                     ),
@@ -2046,6 +2046,7 @@ class MCPToolsRegistry:
             cs.MCPToolName.SELECT_ACTIVE_PROJECT,
         }
         project_selected_tools: set[str] = {
+            cs.MCPToolName.GET_SCHEMA_OVERVIEW,
             cs.MCPToolName.GET_EXECUTION_READINESS,
             cs.MCPToolName.GET_TOOL_USEFULNESS_RANKING,
             cs.MCPToolName.MEMORY_QUERY_PATTERNS,
@@ -2053,6 +2054,10 @@ class MCPToolsRegistry:
             cs.MCPToolName.PLAN_TASK,
             cs.MCPToolName.QUERY_CODE_GRAPH,
             cs.MCPToolName.MULTI_HOP_ANALYSIS,
+            cs.MCPToolName.IMPACT_GRAPH,
+            cs.MCPToolName.RUN_CYPHER,
+            cs.MCPToolName.SEMANTIC_SEARCH,
+            cs.MCPToolName.LIST_DIRECTORY,
             cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
             cs.MCPToolName.ARCHITECTURE_BUNDLE,
             cs.MCPToolName.GET_ANALYSIS_REPORT,
@@ -2064,11 +2069,6 @@ class MCPToolsRegistry:
             cs.MCPToolName.SECURITY_SCAN,
             cs.MCPToolName.PERFORMANCE_HOTSPOTS,
             cs.MCPToolName.TEST_BUNDLE,
-            cs.MCPToolName.TEST_GENERATE,
-            cs.MCPToolName.TEST_QUALITY_GATE,
-            cs.MCPToolName.EXECUTION_FEEDBACK,
-            cs.MCPToolName.VALIDATE_DONE_DECISION,
-            cs.MCPToolName.ORCHESTRATE_REALTIME_FLOW,
             cs.MCPToolName.GET_GRAPH_STATS,
             cs.MCPToolName.GET_DEPENDENCY_STATS,
         }
@@ -3018,6 +3018,26 @@ class MCPToolsRegistry:
                 "keywords": (),
                 "summary": "Global graph schema bootstrap for the active project.",
             },
+            "frontend": {
+                "labels": {
+                    "Module",
+                    "Component",
+                    "Parameter",
+                    "Endpoint",
+                    "Function",
+                },
+                "keywords": (
+                    "DEFINES",
+                    "USES_COMPONENT",
+                    "HAS_PARAMETER",
+                    "CALLS",
+                    "HAS_ENDPOINT",
+                ),
+                "summary": (
+                    "Frontend-focused schema bootstrap for React/Next.js component, "
+                    "prop, hook, and route traversal."
+                ),
+            },
             "api": {
                 "labels": {
                     "Endpoint",
@@ -3189,6 +3209,22 @@ class MCPToolsRegistry:
                 "module_qn",
                 "docstring",
             ],
+            "Component": [
+                "qualified_name",
+                "name",
+                "path",
+                "component_kind",
+                "props",
+                "hooks_used",
+                "module_qn",
+            ],
+            "Parameter": [
+                "qualified_name",
+                "name",
+                "path",
+                "parameter_kind",
+                "module_qn",
+            ],
         }
 
     @staticmethod
@@ -3205,6 +3241,228 @@ class MCPToolsRegistry:
             "Class",
             "Function",
             "Method",
+            "Component",
+            "Parameter",
+        )
+
+    @staticmethod
+    def _frontend_schema_relation_keywords() -> tuple[str, ...]:
+        return (
+            "USES_COMPONENT",
+            "HAS_PARAMETER",
+            "HAS_ENDPOINT",
+            "CALLS",
+            "DEFINES",
+        )
+
+    def _build_frontend_schema_section(
+        self,
+        *,
+        label_count_map: dict[str, int],
+        relation_rows: list[dict[str, object]],
+        scope: str,
+    ) -> dict[str, object]:
+        observed_relations = [
+            row
+            for row in relation_rows
+            if str(row.get("relationship_type", "")).strip()
+            in self._frontend_schema_relation_keywords()
+            and (
+                str(row.get("from_node_type", "")).strip()
+                in {"Module", "Component", "Parameter", "Endpoint", "Function"}
+                or str(row.get("to_node_type", "")).strip()
+                in {"Component", "Parameter", "Endpoint", "Function"}
+            )
+        ]
+        detected_labels = [
+            label
+            for label in ("Component", "Parameter", "Endpoint", "Function", "Module")
+            if label_count_map.get(label, 0) > 0
+        ]
+        detected = bool(detected_labels or observed_relations)
+        return {
+            "scope_recommended": scope in {"frontend", "global"},
+            "detected": detected,
+            "detected_labels": detected_labels,
+            "capabilities": [
+                {
+                    "name": "component_tree",
+                    "labels": ["Component", "Module"],
+                    "relationships": ["DEFINES", "USES_COMPONENT"],
+                    "notes": (
+                        "Traverse parent/child React component structure extracted "
+                        "from TSX/JSX AST."
+                    ),
+                },
+                {
+                    "name": "prop_usage",
+                    "labels": ["Component", "Parameter"],
+                    "relationships": ["HAS_PARAMETER", "USES_COMPONENT"],
+                    "notes": (
+                        "Inspect declared props on components and props passed across "
+                        "render edges via props_passed/prop_bindings."
+                    ),
+                },
+                {
+                    "name": "hook_usage",
+                    "labels": ["Component", "Function"],
+                    "relationships": ["CALLS"],
+                    "notes": (
+                        "Track built-in and custom hook usage from components through "
+                        "CALLS edges annotated with hook_name."
+                    ),
+                },
+                {
+                    "name": "next_route_mapping",
+                    "labels": ["Component", "Endpoint"],
+                    "relationships": ["HAS_ENDPOINT"],
+                    "notes": (
+                        "Map Next.js page/layout/route files to route-aware Endpoint "
+                        "nodes with next_kind metadata."
+                    ),
+                },
+            ],
+            "observed_relation_preview": observed_relations[:8],
+        }
+
+    @staticmethod
+    def _frontend_cypher_presets(project_name: str) -> list[dict[str, object]]:
+        return [
+            {
+                "name": "component_tree",
+                "intent_examples": [
+                    f"Show the React component tree in {project_name}",
+                    "Which components render which child components?",
+                ],
+                "query": (
+                    "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component) "
+                    "OPTIONAL MATCH (c)-[:USES_COMPONENT]->(child:Component) "
+                    "RETURN c.name AS component, c.qualified_name AS qualified_name, "
+                    "coalesce(c.path, m.path, '') AS path, "
+                    "collect(DISTINCT child.name)[0..12] AS child_components, "
+                    "count(DISTINCT child) AS child_count, "
+                    "coalesce(c.props, []) AS props, coalesce(c.hooks_used, []) AS hooks_used "
+                    "ORDER BY child_count DESC, component LIMIT 80"
+                ),
+            },
+            {
+                "name": "prop_flow",
+                "intent_examples": [
+                    "Show me prop flow between React components",
+                    "Which parent components pass props to child components?",
+                ],
+                "query": (
+                    "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(parent:Component) "
+                    "MATCH (parent)-[r:USES_COMPONENT]->(child:Component) "
+                    "RETURN parent.name AS parent_component, "
+                    "child.name AS child_component, "
+                    "coalesce(r.props_passed, []) AS props_passed, "
+                    "coalesce(r.prop_bindings, {}) AS prop_bindings, "
+                    "coalesce(parent.path, m.path, '') AS path "
+                    "ORDER BY parent_component, child_component LIMIT 120"
+                ),
+            },
+            {
+                "name": "hook_usage",
+                "intent_examples": [
+                    "Which components use React hooks?",
+                    "Show hook usage across the frontend graph",
+                ],
+                "query": (
+                    "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component) "
+                    "MATCH (c)-[r:CALLS]->(f:Function) "
+                    "WHERE coalesce(r.hook_name, '') <> '' OR f.name STARTS WITH 'use' "
+                    "RETURN c.name AS component, "
+                    "coalesce(r.hook_name, f.name) AS hook_name, "
+                    "f.qualified_name AS hook_qualified_name, "
+                    "coalesce(c.path, m.path, '') AS path "
+                    "ORDER BY component, hook_name LIMIT 120"
+                ),
+            },
+            {
+                "name": "next_route_component_map",
+                "intent_examples": [
+                    "Map Next.js routes to page and layout components",
+                    "Which components back each Next.js route?",
+                ],
+                "query": (
+                    "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component)-[:HAS_ENDPOINT]->(e:Endpoint) "
+                    "RETURN e.route AS route, coalesce(e.method, 'GET') AS method, "
+                    "coalesce(e.next_kind, '') AS next_kind, "
+                    "c.name AS component, c.qualified_name AS qualified_name, "
+                    "coalesce(c.path, m.path, '') AS path "
+                    "ORDER BY route, next_kind, component LIMIT 120"
+                ),
+            },
+        ]
+
+    def _build_schema_overview_next_calls(
+        self,
+        *,
+        scope: str,
+        project_name: str,
+        frontend_section: dict[str, object],
+    ) -> list[dict[str, object]]:
+        if scope == "frontend":
+            return self._normalize_exact_next_calls(
+                [
+                    {
+                        "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                        "args": {
+                            "natural_language_query": (
+                                f"Show the React component tree, prop flow, and hook usage in {project_name}"
+                            ),
+                            "output_format": "json",
+                        },
+                        "priority": 1,
+                        "when": "use frontend schema bootstrap to drive a focused React/Next graph query",
+                        "copy_paste": (
+                            "query_code_graph("
+                            f'natural_language_query="Show the React component tree, prop flow, and hook usage in {project_name}", '
+                            'output_format="json")'
+                        ),
+                        "why": "convert_frontend_schema_bootstrap_into_graph_evidence",
+                    },
+                    {
+                        "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                        "args": {
+                            "natural_language_query": (
+                                f"Map Next.js pages, layouts, and routes to components in {project_name}"
+                            ),
+                            "output_format": "json",
+                        },
+                        "priority": 2,
+                        "when": "route-aware Next.js evidence is needed after component topology",
+                        "copy_paste": (
+                            "query_code_graph("
+                            f'natural_language_query="Map Next.js pages, layouts, and routes to components in {project_name}", '
+                            'output_format="json")'
+                        ),
+                        "why": "trace_next_routes_to_ui_graph",
+                    },
+                ]
+            )
+        _ = frontend_section
+        return self._normalize_exact_next_calls(
+            [
+                {
+                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                    "args": {
+                        "natural_language_query": (
+                            f"Summarize the most important {scope} graph structures in {project_name}"
+                        ),
+                        "output_format": "json",
+                    },
+                    "priority": 1,
+                    "when": "use schema bootstrap to drive the first scoped graph query",
+                    "copy_paste": (
+                        "query_code_graph("
+                        f'natural_language_query="Summarize the most important {scope} graph structures in {project_name}", '
+                        'output_format="json")'
+                    ),
+                    "why": "convert_schema_bootstrap_into_graph_evidence",
+                }
+            ]
         )
 
     def _filter_schema_relation_rows(
@@ -3240,6 +3498,7 @@ class MCPToolsRegistry:
         label_counts: list[dict[str, object]],
         property_summary: list[dict[str, object]],
         important_labels: list[dict[str, object]],
+        frontend_section: dict[str, object] | None = None,
     ) -> str:
         lines = [
             f"Schema overview for {project_name} [{scope}]",
@@ -3263,6 +3522,31 @@ class MCPToolsRegistry:
             lines.append(
                 f"  - {row.get('label', '?')}: present={row.get('present', False)}, count={row.get('count', 0)}"
             )
+        if frontend_section and (
+            scope == "frontend" or bool(frontend_section.get("detected", False))
+        ):
+            raw_detected_labels = frontend_section.get("detected_labels", [])
+            detected_labels_list = (
+                cast(list[object], raw_detected_labels)
+                if isinstance(raw_detected_labels, list)
+                else []
+            )
+            detected_labels = (
+                ", ".join(str(label) for label in detected_labels_list) or "none"
+            )
+            lines.append("Frontend schema:")
+            lines.append(
+                f"  - detected={frontend_section.get('detected', False)}, labels={detected_labels}"
+            )
+            for capability in cast(
+                list[dict[str, object]], frontend_section.get("capabilities", [])
+            )[:4]:
+                relationships = ",".join(
+                    cast(list[str], capability.get("relationships", []))
+                )
+                lines.append(
+                    f"  - {capability.get('name', 'frontend_capability')}: rels={relationships}"
+                )
         return "\n".join(lines[:40])
 
     @staticmethod
@@ -3300,7 +3584,12 @@ class MCPToolsRegistry:
             snippets.append(f"{from_node_type}-[{relationship_type}]->{to_node_type}")
         return "; ".join(snippets)
 
-    def _build_schema_context(self, rows: list[dict[str, object]]) -> str:
+    def _build_schema_context(
+        self,
+        rows: list[dict[str, object]],
+        *,
+        frontend_section: dict[str, object] | None = None,
+    ) -> str:
         if not rows:
             return ""
         max_relations = max(1, int(settings.MCP_SCHEMA_CONTEXT_MAX_RELATIONS))
@@ -3309,9 +3598,24 @@ class MCPToolsRegistry:
             bounded_rows, max_items=max_relations
         )
         project_name = self._active_project_name()
-        return (
+        context = (
             f"Active project: {project_name}. Observed schema relationships: {snippets}"
         )
+        if frontend_section and bool(frontend_section.get("detected", False)):
+            capability_names = ", ".join(
+                str(item.get("name", "")).strip()
+                for item in cast(
+                    list[dict[str, object]], frontend_section.get("capabilities", [])
+                )[:4]
+                if str(item.get("name", "")).strip()
+            )
+            if capability_names:
+                context += (
+                    ". Frontend graph capabilities: "
+                    f"{capability_names}. Key frontend relations include USES_COMPONENT, "
+                    "HAS_PARAMETER, CALLS, and HAS_ENDPOINT."
+                )
+        return context
 
     def _persist_preflight_context(self, preflight: dict[str, object]) -> None:
         summary_rows_raw = preflight.get("results", [])
@@ -4514,6 +4818,11 @@ class MCPToolsRegistry:
             }
             for label in self._schema_important_labels()
         ]
+        frontend_section = self._build_frontend_schema_section(
+            label_count_map=label_count_map,
+            relation_rows=relation_rows,
+            scope=normalized_scope,
+        )
         summary_text = self._build_schema_overview_summary_text(
             project_name=project_name,
             scope=normalized_scope,
@@ -4521,8 +4830,12 @@ class MCPToolsRegistry:
             label_counts=label_counts,
             property_summary=property_summary,
             important_labels=important_labels,
+            frontend_section=frontend_section,
         )
-        schema_context = self._build_schema_context(relation_rows)
+        schema_context = self._build_schema_context(
+            relation_rows,
+            frontend_section=frontend_section,
+        )
         if schema_context:
             self._session_state["preflight_schema_context"] = schema_context
         relation_preview = self._schema_summary_preview_text(relation_rows, max_items=5)
@@ -4533,26 +4846,10 @@ class MCPToolsRegistry:
             )
             or "no labels"
         )
-        exact_next_calls = self._normalize_exact_next_calls(
-            [
-                {
-                    "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
-                    "args": {
-                        "natural_language_query": (
-                            f"Summarize the most important {normalized_scope} graph structures in {project_name}"
-                        ),
-                        "output_format": "json",
-                    },
-                    "priority": 1,
-                    "when": "use schema bootstrap to drive the first scoped graph query",
-                    "copy_paste": (
-                        "query_code_graph("
-                        f'natural_language_query="Summarize the most important {normalized_scope} graph structures in {project_name}", '
-                        'output_format="json")'
-                    ),
-                    "why": "convert_schema_bootstrap_into_graph_evidence",
-                }
-            ]
+        exact_next_calls = self._build_schema_overview_next_calls(
+            scope=normalized_scope,
+            project_name=project_name,
+            frontend_section=frontend_section,
         )
         payload = {
             "status": "ok",
@@ -4568,6 +4865,8 @@ class MCPToolsRegistry:
             "label_counts": label_counts[:12],
             "property_summary": property_summary[:10],
             "important_labels": important_labels,
+            "frontend_schema": frontend_section,
+            "frontend_cypher_presets": self._frontend_cypher_presets(project_name),
             "schema_context": schema_context,
             "schema_bootstrap_summary": summary_text,
             "exact_next_calls": exact_next_calls,
@@ -5302,6 +5601,8 @@ class MCPToolsRegistry:
             return {"executed": False, "reason": "missing_tool_name"}
 
         visible, tier = self._is_tool_visible_for_session(tool_name)
+        if not visible and tool_name in self._enabled_tool_names() and tier == "tier1":
+            visible = True
         if not visible:
             return {
                 "executed": False,
@@ -5519,35 +5820,35 @@ class MCPToolsRegistry:
         return normalized
 
     def _ensure_code_tool(self) -> object:
-        if self._code_tool is None or self.code_retriever is None:
+        if self._code_tool is not None:
+            return self._code_tool
+        if self.code_retriever is None:
             self.code_retriever = CodeRetriever(self.project_root, self.ingestor)
-            self._code_tool = create_code_retrieval_tool(
-                code_retriever=self.code_retriever
-            )
+        self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
         return self._code_tool
 
     def _ensure_file_editor_tool(self) -> object:
-        if self._file_editor_tool is None or self.file_editor is None:
+        if self._file_editor_tool is not None:
+            return self._file_editor_tool
+        if self.file_editor is None:
             self.file_editor = FileEditor(project_root=self.project_root)
-            self._file_editor_tool = create_file_editor_tool(
-                file_editor=self.file_editor
-            )
+        self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
         return self._file_editor_tool
 
     def _ensure_file_reader_tool(self) -> object:
-        if self._file_reader_tool is None or self.file_reader is None:
+        if self._file_reader_tool is not None:
+            return self._file_reader_tool
+        if self.file_reader is None:
             self.file_reader = FileReader(project_root=self.project_root)
-            self._file_reader_tool = create_file_reader_tool(
-                file_reader=self.file_reader
-            )
+        self._file_reader_tool = create_file_reader_tool(file_reader=self.file_reader)
         return self._file_reader_tool
 
     def _ensure_file_writer_tool(self) -> object:
-        if self._file_writer_tool is None or self.file_writer is None:
+        if self._file_writer_tool is not None:
+            return self._file_writer_tool
+        if self.file_writer is None:
             self.file_writer = FileWriter(project_root=self.project_root)
-            self._file_writer_tool = create_file_writer_tool(
-                file_writer=self.file_writer
-            )
+        self._file_writer_tool = create_file_writer_tool(file_writer=self.file_writer)
         return self._file_writer_tool
 
     async def _auto_execute_exact_next_calls(
@@ -6606,6 +6907,22 @@ class MCPToolsRegistry:
             baseline_order,
         )
         epsilon = self._compute_exploration_epsilon(failure_type)
+        bucket = self._ensure_exploration_bucket()
+
+        if (
+            self._coerce_int(bucket.get("calls", 0)) <= 0
+            and not override_mode
+            and safety_ok
+        ):
+            return best_order, {
+                "mode": "exploit",
+                "reason": "cold_start",
+                "epsilon": round(epsilon, 3),
+                "draw": 1.0,
+                "safety": safety_reason,
+                "policy_scores": policy_scores,
+                "policy_best_chain": best_order_key,
+            }
 
         if override_mode in {"off", "exploit"}:
             return best_order, {
@@ -7504,9 +7821,10 @@ class MCPToolsRegistry:
             if results:
                 self._session_bump("semantic_success_count")
                 score_values = [
-                    float(item.get("score", 0.0))
+                    float(score)
                     for item in results
                     if isinstance(item, dict)
+                    and isinstance(score := item.get("score", 0.0), int | float | str)
                 ]
                 if score_values:
                     self._session_state["semantic_similarity_mean"] = sum(
@@ -8087,6 +8405,39 @@ class MCPToolsRegistry:
             templates.append(
                 "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(f:Function) "
                 "RETURN m.path AS module_path, f.name AS function_name, f.qualified_name AS qualified_name "
+                "LIMIT 120"
+            )
+
+        if any(
+            token in lowered
+            for token in (
+                "component",
+                "render",
+                "props",
+                "prop flow",
+                "hook",
+                "page",
+                "layout",
+                "next.js",
+                "nextjs",
+            )
+        ):
+            templates.append(
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component) "
+                "OPTIONAL MATCH (c)-[:USES_COMPONENT]->(child:Component) "
+                "RETURN c.name AS component, c.path AS path, child.name AS child_component "
+                "LIMIT 120"
+            )
+            templates.append(
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component) "
+                "OPTIONAL MATCH (c)-[r:CALLS]->(f:Function) "
+                "WHERE coalesce(r.hook_name, '') <> '' OR f.name STARTS WITH 'use' "
+                "RETURN c.name AS component, coalesce(r.hook_name, f.name) AS hook_name, c.path AS path "
+                "LIMIT 120"
+            )
+            templates.append(
+                "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component)-[:HAS_ENDPOINT]->(e:Endpoint) "
+                "RETURN e.route AS route, coalesce(e.next_kind, '') AS next_kind, c.name AS component, c.path AS path "
                 "LIMIT 120"
             )
 
@@ -9037,6 +9388,8 @@ class MCPToolsRegistry:
         self, goal: str, context: str | None = None
     ) -> dict[str, object]:
         try:
+            if self._current_execution_phase() == "preflight":
+                self._set_execution_phase("retrieval", "plan_task_bootstrap")
             self._set_execution_phase("validation", "plan_task")
             self._session_bump("plan_task_count")
             normalized_goal = str(goal).strip()
