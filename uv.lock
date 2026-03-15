@@ -388,6 +388,11 @@ dev = [
     { name = "types-toml", marker = "sys_platform == 'win32'" },
     { name = "vulture", marker = "sys_platform == 'win32'" },
 ]
+semantic = [
+    { name = "qdrant-client", marker = "sys_platform == 'win32'" },
+    { name = "torch", marker = "sys_platform == 'win32'" },
+    { name = "transformers", marker = "sys_platform == 'win32'" },
+]
 treesitter = [
     { name = "tree-sitter-c-sharp", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-cpp", marker = "sys_platform == 'win32'" },
@@ -485,6 +490,11 @@ dev = [
     { name = "types-protobuf", specifier = ">=5.0.0" },
     { name = "types-toml", specifier = ">=0.10.8.20240310" },
     { name = "vulture", specifier = ">=2.14" },
+]
+semantic = [
+    { name = "qdrant-client", specifier = ">=1.9.0" },
+    { name = "torch", specifier = ">=2.6.0" },
+    { name = "transformers", specifier = ">=4.0.0" },
 ]
 treesitter = [
     { name = "tree-sitter-c-sharp", specifier = ">=0.23.0" },

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -418,6 +419,25 @@ function UserProfile({ userId, userName }) {
 """
         components = detector.extract_react_components(code)
         assert len(components) >= 1
+
+    def test_framework_metadata_is_json_serializable_for_react(self, detector):
+        """React framework metadata should be safe to persist as JSON."""
+        code = """
+import React, { useEffect } from 'react';
+
+export function TasksScreen({ tenantId }) {
+    useEffect(() => {
+        console.log(tenantId);
+    }, [tenantId]);
+
+    return <section>Tasks</section>;
+}
+"""
+        metadata = detector.get_framework_metadata(code)
+
+        assert metadata["framework_type"] == "react"
+        assert metadata["components"][0]["component_name"] == "TasksScreen"
+        json.dumps(metadata, ensure_ascii=False)
 
     def test_extract_express_routes(self, detector):
         """Test Express route extraction."""

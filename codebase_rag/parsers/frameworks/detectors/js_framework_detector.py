@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from typing import Any
 
@@ -150,6 +150,33 @@ class JsFrameworkDetector:
     def __init__(self):
         """Initialize JavaScript/TypeScript framework detector."""
         pass
+
+    @staticmethod
+    def _to_serializable_metadata(value: Any) -> Any:
+        if is_dataclass(value):
+            return {
+                key: JsFrameworkDetector._to_serializable_metadata(item)
+                for key, item in asdict(value).items()
+            }
+        if isinstance(value, dict):
+            return {
+                str(key): JsFrameworkDetector._to_serializable_metadata(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                JsFrameworkDetector._to_serializable_metadata(item) for item in value
+            ]
+        if isinstance(value, tuple):
+            return [
+                JsFrameworkDetector._to_serializable_metadata(item) for item in value
+            ]
+        if isinstance(value, set):
+            return [
+                JsFrameworkDetector._to_serializable_metadata(item)
+                for item in sorted(value, key=str)
+            ]
+        return value
 
     def detect_from_source(self, source_code: str) -> JsFrameworkType:
         """Detect framework from JavaScript/TypeScript source code.
@@ -628,7 +655,7 @@ class JsFrameworkDetector:
         elif framework == JsFrameworkType.GRAPHQL:
             metadata["operations"] = self._extract_graphql_operations(source_code)
 
-        return metadata
+        return self._to_serializable_metadata(metadata)
 
     def _extract_nuxt_usage(self, source_code: str) -> list[str]:
         usage: list[str] = []
