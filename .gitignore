@@ -27,4 +27,4 @@ PROJECT.md
 
 agent-logs/
 .idea/
-output/
+.codebase_rag/mcp_memory

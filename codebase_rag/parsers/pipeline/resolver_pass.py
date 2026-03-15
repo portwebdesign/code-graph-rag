@@ -1412,6 +1412,8 @@ class ResolverPass:
             normalized_path = self._normalize_request_path(raw_path)
             if not normalized_path:
                 return
+            if not self._looks_like_route_like_path(raw_path, normalized_path):
+                return
             key = (framework, method.upper(), normalized_path)
             if key in seen:
                 return
@@ -1443,7 +1445,7 @@ class ResolverPass:
             re.IGNORECASE,
         )
         member_http_pattern = re.compile(
-            r"\b(?:[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*\.(get|post|put|delete|patch)\s*\(\s*(['\"`])(?P<path>[^'\"`]+)\2",
+            r"\b(?P<receiver>(?:[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*)\.(?P<method>get|post|put|delete|patch)\s*\(\s*(['\"`])(?P<path>[^'\"`]+)\3",
             re.IGNORECASE,
         )
         request_block_pattern = re.compile(
@@ -1476,10 +1478,14 @@ class ResolverPass:
         for match in axios_pattern.finditer(source):
             _append("http", match.group(1), match.group("path"), client_kind="axios")
         for match in member_http_pattern.finditer(source):
+            receiver = match.group("receiver") or ""
+            raw_path = match.group("path")
+            if not self._looks_like_member_http_request(receiver, raw_path):
+                continue
             _append(
                 "http",
-                match.group(1),
-                match.group("path"),
+                match.group("method"),
+                raw_path,
                 client_kind="http_client_member",
             )
         for match in request_block_pattern.finditer(source):
@@ -1496,6 +1502,47 @@ class ResolverPass:
             )
 
         return requests
+
+    @staticmethod
+    def _looks_like_member_http_request(receiver: str, raw_path: str) -> bool:
+        normalized_receiver = receiver.strip().lower()
+        if not normalized_receiver:
+            return False
+
+        non_request_suffixes = (
+            ".headers",
+            ".searchparams",
+            ".params",
+            ".query",
+            ".queries",
+            ".cookies",
+            ".headersmap",
+        )
+        if normalized_receiver.endswith(non_request_suffixes):
+            return False
+
+        normalized_path = ResolverPass._normalize_request_path(raw_path)
+        if ResolverPass._looks_like_route_like_path(raw_path, normalized_path):
+            return True
+
+        clientish_tokens = {
+            "api",
+            "client",
+            "http",
+            "https",
+            "axios",
+            "request",
+            "requester",
+            "fetcher",
+            "gateway",
+            "sdk",
+            "service",
+            "agent",
+        }
+        receiver_tokens = {
+            token for token in re.split(r"[^a-z0-9]+", normalized_receiver) if token
+        }
+        return not clientish_tokens.isdisjoint(receiver_tokens)
 
     def _link_request_descriptors(
         self,
@@ -1792,6 +1839,28 @@ class ResolverPass:
         if len(path) > 1 and path.endswith("/"):
             path = path[:-1]
         return path
+
+    @staticmethod
+    def _looks_like_route_like_path(
+        raw_path: str, normalized_path: str | None = None
+    ) -> bool:
+        raw = raw_path.strip().strip("'\"`")
+        normalized = (normalized_path or raw).strip()
+        if not raw or not normalized:
+            return False
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", raw):
+            return True
+        if raw.startswith(("/", "./", "../")):
+            return True
+        if any(marker in raw for marker in ("/", "?", "#", "${", "[", "{")):
+            return True
+        if not normalized:
+            return False
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", normalized):
+            return True
+        if normalized.startswith(("/api/", "/api", "/v1/", "/v1", "/graphql")):
+            return True
+        return any(marker in normalized for marker in ("?", "{param}", "#"))
 
     def _route_path_for_next_app_entry(self, file_path: Path) -> str | None:
         relative_parts = file_path.relative_to(self.repo_path).parts

@@ -342,6 +342,42 @@ class FrameworkLinker:
         resolved = self._normalize_template_literal(resolved)
         return self._join_url(base_url or "", resolved)
 
+    @staticmethod
+    def _looks_like_route_like_path(
+        raw_path: str, normalized_path: str | None = None
+    ) -> bool:
+        raw = raw_path.strip().strip("'\"`")
+        normalized = (normalized_path or raw).strip()
+        if not raw or not normalized:
+            return False
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", raw):
+            return True
+        if raw.startswith(("/", "./", "../")):
+            return True
+        if any(marker in raw for marker in ("/", "?", "#", "${", "[", "{")):
+            return True
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", normalized):
+            return True
+        if normalized.startswith(("/api/", "/api", "/v1/", "/v1", "/graphql")):
+            return True
+        return any(marker in normalized for marker in ("?", "{param}", "#"))
+
+    def _append_js_request_endpoint(
+        self,
+        endpoints: list[EndpointMatch],
+        *,
+        framework: str,
+        method: str,
+        raw_path: str,
+        base_url: str | None = None,
+    ) -> None:
+        resolved = self._resolve_request_path(raw_path, base_url)
+        if not self._looks_like_route_like_path(raw_path, resolved):
+            return
+        endpoints.append(
+            EndpointMatch(framework=framework, method=method.upper(), path=resolved)
+        )
+
     def _normalize_endpoint_path(
         self, raw_path: str
     ) -> tuple[str, str | None, str | None]:
@@ -2312,18 +2348,22 @@ class FrameworkLinker:
             options = match.group(3) or ""
             method_match = method_pattern.search(options)
             method = (method_match.group(1) if method_match else "GET").upper()
-            resolved = self._resolve_request_path(raw_path, None)
-            endpoints.append(
-                EndpointMatch(framework="http", method=method, path=resolved)
+            self._append_js_request_endpoint(
+                endpoints,
+                framework="http",
+                method=method,
+                raw_path=raw_path,
             )
         for match in fetch_template_pattern.finditer(source):
             raw_path = match.group(1)
             options = match.group(3) or ""
             method_match = method_pattern.search(options)
             method = (method_match.group(1) if method_match else "GET").upper()
-            resolved = self._resolve_request_path(raw_path, None)
-            endpoints.append(
-                EndpointMatch(framework="http", method=method, path=resolved)
+            self._append_js_request_endpoint(
+                endpoints,
+                framework="http",
+                method=method,
+                raw_path=raw_path,
             )
 
         axios_pattern = re.compile(
@@ -2333,9 +2373,11 @@ class FrameworkLinker:
         for match in axios_pattern.finditer(source):
             method = match.group(1).upper()
             raw_path = match.group(2)
-            resolved = self._resolve_request_path(raw_path, None)
-            endpoints.append(
-                EndpointMatch(framework="http", method=method, path=resolved)
+            self._append_js_request_endpoint(
+                endpoints,
+                framework="http",
+                method=method,
+                raw_path=raw_path,
             )
 
         for alias, base_url in base_aliases.items():
@@ -2346,9 +2388,12 @@ class FrameworkLinker:
             for match in alias_pattern.finditer(source):
                 method = match.group(1).upper()
                 raw_path = match.group(2)
-                resolved = self._resolve_request_path(raw_path, base_url)
-                endpoints.append(
-                    EndpointMatch(framework="http", method=method, path=resolved)
+                self._append_js_request_endpoint(
+                    endpoints,
+                    framework="http",
+                    method=method,
+                    raw_path=raw_path,
+                    base_url=base_url,
                 )
 
         graphql_client_pattern = re.compile(

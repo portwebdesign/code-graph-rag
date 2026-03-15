@@ -506,3 +506,93 @@ export async function listCustomers() {
         == "tanstack_query_fn_reference"
         for rel in calls
     )
+
+
+def test_ignores_header_and_search_param_accessors_as_http_requests(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "next_request_accessor_guard"
+    project.mkdir()
+
+    _write(
+        project / "src/lib/client.ts",
+        """const apiClient = {
+    get: async (path: string) => fetch(path),
+};
+
+export async function readRequestMetadata(url: string, response: Response) {
+    const customers = await apiClient.get('/api/customers');
+    const contentType = response.headers.get('Content-Type') || 'application/json';
+    const parsed = new URL(url, 'https://example.test');
+    const afterMessageId = parsed.searchParams.get('after_message_id');
+    const templateVersionId = parsed.searchParams.get('template_version_id');
+    return { customers, contentType, afterMessageId, templateVersionId };
+}
+""",
+    )
+
+    run_updater(project, mock_ingestor, skip_if_missing="typescript")
+
+    endpoint_props = _node_props(mock_ingestor, cs.NodeLabel.ENDPOINT)
+    route_paths = {cast(str, props.get(cs.KEY_ROUTE_PATH)) for props in endpoint_props}
+
+    assert "/api/customers" in route_paths
+    assert "/Content-Type" not in route_paths
+    assert "/after_message_id" not in route_paths
+    assert "/template_version_id" not in route_paths
+
+    requests_endpoint = _relationship_args(
+        mock_ingestor, cs.RelationshipType.REQUESTS_ENDPOINT
+    )
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "next_request_accessor_guard.src.lib.client.readRequestMetadata",
+        )
+        and cast(dict[str, object], rel[3]).get(cs.KEY_ROUTE_PATH) == "/api/customers"
+        for rel in requests_endpoint
+    )
+    assert not any(
+        cast(dict[str, object], rel[3]).get(cs.KEY_ROUTE_PATH)
+        in {"/Content-Type", "/after_message_id", "/template_version_id"}
+        for rel in requests_endpoint
+    )
+
+
+def test_framework_linker_ignores_non_route_like_request_strings(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "framework_linker_request_guard"
+    project.mkdir()
+
+    _write(
+        project / "src/lib/client.ts",
+        """const apiBaseUrl = 'https://api.example.test';
+
+export async function requestData() {
+    await fetch('/api/customers', { method: 'POST' });
+    await fetch('Content-Type');
+    await axios.get('X-Request-ID');
+    const apiClient = { get: (path: string) => fetch(path) };
+    await apiClient.get('/api/orders');
+    await apiClient.get('after_message_id');
+}
+""",
+    )
+
+    run_updater(project, mock_ingestor, skip_if_missing="typescript")
+
+    route_paths = {
+        cast(str, props.get(cs.KEY_ROUTE_PATH))
+        for props in _node_props(mock_ingestor, cs.NodeLabel.ENDPOINT)
+    }
+
+    assert "/api/customers" in route_paths
+    assert "/api/orders" in route_paths
+    assert "/Content-Type" not in route_paths
+    assert "/X-Request-ID" not in route_paths
+    assert "/after_message_id" not in route_paths
