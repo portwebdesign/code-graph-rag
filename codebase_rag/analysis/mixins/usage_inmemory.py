@@ -169,59 +169,58 @@ class UsageInMemoryMixin:
             }:
                 rel_bucket["config_reference_links"] += 1
 
-        report = {
-            "total_functions": len(
-                [
-                    node
-                    for node in nodes
-                    if cs.NodeLabel.FUNCTION.value in node.labels
-                    or cs.NodeLabel.METHOD.value in node.labels
-                ]
-            ),
-            "dead_functions": [
-                {
-                    "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
-                    "name": node.properties.get(cs.KEY_NAME),
-                    "path": node.properties.get(cs.KEY_PATH),
-                    "start_line": node.properties.get(cs.KEY_START_LINE),
-                    "label": (
-                        cs.NodeLabel.METHOD
-                        if cs.NodeLabel.METHOD.value in node.labels
-                        else cs.NodeLabel.FUNCTION
-                    ),
-                    "call_in_degree": call_in_degree_map.get(node.node_id, 0),
-                    "out_call_count": len(call_graph.get(node.node_id, set())),
-                    "is_entrypoint_name": str(node.properties.get(cs.KEY_NAME) or "")
-                    in entry_points,
-                    "has_entry_decorator": bool(
-                        set(
-                            cast(
-                                Iterable[Any],
-                                node.properties.get(cs.KEY_DECORATORS) or [],
-                            )
+        total_functions = len(
+            [
+                node
+                for node in nodes
+                if cs.NodeLabel.FUNCTION.value in node.labels
+                or cs.NodeLabel.METHOD.value in node.labels
+            ]
+        )
+        raw_dead_functions = [
+            {
+                "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
+                "name": node.properties.get(cs.KEY_NAME),
+                "path": node.properties.get(cs.KEY_PATH),
+                "start_line": node.properties.get(cs.KEY_START_LINE),
+                "label": self._primary_label(node) or cs.NodeLabel.FUNCTION,
+                "call_in_degree": call_in_degree_map.get(node.node_id, 0),
+                "out_call_count": len(call_graph.get(node.node_id, set())),
+                "is_entrypoint_name": str(node.properties.get(cs.KEY_NAME) or "")
+                in entry_points,
+                "has_entry_decorator": bool(
+                    set(
+                        cast(
+                            Iterable[Any],
+                            node.properties.get(cs.KEY_DECORATORS) or [],
                         )
-                        & decorators
-                    ),
-                    "decorator_links": relation_links_map.get(node.node_id, {}).get(
-                        "decorator_links", 0
-                    ),
-                    "registration_links": relation_links_map.get(node.node_id, {}).get(
-                        "registration_links", 0
-                    ),
-                    "imported_by_cli_links": relation_links_map.get(
-                        node.node_id, {}
-                    ).get("imported_by_cli_links", 0),
-                    "config_reference_links": relation_links_map.get(
-                        node.node_id, {}
-                    ).get("config_reference_links", 0),
-                    "decorators": node.properties.get(cs.KEY_DECORATORS) or [],
-                    "is_exported": bool(node.properties.get(cs.KEY_IS_EXPORTED)),
-                }
-                for node in dead_nodes
-            ],
-        }
+                    )
+                    & decorators
+                ),
+                "decorator_links": relation_links_map.get(node.node_id, {}).get(
+                    "decorator_links", 0
+                ),
+                "registration_links": relation_links_map.get(node.node_id, {}).get(
+                    "registration_links", 0
+                ),
+                "imported_by_cli_links": relation_links_map.get(node.node_id, {}).get(
+                    "imported_by_cli_links", 0
+                ),
+                "config_reference_links": relation_links_map.get(node.node_id, {}).get(
+                    "config_reference_links", 0
+                ),
+                "decorators": node.properties.get(cs.KEY_DECORATORS) or [],
+                "is_exported": bool(node.properties.get(cs.KEY_IS_EXPORTED)),
+            }
+            for node in dead_nodes
+        ]
 
-        dead_functions = cast(list[dict[str, Any]], report["dead_functions"])
+        report, dead_functions, suppression_reason_counts = (
+            self._build_dead_code_report_payload(
+                total_functions=total_functions,
+                dead_functions=raw_dead_functions,
+            )
+        )
 
         analysis_run_id = datetime.now(UTC).replace(microsecond=0).isoformat()
         self._apply_dead_code_node_cache(
@@ -232,6 +231,9 @@ class UsageInMemoryMixin:
         except_test_summary = self._write_dead_code_except_test_report(
             dead_functions,
             max_files=200,
+            raw_total_dead_symbols=len(raw_dead_functions),
+            suppression_reason_counts=suppression_reason_counts,
+            suppressed_dead_symbols=len(raw_dead_functions) - len(dead_functions),
         )
 
         output_dir = self.repo_path / "output" / "analysis"

@@ -143,45 +143,41 @@ class UsageDbMixin:
                 }
             raise
 
-        report = {
-            "total_functions": total_functions,
-            "dead_functions": [
-                {
-                    "qualified_name": row.get(cs.KEY_QUALIFIED_NAME),
-                    "name": row.get(cs.KEY_NAME),
-                    "path": row.get(cs.KEY_PATH),
-                    "start_line": row.get(cs.KEY_START_LINE),
-                    "label": row.get("label") or cs.NodeLabel.FUNCTION,
-                    "call_in_degree": int(cast(Any, row.get("call_in_degree")) or 0),
-                    "out_call_count": int(cast(Any, row.get("out_call_count")) or 0),
-                    "is_entrypoint_name": bool(
-                        cast(Any, row.get("is_entrypoint_name"))
-                    ),
-                    "has_entry_decorator": bool(
-                        cast(Any, row.get("has_entry_decorator"))
-                    ),
-                    "decorator_links": int(cast(Any, row.get("decorator_links")) or 0),
-                    "registration_links": int(
-                        cast(Any, row.get("registration_links")) or 0
-                    ),
-                    "imported_by_cli_links": int(
-                        cast(Any, row.get("imported_by_cli_links")) or 0
-                    ),
-                    "config_reference_links": int(
-                        cast(Any, row.get("config_reference_links")) or 0
-                    ),
-                    "decorators": row.get(cs.KEY_DECORATORS)
-                    or row.get("decorators")
-                    or [],
-                    "is_exported": bool(
-                        cast(Any, row.get(cs.KEY_IS_EXPORTED)) or row.get("is_exported")
-                    ),
-                }
-                for row in rows
-            ],
-        }
+        raw_dead_functions = [
+            {
+                "qualified_name": row.get(cs.KEY_QUALIFIED_NAME),
+                "name": row.get(cs.KEY_NAME),
+                "path": row.get(cs.KEY_PATH),
+                "start_line": row.get(cs.KEY_START_LINE),
+                "label": row.get("label") or cs.NodeLabel.FUNCTION,
+                "call_in_degree": int(cast(Any, row.get("call_in_degree")) or 0),
+                "out_call_count": int(cast(Any, row.get("out_call_count")) or 0),
+                "is_entrypoint_name": bool(cast(Any, row.get("is_entrypoint_name"))),
+                "has_entry_decorator": bool(cast(Any, row.get("has_entry_decorator"))),
+                "decorator_links": int(cast(Any, row.get("decorator_links")) or 0),
+                "registration_links": int(
+                    cast(Any, row.get("registration_links")) or 0
+                ),
+                "imported_by_cli_links": int(
+                    cast(Any, row.get("imported_by_cli_links")) or 0
+                ),
+                "config_reference_links": int(
+                    cast(Any, row.get("config_reference_links")) or 0
+                ),
+                "decorators": row.get(cs.KEY_DECORATORS) or row.get("decorators") or [],
+                "is_exported": bool(
+                    cast(Any, row.get(cs.KEY_IS_EXPORTED)) or row.get("is_exported")
+                ),
+            }
+            for row in rows
+        ]
 
-        dead_functions = cast(list[dict[str, Any]], report["dead_functions"])
+        report, dead_functions, suppression_reason_counts = (
+            self._build_dead_code_report_payload(
+                total_functions=total_functions,
+                dead_functions=raw_dead_functions,
+            )
+        )
 
         analysis_run_id = datetime.now(UTC).replace(microsecond=0).isoformat()
         self._apply_dead_code_node_cache(
@@ -192,6 +188,9 @@ class UsageDbMixin:
         except_test_summary = self._write_dead_code_except_test_report(
             dead_functions,
             max_files=200,
+            raw_total_dead_symbols=len(raw_dead_functions),
+            suppression_reason_counts=suppression_reason_counts,
+            suppressed_dead_symbols=len(raw_dead_functions) - len(dead_functions),
         )
 
         output_dir = self.repo_path / "output" / "analysis"

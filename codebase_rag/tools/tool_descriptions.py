@@ -84,7 +84,7 @@ MCP_SELECT_ACTIVE_PROJECT = (
     "Preflight tool to set/confirm the active repository context and return project-scoped readiness info. "
     "Optionally accepts repo_path to switch active root and client_profile to tailor MCP behavior for VS Code, Cline, Copilot, Ollama, or HTTP clients, then reports active project, indexed status, "
     "project-scoped graph counts, latest analysis timestamp, and enforced safety policies. "
-    "MANDATORY SECOND STEP after list_projects before using non-exempt tools."
+    "MANDATORY SECOND STEP after list_projects before using the stateful graph tools."
 )
 
 MCP_DETECT_PROJECT_DRIFT = (
@@ -334,7 +334,7 @@ MCP_REFACTOR_BATCH = (
 MCP_PLAN_TASK = (
     "Ask an agent planner to create a multi-step execution plan for a specified goal. "
     "Provide the 'goal' and optional 'context' the planner might need. "
-    "Mandatory in strict mode for complex/multi-step intents before execution tools."
+    "Advisory tool for complex or multi-step work; core graph tools remain callable without it."
 )
 
 MCP_TEST_GENERATE = (

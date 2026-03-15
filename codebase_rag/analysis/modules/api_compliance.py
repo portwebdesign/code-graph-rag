@@ -116,6 +116,133 @@ class ApiComplianceModule(AnalysisModule):
         }
 
     @staticmethod
+    def _path_depth(path: str) -> int:
+        return len([segment for segment in str(path or "").split("/") if segment])
+
+    @classmethod
+    def _endpoint_group_key(cls, endpoint: dict[str, object]) -> tuple[object, ...]:
+        method = str(endpoint.get("method", "")).strip().upper()
+        file_path = str(endpoint.get("file", "")).replace("\\", "/").strip()
+        local_route_path = str(
+            endpoint.get("local_route_path") or endpoint.get("path") or ""
+        ).strip()
+        handler_qns = tuple(
+            sorted(
+                {
+                    str(qn).strip()
+                    for qn in cast(list[object], endpoint.get("handler_qns", []))
+                    if str(qn).strip()
+                }
+            )
+        )
+        if handler_qns:
+            return (method, file_path, local_route_path, handler_qns)
+        return (method, file_path, local_route_path)
+
+    @classmethod
+    def _endpoint_preference(
+        cls, endpoint: dict[str, object]
+    ) -> tuple[int, int, int, int]:
+        expose_count = int(cast(Any, endpoint.get("expose_count", 0)) or 0)
+        prefix_count = int(cast(Any, endpoint.get("prefix_count", 0)) or 0)
+        path = str(endpoint.get("path", "")).strip()
+        return (
+            1 if expose_count > 0 else 0,
+            1 if prefix_count > 0 else 0,
+            cls._path_depth(path),
+            len(path),
+        )
+
+    @classmethod
+    def _normalize_graph_endpoints(
+        cls,
+        endpoints: list[dict[str, object]],
+        *,
+        module_paths: list[str] | None = None,
+    ) -> list[dict[str, str]]:
+        grouped: dict[tuple[object, ...], dict[str, object]] = {}
+        module_path_set = {path.replace("\\", "/") for path in module_paths or []}
+
+        for raw_endpoint in endpoints:
+            path = str(raw_endpoint.get("path", "")).strip()
+            if not path:
+                continue
+            file_path = str(raw_endpoint.get("file", "")).replace("\\", "/").strip()
+            exposed_module_paths = [
+                str(path).replace("\\", "/").strip()
+                for path in cast(
+                    list[object], raw_endpoint.get("exposed_module_paths", [])
+                )
+                if str(path).strip()
+            ]
+            prefix_module_paths = [
+                str(path).replace("\\", "/").strip()
+                for path in cast(
+                    list[object], raw_endpoint.get("prefix_module_paths", [])
+                )
+                if str(path).strip()
+            ]
+            if module_path_set and not (
+                file_path in module_path_set
+                or any(path in module_path_set for path in exposed_module_paths)
+                or any(path in module_path_set for path in prefix_module_paths)
+            ):
+                continue
+
+            normalized = dict(raw_endpoint)
+            normalized["file"] = file_path
+            normalized["method"] = (
+                str(raw_endpoint.get("method", "REQUEST")).strip().upper()
+            )
+            normalized["path"] = path
+            normalized["framework"] = str(raw_endpoint.get("framework", "")).strip()
+            normalized["handler_qns"] = [
+                str(qn).strip()
+                for qn in cast(list[object], raw_endpoint.get("handler_qns", []))
+                if str(qn).strip()
+            ]
+            normalized["exposed_module_paths"] = exposed_module_paths
+            normalized["prefix_module_paths"] = prefix_module_paths
+            expose_count = int(cast(Any, raw_endpoint.get("expose_count", 0)) or 0)
+            prefix_count = int(cast(Any, raw_endpoint.get("prefix_count", 0)) or 0)
+            normalized["expose_count"] = expose_count
+            normalized["prefix_count"] = prefix_count
+            normalized["canonical_route_layer"] = (
+                "relation_propagated"
+                if expose_count > 0 or prefix_count > 0
+                else "direct_endpoint_node"
+            )
+
+            key = cls._endpoint_group_key(normalized)
+            current = grouped.get(key)
+            if current is None or cls._endpoint_preference(
+                normalized
+            ) > cls._endpoint_preference(current):
+                grouped[key] = normalized
+
+        normalized_endpoints: list[dict[str, str]] = []
+        seen_endpoint_keys: set[tuple[str, str, str]] = set()
+        for endpoint in grouped.values():
+            endpoint_key = (
+                str(endpoint.get("method", "")).strip().upper(),
+                str(endpoint.get("path", "")).strip(),
+                str(endpoint.get("file", "")).replace("\\", "/").strip(),
+            )
+            if endpoint_key in seen_endpoint_keys:
+                continue
+            seen_endpoint_keys.add(endpoint_key)
+            normalized_endpoints.append(cast(dict[str, str], endpoint))
+
+        normalized_endpoints.sort(
+            key=lambda item: (
+                str(item.get("path", "")),
+                str(item.get("method", "")),
+                str(item.get("file", "")),
+            )
+        )
+        return normalized_endpoints
+
+    @staticmethod
     def _iter_files(repo_path: Path, module_paths: list[str] | None) -> list[Path]:
         if module_paths:
             resolved_paths: list[Path] = []
@@ -291,37 +418,52 @@ class ApiComplianceModule(AnalysisModule):
 
         ingestor = cast(QueryProtocol, context.runner.ingestor)
         query = """
-        MATCH (e:Endpoint)
-        WHERE e.route_path IS NOT NULL
+        MATCH (e:Endpoint {project_name: $project_name})
+        WHERE coalesce(e.route_path, '') <> ''
+        OPTIONAL MATCH (handler)-[:HAS_ENDPOINT]->(e)
+        OPTIONAL MATCH (e)-[:ROUTES_TO_ACTION]->(action)
+        OPTIONAL MATCH (module)-[ex:EXPOSES_ENDPOINT]->(e)
+        OPTIONAL MATCH (prefixModule)-[pref:PREFIXES_ENDPOINT]->(e)
         RETURN
+          coalesce(e.qualified_name, '') AS qualified_name,
           coalesce(e.http_method, 'REQUEST') AS method,
           e.route_path AS path,
+          coalesce(e.local_route_path, '') AS local_route_path,
           coalesce(e.path, '') AS file,
-          coalesce(e.framework, '') AS framework
+          coalesce(e.framework, '') AS framework,
+          [qn IN collect(DISTINCT coalesce(handler.qualified_name, '')) WHERE qn <> ''] +
+            [qn IN collect(DISTINCT coalesce(action.qualified_name, '')) WHERE qn <> ''] AS handler_qns,
+          [path IN collect(DISTINCT coalesce(module.path, '')) WHERE path <> ''] AS exposed_module_paths,
+          [path IN collect(DISTINCT coalesce(prefixModule.path, '')) WHERE path <> ''] AS prefix_module_paths,
+          count(DISTINCT ex) AS expose_count,
+          count(DISTINCT pref) AS prefix_count
         """
 
         try:
-            rows = ingestor.fetch_all(query, {})
+            rows = ingestor.fetch_all(
+                query, {cs.KEY_PROJECT_NAME: context.runner.project_name}
+            )
         except Exception:
             return []
 
-        module_paths = set(context.module_paths or [])
-        endpoints: list[dict[str, str]] = []
-        for row in rows:
-            file_path = str(row.get("file", "")).replace("\\", "/")
-            if module_paths and file_path and file_path not in module_paths:
-                continue
-            if ApiComplianceModule._should_ignore_path(file_path):
-                continue
-            endpoints.append(
-                {
-                    "method": str(row.get("method", "REQUEST")),
-                    "path": str(row.get("path", "")),
-                    "file": file_path,
-                    "framework": str(row.get("framework", "")),
-                }
+        raw_endpoints = [
+            cast(dict[str, object], row) for row in rows if isinstance(row, dict)
+        ]
+        normalized = ApiComplianceModule._normalize_graph_endpoints(
+            raw_endpoints,
+            module_paths=context.module_paths,
+        )
+        return [
+            endpoint
+            for endpoint in normalized
+            if not ApiComplianceModule._should_ignore_path(
+                str(endpoint.get("file", ""))
             )
-        return endpoints
+            and int(endpoint.get("expose_count", 0) or 0)
+            + int(endpoint.get("prefix_count", 0) or 0)
+            + len(cast(list[object], endpoint.get("handler_qns", [])))
+            > 0
+        ]
 
     @staticmethod
     def _spring_annotation_to_method(annotation: str) -> str:

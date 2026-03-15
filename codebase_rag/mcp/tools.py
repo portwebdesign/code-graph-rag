@@ -2171,6 +2171,7 @@ class MCPToolsRegistry:
                 {
                     "name": "graph_bootstrap",
                     "tools": [
+                        cs.MCPToolName.GET_SCHEMA_OVERVIEW,
                         cs.MCPToolName.QUERY_CODE_GRAPH,
                         cs.MCPToolName.MULTI_HOP_ANALYSIS,
                         cs.MCPToolName.ANALYSIS_BUNDLE_FOR_GOAL,
@@ -2191,6 +2192,7 @@ class MCPToolsRegistry:
                 {
                     "name": "evidence_enrichment",
                     "tools": [
+                        cs.MCPToolName.LIST_DIRECTORY,
                         cs.MCPToolName.RUN_CYPHER,
                         cs.MCPToolName.IMPACT_GRAPH,
                         cs.MCPToolName.SEMANTIC_SEARCH,
@@ -2281,8 +2283,54 @@ class MCPToolsRegistry:
         args = arguments if isinstance(arguments, dict) else {}
         query_text = self._extract_gate_query_text(tool_name, args)
         exact_next_calls: list[dict[str, object]] = []
+        project_name = self._active_project_name()
 
-        if tool_name in {
+        def _esc(value: str) -> str:
+            return value.replace("\\", "\\\\").replace('"', '\\"')
+
+        project_selected = bool(
+            self._session_state.get("preflight_project_selected", False)
+        )
+        schema_loaded = bool(
+            self._session_state.get("preflight_schema_summary_loaded", False)
+        )
+
+        if not project_selected:
+            exact_next_calls = [
+                {
+                    "tool": cs.MCPToolName.LIST_PROJECTS,
+                    "args": {},
+                    "priority": 1,
+                    "when": "session state is missing or a fresh HTTP session was created",
+                    "copy_paste": "list_projects()",
+                    "why": "discover_available_projects",
+                },
+                {
+                    "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                    "args": {"project_name": project_name},
+                    "priority": 2,
+                    "when": "after confirming the intended indexed project",
+                    "copy_paste": (
+                        f'select_active_project(project_name="{_esc(project_name)}")'
+                    ),
+                    "why": "reinitialize_session_scope_and_preflight",
+                },
+            ]
+        elif not schema_loaded:
+            exact_next_calls = [
+                {
+                    "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
+                    "args": {"project_name": project_name},
+                    "priority": 1,
+                    "when": "project scope exists but schema bootstrap state is missing",
+                    "copy_paste": (
+                        f'select_active_project(project_name="{_esc(project_name)}")'
+                    ),
+                    "why": "rebuild_schema_preflight_context",
+                }
+            ]
+
+        if not exact_next_calls and tool_name in {
             cs.MCPToolName.RUN_CYPHER,
             cs.MCPToolName.CONTEXT7_DOCS,
             cs.MCPToolName.READ_FILE,
@@ -2316,7 +2364,7 @@ class MCPToolsRegistry:
                     "why": "unlock_graph_evidence_stage",
                 }
             )
-        elif tool_name in {
+        elif not exact_next_calls and tool_name in {
             cs.MCPToolName.WRITE_FILE,
             cs.MCPToolName.SURGICAL_REPLACE_CODE,
             cs.MCPToolName.APPLY_DIFF_SAFE,
@@ -2342,7 +2390,7 @@ class MCPToolsRegistry:
                     },
                 ]
             )
-        else:
+        elif not exact_next_calls:
             exact_next_calls.append(
                 {
                     "tool": cs.MCPToolName.PLAN_TASK,
@@ -2461,6 +2509,8 @@ class MCPToolsRegistry:
         arguments: dict[str, object] | None,
     ) -> dict[str, object] | None:
         if tool_name in self._WORKFLOW_GATE_EXEMPT_TOOLS:
+            return None
+        if tool_name in _CORE_MCP_TOOL_NAMES:
             return None
         args = arguments if isinstance(arguments, dict) else {}
         query_text = self._extract_gate_query_text(tool_name, args)
@@ -4129,8 +4179,9 @@ class MCPToolsRegistry:
                 "list_projects",
                 "select_active_project",
                 "query_code_graph",
-                "plan_task(for multi-step or backlog-driven work)",
-                "run_cypher(advanced_mode=false, only after graph evidence)",
+                "get_schema_overview(optional compact bootstrap)",
+                "plan_task(optional advisory for multi-step or backlog-driven work)",
+                "run_cypher(available immediately after select_active_project; query_code_graph remains the preferred first step)",
                 "read_file(only with graph query digest id)",
             ],
             "mandatory_startup_sequence": [
@@ -4166,7 +4217,7 @@ class MCPToolsRegistry:
                 "guidance": [
                     "Use GraphRAG discovery tools before direct file reads whenever possible.",
                     "For architecture, dependency-chain, or blast-radius questions, prefer multi_hop_analysis before deep file inspection.",
-                    "Use plan_task for multi-step work so downstream tools like test_generate become natural next steps.",
+                    "Use plan_task only as optional guidance for multi-step work; core graph tools stay callable without it.",
                     "Use read_file only after graph or semantic evidence narrows the target.",
                     "After successful source edits, refresh the graph before trusting GraphRAG answers for changed code.",
                     "Use context7_docs only when repository evidence is insufficient and external library behavior matters.",
@@ -4654,22 +4705,15 @@ class MCPToolsRegistry:
                 "why": "graph_first_bootstrap",
             },
             {
-                "tool": cs.MCPToolName.PLAN_TASK,
+                "tool": cs.MCPToolName.GET_SCHEMA_OVERVIEW,
                 "args": {
-                    "goal": f"Create a GraphRAG-first exploration plan for {project_name}",
-                    "context": (
-                        "Use select_active_project policy, prefer query_code_graph before read_file, "
-                        "and prepare an edit-safe workflow with sync_graph_updates."
-                    ),
+                    "scope": "global",
+                    "refresh": False,
                 },
                 "priority": 2,
-                "when": "task is multi-step, refactor-oriented, or architecture-heavy",
-                "copy_paste": (
-                    "plan_task("
-                    f'goal="Create a GraphRAG-first exploration plan for {project_name}", '
-                    'context="Use select_active_project policy, prefer query_code_graph before read_file, and prepare an edit-safe workflow with sync_graph_updates.")'
-                ),
-                "why": "planner_first_for_complex_work",
+                "when": "compact project-scoped schema bootstrap is useful before deeper exploration",
+                "copy_paste": 'get_schema_overview(scope="global", refresh=false)',
+                "why": "schema_bootstrap_context",
             },
         ]
 
@@ -5028,12 +5072,27 @@ class MCPToolsRegistry:
                 function_count_result = []
 
             self._session_state["preflight_project_selected"] = True
-            self._session_state["preflight_schema_summary_loaded"] = True
+            self._session_state["preflight_schema_summary_loaded"] = False
             self._session_state["preflight_schema_summary_rows"] = 0
             self._session_state["preflight_schema_context"] = ""
-            self._set_execution_phase("retrieval", "select_active_project_completed")
             self._session_state["repo_semantics"] = {}
-            self._session_state["session_contract"] = {}
+
+            preflight = await self._run_session_schema_preflight(project_name)
+            if str(preflight.get("status", "")).strip().lower() == "ok":
+                self._persist_preflight_context(preflight)
+                self._set_execution_phase(
+                    "retrieval", "select_active_project_completed"
+                )
+            else:
+                self._set_execution_phase(
+                    "preflight", "select_active_project_preflight_incomplete"
+                )
+
+            session_contract = self._build_session_contract(
+                project_name,
+                resolved_client_profile,
+            )
+            self._session_state["session_contract"] = session_contract
             exact_next_calls = self._build_select_active_project_next_calls(
                 project_name=project_name,
                 project_root=project_root,
@@ -5076,6 +5135,8 @@ class MCPToolsRegistry:
                     "classes": class_count,
                     "functions_and_methods": function_count,
                 },
+                "session_contract": session_contract,
+                "preflight": preflight,
                 "startup_playbook": [
                     "Use get_schema_overview for a compact project-scoped schema bootstrap.",
                     "Use query_code_graph for scoped graph exploration.",
@@ -8184,6 +8245,7 @@ class MCPToolsRegistry:
             "execution" if bool(write) else "retrieval",
             "run_cypher_write" if bool(write) else "run_cypher_read",
         )
+        flow_advisory: dict[str, object] | None = None
         if not cypher:
             return {"error": te.MCP_INVALID_RESPONSE, "results": []}
         if not write:
@@ -8262,18 +8324,11 @@ class MCPToolsRegistry:
             and str(reason or "").strip() not in bypass_reasons
             and not self._has_graph_query_digest()
         ):
-            self._record_tool_usefulness(
-                cs.MCPToolName.RUN_CYPHER,
-                success=False,
-                usefulness_score=0.0,
-            )
-            return {
-                "error": (
-                    "run_cypher_advanced_mode_required: default flow enforces graph-first retrieval. "
-                    "Call query_code_graph first, then use run_cypher; or set advanced_mode=true for expert traversal control."
+            flow_advisory = {
+                "message": (
+                    "query_code_graph is the preferred first step for discovery, but run_cypher remains available for expert traversal control in this session."
                 ),
-                "results": [],
-                "flow_hint": [
+                "recommended_flow": [
                     "select_active_project",
                     "query_code_graph",
                     "run_cypher",
@@ -8312,6 +8367,8 @@ class MCPToolsRegistry:
                     usefulness_score=0.9,
                 )
                 result_payload: dict[str, object] = {"status": "ok", "results": []}
+                if flow_advisory is not None:
+                    result_payload["flow_advisory"] = flow_advisory
                 if normalization_notes:
                     result_payload["scope_normalization"] = {
                         "applied": normalization_notes,
@@ -8352,6 +8409,8 @@ class MCPToolsRegistry:
             )
             response_payload: dict[str, object] = {"status": "ok", "results": results}
             response_payload["query_digest_id"] = query_digest_id
+            if flow_advisory is not None:
+                response_payload["flow_advisory"] = flow_advisory
             if normalization_notes:
                 response_payload["scope_normalization"] = {
                     "applied": normalization_notes,

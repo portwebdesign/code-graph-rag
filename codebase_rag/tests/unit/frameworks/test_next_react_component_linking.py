@@ -410,3 +410,99 @@ export default function Page() {
         and cast(dict[str, object], rel[3]).get(cs.KEY_ROUTE_PATH) == "/api/customers"
         for rel in requests_endpoint
     )
+
+
+def test_links_tanstack_query_refs_and_generated_client_requests(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "next_query_client_graph"
+    project.mkdir()
+
+    _write(
+        project / "src/app/customers/page.tsx",
+        """import { useQuery } from '@tanstack/react-query';
+import { listCustomers } from '@/lib/generated/client';
+
+export default function CustomersPage() {
+    const query = useQuery({
+        queryKey: ['customers'],
+        queryFn: listCustomers,
+    });
+
+    return <section>{query.data?.length ?? 0}</section>;
+}
+""",
+    )
+    _write(
+        project / "src/lib/generated/client.ts",
+        """const apiClient = {
+    get: async (path: string) => fetch(path),
+};
+
+export async function listCustomers() {
+    return apiClient.get('/api/customers');
+}
+""",
+    )
+
+    run_updater(project, mock_ingestor, skip_if_missing="typescript")
+
+    component_props = _node_props(mock_ingestor, cs.NodeLabel.COMPONENT)
+    page_component = next(
+        props
+        for props in component_props
+        if props.get(cs.KEY_QUALIFIED_NAME)
+        == "next_query_client_graph.src.app.customers.page.CustomersPage"
+    )
+    assert page_component.get("next_kind") == "page"
+    assert page_component.get("next_route_path") == "/customers"
+
+    endpoint_qn = None
+    for props in _node_props(mock_ingestor, cs.NodeLabel.ENDPOINT):
+        if (
+            props.get(cs.KEY_ROUTE_PATH) == "/api/customers"
+            and props.get(cs.KEY_HTTP_METHOD) == "GET"
+        ):
+            endpoint_qn = cast(str, props.get(cs.KEY_QUALIFIED_NAME))
+            break
+    assert endpoint_qn is not None
+
+    requests_endpoint = _relationship_args(
+        mock_ingestor, cs.RelationshipType.REQUESTS_ENDPOINT
+    )
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "next_query_client_graph.src.lib.generated.client.listCustomers",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.ENDPOINT,
+            cs.KEY_QUALIFIED_NAME,
+            endpoint_qn,
+        )
+        and cast(dict[str, object], rel[3]).get("client_kind") == "http_client_member"
+        for rel in requests_endpoint
+    )
+
+    calls = _relationship_args(mock_ingestor, cs.RelationshipType.CALLS)
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.COMPONENT,
+            cs.KEY_QUALIFIED_NAME,
+            "next_query_client_graph.src.app.customers.page.CustomersPage",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "next_query_client_graph.src.lib.generated.client.listCustomers",
+        )
+        and cast(dict[str, object], rel[3]).get(cs.KEY_RELATION_TYPE)
+        == "tanstack_query_fn_reference"
+        for rel in calls
+    )

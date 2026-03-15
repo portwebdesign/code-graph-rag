@@ -97,12 +97,14 @@ class MCPHTTPService:
             }
             for tool in _build_tool_list(self._catalog_tools)
         ]
+        session_guidance = self._session_guidance_payload()
         return {
             "status": "ok",
             "server": cs.MCP_SERVER_NAME,
             "transport": "http",
             "session_support": {
                 "required_for_stateful_workflows": True,
+                "reuse_session_id_after_create": True,
                 "create_endpoint": "/sessions",
                 "delete_endpoint": "/sessions/{session_id}",
                 "pass_session_id_in": "POST body as session_id",
@@ -116,8 +118,42 @@ class MCPHTTPService:
                     str(cs.MCPClientProfile.OLLAMA),
                     str(cs.MCPClientProfile.HTTP),
                 ],
+                **session_guidance,
             },
             "tools": tool_entries,
+        }
+
+    @staticmethod
+    def _session_guidance_payload() -> dict[str, object]:
+        return {
+            "warning": (
+                "Stateful workflow requires session_id reuse. After POST /sessions returns a session_id, send that same session_id in every subsequent tool, prompt, and resource request."
+            ),
+            "recommended_client_profile_for_memgraph_lab": str(
+                cs.MCPClientProfile.HTTP
+            ),
+            "memgraph_lab_flow": [
+                {
+                    "step": 1,
+                    "request": 'POST /sessions {"client_profile":"http"}',
+                    "purpose": "create a stateful HTTP MCP session",
+                },
+                {
+                    "step": 2,
+                    "request": 'POST /call-tool {"session_id":"<session_id>","name":"list_projects","arguments":{}}',
+                    "purpose": "discover indexed projects",
+                },
+                {
+                    "step": 3,
+                    "request": 'POST /call-tool {"session_id":"<session_id>","name":"select_active_project","arguments":{"project_name":"<project>"}}',
+                    "purpose": "pin active project and initialize session-scoped preflight",
+                },
+                {
+                    "step": 4,
+                    "request": 'POST /call-tool {"session_id":"<session_id>","name":"query_code_graph","arguments":{"natural_language_query":"Summarize the main modules and hotspots","output_format":"json"}}',
+                    "purpose": "start graph exploration while reusing the same session_id",
+                },
+            ],
         }
 
     async def list_resources_payload(self) -> dict[str, object]:
@@ -315,7 +351,8 @@ class MCPHTTPService:
             "transport": "http",
             "session_id": session_id,
             "client_profile": resolved_client_profile,
-            "ui_summary": "HTTP MCP session created.",
+            "ui_summary": "HTTP MCP session created. Reuse this session_id for every subsequent request in the workflow.",
+            "session_guidance": self._session_guidance_payload(),
         }
 
     def delete_session_payload(
@@ -405,6 +442,7 @@ class MCPHTTPService:
                             "when": "before the next tool call",
                         }
                     ],
+                    "session_guidance": self._session_guidance_payload(),
                 },
                 "returns_json": True,
             }
@@ -420,6 +458,8 @@ class MCPHTTPService:
             "transport": "http",
             "session_id": resolved_session_id,
             "session_created": created,
+            "session_reuse_required": True,
+            "session_guidance": self._session_guidance_payload(),
             "formatted_text": execution.get("formatted_text", ""),
             "payload": execution.get("payload", {}),
             "returns_json": bool(execution.get("returns_json", True)),

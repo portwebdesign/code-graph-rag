@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
 
+from codebase_rag.core import constants as cs
 from codebase_rag.core.config import settings
 from codebase_rag.mcp import http_server as http_server_module
 from codebase_rag.mcp.http_server import MCPHTTPService, create_streamable_http_app
+from codebase_rag.mcp.tools import MCPToolsRegistry
 
 
 class FakeTools:
@@ -150,6 +154,71 @@ class FakeSessionManager:
         return _runner()
 
 
+class RegistryHTTPIngestor:
+    def __init__(self, project_name: str) -> None:
+        self.project_name = project_name
+
+    def list_projects(self) -> list[str]:
+        return [self.project_name]
+
+    def fetch_all(
+        self,
+        query: str,
+        params: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        _ = params
+        normalized = " ".join(query.split())
+        if "RETURN count(m) AS count" in normalized:
+            return [{"count": 3}]
+        if "RETURN count(c) AS count" in normalized:
+            return [{"count": 1}]
+        if "RETURN count(DISTINCT f) AS count" in normalized:
+            return [{"count": 5}]
+        if all(
+            token in normalized
+            for token in ("source_label", "relationship_type", "target_label")
+        ):
+            return [
+                {
+                    "source_label": "Module",
+                    "relationship_type": "DEFINES",
+                    "target_label": "Function",
+                    "count": 5,
+                }
+            ]
+        return [{"name": "AuthService", "path": "src/auth.py"}]
+
+    def execute_write(
+        self,
+        query: str,
+        params: dict[str, object] | None = None,
+    ) -> None:
+        _ = query, params
+
+
+def _make_http_registry(
+    project_root: Path, client_profile: str | None = None
+) -> MCPToolsRegistry:
+    ingestor = RegistryHTTPIngestor(project_root.resolve().name)
+    cypher_gen = MagicMock()
+
+    async def _generate(query: str) -> str:
+        _ = query
+        return (
+            "MATCH (m:Module {project_name: $project_name}) "
+            "RETURN m.name AS name, m.path AS path LIMIT 5"
+        )
+
+    cypher_gen.generate = _generate
+    registry = MCPToolsRegistry(
+        project_root=str(project_root),
+        ingestor=cast(Any, ingestor),
+        cypher_gen=cypher_gen,
+    )
+    registry.set_client_profile(client_profile)
+    return registry
+
+
 @pytest.mark.asyncio
 async def test_http_service_lists_tools() -> None:
     service = MCPHTTPService(cast(Any, FakeTools()))
@@ -162,6 +231,8 @@ async def test_http_service_lists_tools() -> None:
     assert tools[0]["name"] == "query_code_graph"
     session_support = cast(dict[str, object], payload["session_support"])
     assert session_support["client_profile_optional_on_create"] is True
+    assert session_support["reuse_session_id_after_create"] is True
+    assert "session_id" in str(session_support["warning"])
 
 
 @pytest.mark.asyncio
@@ -176,9 +247,12 @@ async def test_http_service_returns_formatted_tool_payload() -> None:
     assert payload["status"] == "ok"
     assert str(payload["session_id"]).strip()
     assert payload["session_created"] is True
+    assert payload["session_reuse_required"] is True
     assert "Graph query completed" in str(payload["formatted_text"])
     nested_payload = cast(dict[str, object], payload["payload"])
     assert nested_payload["status"] == "ok"
+    session_guidance = cast(dict[str, object], payload["session_guidance"])
+    assert "session_id" in str(session_guidance["warning"])
 
 
 @pytest.mark.asyncio
@@ -323,6 +397,91 @@ async def test_http_service_create_session_accepts_client_profile() -> None:
 
     assert payload["status"] == "ok"
     assert payload["client_profile"] == "ollama"
+    guidance = cast(dict[str, object], payload["session_guidance"])
+    assert guidance["recommended_client_profile_for_memgraph_lab"] == "http"
+
+
+@pytest.mark.asyncio
+async def test_http_stateful_core_tools_remain_callable_after_project_selection(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "http_core_tools_repo"
+    project_root.mkdir()
+    (project_root / "sample.py").write_text(
+        "def hello():\n    return 1\n", encoding="utf-8"
+    )
+
+    service = MCPHTTPService(
+        cast(Any, _make_http_registry(project_root, "http")),
+        session_factory=cast(
+            Any,
+            lambda client_profile=None: _make_http_registry(
+                project_root, client_profile
+            ),
+        ),
+    )
+
+    session_payload = service.create_session_payload(client_profile="http")
+    session_id = str(session_payload["session_id"])
+
+    select_payload = await service.call_tool_payload(
+        "select_active_project",
+        {"project_name": project_root.resolve().name},
+        session_id=session_id,
+    )
+
+    assert select_payload["status"] == "ok"
+    registry = cast(Any, service._sessions[session_id].tools)
+    complex_query = "analyze multi-file dependency chain refactor impact across services, repositories, handlers, and router composition"
+    core_arguments = {
+        cs.MCPToolName.LIST_PROJECTS: {},
+        cs.MCPToolName.SELECT_ACTIVE_PROJECT: {
+            "project_name": project_root.resolve().name
+        },
+        cs.MCPToolName.GET_SCHEMA_OVERVIEW: {"scope": "global"},
+        cs.MCPToolName.QUERY_CODE_GRAPH: {
+            "natural_language_query": complex_query,
+            "output_format": "json",
+        },
+        cs.MCPToolName.MULTI_HOP_ANALYSIS: {"qualified_name": "demo.module.fn"},
+        cs.MCPToolName.IMPACT_GRAPH: {"qualified_name": "demo.module.fn"},
+        cs.MCPToolName.RUN_CYPHER: {
+            "cypher": "MATCH (m:Module {project_name: $project_name}) RETURN m.name AS name LIMIT 1"
+        },
+        cs.MCPToolName.SEMANTIC_SEARCH: {"query": complex_query},
+        cs.MCPToolName.PLAN_TASK: {"goal": "optional planning"},
+        cs.MCPToolName.LIST_DIRECTORY: {"path": "."},
+    }
+
+    for tool_name, args in core_arguments.items():
+        assert registry.get_visibility_gate_payload(tool_name, args) is None
+        assert registry.get_workflow_gate_payload(tool_name, args) is None
+
+    run_cypher_payload = await service.call_tool_payload(
+        "run_cypher",
+        {
+            "cypher": "MATCH (m:Module {project_name: $project_name}) RETURN m.name AS name LIMIT 1",
+            "params": '{"project_name":"http_core_tools_repo"}',
+            "write": False,
+        },
+        session_id=session_id,
+    )
+
+    assert run_cypher_payload["status"] == "ok"
+    run_cypher_result = cast(dict[str, object], run_cypher_payload["payload"])
+    assert run_cypher_result["status"] == "ok"
+    assert "flow_advisory" in run_cypher_result
+
+    query_payload = await service.call_tool_payload(
+        "query_code_graph",
+        {
+            "natural_language_query": complex_query,
+            "output_format": "json",
+        },
+        session_id=session_id,
+    )
+
+    assert query_payload["status"] == "ok"
 
 
 def test_http_service_authorization_requires_bearer_token(

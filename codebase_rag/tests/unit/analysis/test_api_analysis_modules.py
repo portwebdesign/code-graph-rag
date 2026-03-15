@@ -42,6 +42,19 @@ class _NoopIngestor:
         return None
 
 
+class _StaticQueryIngestor(_NoopIngestor):
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    def fetch_all(
+        self,
+        query: str,
+        params: dict[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        _ = query, params
+        return list(self._rows)
+
+
 def test_api_compliance_ignores_vendor_paths_and_false_positive_gets(
     tmp_path: Path,
 ) -> None:
@@ -286,3 +299,297 @@ def test_public_api_surface_includes_entry_points(tmp_path: Path) -> None:
     assert result["public_symbols"] == 1
     assert payload["summary"]["public_symbols"] == 1
     assert payload["symbols"][0]["path"] == "src/api/routes.py"
+
+
+def test_api_compliance_prefers_relation_propagated_mounted_paths(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner(tmp_path)
+    runner.ingestor = _StaticQueryIngestor(
+        [
+            {
+                "qualified_name": "demo.endpoint.fastapi.GET:/users",
+                "method": "GET",
+                "path": "/users",
+                "local_route_path": "/users",
+                "file": "src/api/routes/v1/identity.py",
+                "framework": "fastapi",
+                "handler_qns": ["demo.src.api.routes.v1.identity.list_users"],
+                "exposed_module_paths": [],
+                "prefix_module_paths": [],
+                "expose_count": 0,
+                "prefix_count": 0,
+            },
+            {
+                "qualified_name": "demo.endpoint.fastapi.GET:/api/v1/users",
+                "method": "GET",
+                "path": "/api/v1/users",
+                "local_route_path": "/users",
+                "file": "src/api/routes/v1/identity.py",
+                "framework": "fastapi",
+                "handler_qns": ["demo.src.api.routes.v1.identity.list_users"],
+                "exposed_module_paths": ["src/api/routes/v1/__init__.py"],
+                "prefix_module_paths": ["src/api/routes/v1/identity.py"],
+                "expose_count": 1,
+                "prefix_count": 1,
+            },
+        ]
+    )
+    context = AnalysisContext(
+        runner=cast(Any, runner),
+        nodes=[],
+        relationships=[],
+        module_path_map={},
+        node_by_id={},
+        module_paths=None,
+        incremental_paths=None,
+        use_db=False,
+        summary={},
+    )
+
+    ApiComplianceModule().run(context)
+
+    report = cast(dict[str, object], runner.reports["api_compliance_report.json"])
+    endpoints = cast(list[dict[str, object]], report["endpoints"])
+    assert len(endpoints) == 1
+    assert endpoints[0]["path"] == "/api/v1/users"
+    assert endpoints[0]["canonical_route_layer"] == "relation_propagated"
+
+
+def test_api_call_chain_prefers_canonical_endpoint_and_filters_graphql_noise(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner(tmp_path)
+    endpoint_local = NodeRecord(
+        node_id=1,
+        labels=[cs.NodeLabel.ENDPOINT.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.endpoint.fastapi.GET:/generated-documents/{param}/preview",
+            cs.KEY_NAME: "GET /generated-documents/{param}/preview",
+            cs.KEY_PATH: "src/api/routes/v1/documents/artifact_routes.py",
+            cs.KEY_FRAMEWORK: "fastapi",
+            cs.KEY_HTTP_METHOD: "GET",
+            cs.KEY_ROUTE_PATH: "/generated-documents/{param}/preview",
+        },
+    )
+    endpoint_canonical = NodeRecord(
+        node_id=2,
+        labels=[cs.NodeLabel.ENDPOINT.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.endpoint.fastapi.GET:/api/v1/generated-documents/{param}/preview",
+            cs.KEY_NAME: "GET /api/v1/generated-documents/{param}/preview",
+            cs.KEY_PATH: "src/api/routes/v1/documents/artifact_routes.py",
+            cs.KEY_FRAMEWORK: "fastapi",
+            cs.KEY_HTTP_METHOD: "GET",
+            cs.KEY_ROUTE_PATH: "/api/v1/generated-documents/{param}/preview",
+            "local_route_path": "/generated-documents/{param}/preview",
+        },
+    )
+    handler = NodeRecord(
+        node_id=3,
+        labels=[cs.NodeLabel.FUNCTION.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.src.api.routes.v1.documents.artifact_routes.get_preview",
+            cs.KEY_NAME: "get_preview",
+            cs.KEY_PATH: "src/api/routes/v1/documents/artifact_routes.py",
+        },
+    )
+    expose_module = NodeRecord(
+        node_id=4,
+        labels=[cs.NodeLabel.MODULE.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.src.api.routes.v1.documents",
+            cs.KEY_NAME: "documents",
+            cs.KEY_PATH: "src/api/routes/v1/documents/__init__.py",
+        },
+    )
+    prefix_module = NodeRecord(
+        node_id=5,
+        labels=[cs.NodeLabel.MODULE.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.src.api.routes.v1.documents.artifact_routes",
+            cs.KEY_NAME: "artifact_routes",
+            cs.KEY_PATH: "src/api/routes/v1/documents/artifact_routes.py",
+        },
+    )
+    graphql_query = NodeRecord(
+        node_id=6,
+        labels=[cs.NodeLabel.CLASS.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.src.api.routes.internal.graphql_schema.Query",
+            cs.KEY_NAME: "Query",
+            cs.KEY_PATH: "src/api/routes/internal/graphql_schema.py",
+        },
+    )
+    service = NodeRecord(
+        node_id=7,
+        labels=[cs.NodeLabel.METHOD.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.src.domain.documents.services.ArtifactService.list_artifacts",
+            cs.KEY_NAME: "list_artifacts",
+            cs.KEY_PATH: "src/domain/documents/services/artifact_service.py",
+        },
+    )
+    relationships = [
+        RelationshipRecord(3, 1, cs.RelationshipType.HAS_ENDPOINT, {}),
+        RelationshipRecord(3, 2, cs.RelationshipType.HAS_ENDPOINT, {}),
+        RelationshipRecord(4, 2, cs.RelationshipType.EXPOSES_ENDPOINT, {}),
+        RelationshipRecord(
+            5, 2, cs.RelationshipType.PREFIXES_ENDPOINT, {"prefix": "/api/v1"}
+        ),
+        RelationshipRecord(3, 6, cs.RelationshipType.CALLS, {}),
+        RelationshipRecord(3, 7, cs.RelationshipType.CALLS_SERVICE, {}),
+    ]
+    context = AnalysisContext(
+        runner=cast(Any, runner),
+        nodes=[
+            endpoint_local,
+            endpoint_canonical,
+            handler,
+            expose_module,
+            prefix_module,
+            graphql_query,
+            service,
+        ],
+        relationships=relationships,
+        module_path_map={},
+        node_by_id={
+            1: endpoint_local,
+            2: endpoint_canonical,
+            3: handler,
+            4: expose_module,
+            5: prefix_module,
+            6: graphql_query,
+            7: service,
+        },
+        module_paths=None,
+        incremental_paths=None,
+        use_db=False,
+        summary={},
+    )
+
+    ApiCallChainModule().run(context)
+
+    report = cast(dict[str, object], runner.reports["api_call_chain_report.json"])
+    summary = cast(dict[str, object], report["summary"])
+    chains = cast(list[dict[str, object]], report["chains"])
+    assert summary["endpoints"] == 1
+    assert (
+        chains[0]["endpoint"]["route_path"]
+        == "/api/v1/generated-documents/{param}/preview"
+    )
+    assert chains[0]["endpoint"]["canonical_route_layer"] == "relation_propagated"
+    call_chain = cast(list[dict[str, object]], chains[0]["call_chain"])
+    assert all(
+        item["path"] != "src/api/routes/internal/graphql_schema.py"
+        for item in call_chain
+    )
+    assert any(
+        item["qualified_name"]
+        == "demo.src.domain.documents.services.ArtifactService.list_artifacts"
+        for item in call_chain
+    )
+
+
+def test_api_call_chain_emits_frontend_requester_context(tmp_path: Path) -> None:
+    runner = _FakeRunner(tmp_path)
+    endpoint = NodeRecord(
+        node_id=1,
+        labels=[cs.NodeLabel.ENDPOINT.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.endpoint.fastapi.GET:/api/customers",
+            cs.KEY_NAME: "GET /api/customers",
+            cs.KEY_PATH: "src/api/routes/customers.py",
+            cs.KEY_FRAMEWORK: "fastapi",
+            cs.KEY_HTTP_METHOD: "GET",
+            cs.KEY_ROUTE_PATH: "/api/customers",
+        },
+    )
+    helper = NodeRecord(
+        node_id=2,
+        labels=[cs.NodeLabel.FUNCTION.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.frontend.lib.generated.listCustomers",
+            cs.KEY_NAME: "listCustomers",
+            cs.KEY_PATH: "frontend/src/lib/generated/client.ts",
+        },
+    )
+    widget = NodeRecord(
+        node_id=3,
+        labels=[cs.NodeLabel.COMPONENT.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.frontend.src.components.CustomerWidget.CustomerWidget",
+            cs.KEY_NAME: "CustomerWidget",
+            cs.KEY_PATH: "frontend/src/components/CustomerWidget.tsx",
+            cs.KEY_FRAMEWORK: "react",
+            "hooks_used": ["useQuery"],
+        },
+    )
+    page = NodeRecord(
+        node_id=4,
+        labels=[cs.NodeLabel.COMPONENT.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.frontend.src.app.customers.page.CustomersPage",
+            cs.KEY_NAME: "CustomersPage",
+            cs.KEY_PATH: "frontend/src/app/customers/page.tsx",
+            cs.KEY_FRAMEWORK: "next",
+            "next_kind": "page",
+            "next_route_path": "/customers",
+        },
+    )
+    handler = NodeRecord(
+        node_id=5,
+        labels=[cs.NodeLabel.FUNCTION.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.src.api.routes.customers.list_customers",
+            cs.KEY_NAME: "list_customers",
+            cs.KEY_PATH: "src/api/routes/customers.py",
+        },
+    )
+    relationships = [
+        RelationshipRecord(5, 1, cs.RelationshipType.HAS_ENDPOINT, {}),
+        RelationshipRecord(2, 1, cs.RelationshipType.REQUESTS_ENDPOINT, {}),
+        RelationshipRecord(3, 2, cs.RelationshipType.CALLS, {}),
+        RelationshipRecord(4, 3, cs.RelationshipType.USES_COMPONENT, {}),
+    ]
+    context = AnalysisContext(
+        runner=cast(Any, runner),
+        nodes=[endpoint, helper, widget, page, handler],
+        relationships=relationships,
+        module_path_map={},
+        node_by_id={1: endpoint, 2: helper, 3: widget, 4: page, 5: handler},
+        module_paths=None,
+        incremental_paths=None,
+        use_db=False,
+        summary={},
+    )
+
+    ApiCallChainModule().run(context)
+
+    report = cast(dict[str, object], runner.reports["api_call_chain_report.json"])
+    chains = cast(list[dict[str, object]], report["chains"])
+    requester_components = cast(
+        list[dict[str, object]], chains[0]["requester_components"]
+    )
+    requester_pages = cast(list[dict[str, object]], chains[0]["requester_pages"])
+    request_path_chain = cast(list[dict[str, object]], chains[0]["request_path_chain"])
+
+    component_qns = {cast(str, item["qualified_name"]) for item in requester_components}
+    assert "demo.frontend.src.components.CustomerWidget.CustomerWidget" in component_qns
+    assert "demo.frontend.src.app.customers.page.CustomersPage" in component_qns
+    assert (
+        requester_pages[0]["qualified_name"]
+        == "demo.frontend.src.app.customers.page.CustomersPage"
+    )
+    assert requester_pages[0]["next_route_path"] == "/customers"
+    assert request_path_chain[0]["relationships"] == [
+        cs.RelationshipType.USES_COMPONENT,
+        cs.RelationshipType.CALLS,
+        cs.RelationshipType.REQUESTS_ENDPOINT,
+    ]
+    assert [node["qualified_name"] for node in request_path_chain[0]["nodes"]] == [
+        "demo.frontend.src.app.customers.page.CustomersPage",
+        "demo.frontend.src.components.CustomerWidget.CustomerWidget",
+        "demo.frontend.lib.generated.listCustomers",
+        "demo.endpoint.fastapi.GET:/api/customers",
+    ]

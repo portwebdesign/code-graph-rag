@@ -560,13 +560,75 @@ claude mcp add --transport stdio code-graph-rag \
   -- uv run --directory /path/to/code-graph-rag code-graph-rag mcp-server
 ```
 
+### Memgraph Lab / HTTP Session Flow
+
+For Streamable HTTP clients such as Memgraph Lab, the MCP workflow is stateful. After creating a session, you must reuse the returned `session_id` on every subsequent request. If you omit `session_id`, the server creates a fresh session and previous project selection, schema bootstrap, and evidence state will not be reused.
+
+Recommended `client_profile` for Memgraph Lab is `http`.
+
+Example flow:
+
+```bash
+curl -X POST http://127.0.0.1:8765/sessions \
+  -H "Content-Type: application/json" \
+  -d '{"client_profile":"http"}'
+```
+
+Response shape:
+
+```json
+{
+  "status": "ok",
+  "transport": "http",
+  "session_id": "<session_id>",
+  "client_profile": "http"
+}
+```
+
+Then reuse the same `session_id`:
+
+```bash
+curl -X POST http://127.0.0.1:8765/call-tool \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id":"<session_id>",
+    "name":"list_projects",
+    "arguments":{}
+  }'
+```
+
+```bash
+curl -X POST http://127.0.0.1:8765/call-tool \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id":"<session_id>",
+    "name":"select_active_project",
+    "arguments":{"project_name":"abey"}
+  }'
+```
+
+```bash
+curl -X POST http://127.0.0.1:8765/call-tool \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id":"<session_id>",
+    "name":"query_code_graph",
+    "arguments":{
+      "natural_language_query":"Summarize the main modules and dependency hotspots",
+      "output_format":"json"
+    }
+  }'
+```
+
+After `select_active_project`, the exposed core HTTP tools stay callable without forcing `plan_task`. `plan_task` remains available as advisory guidance for multi-step work.
+
 ### Available Tools
 
 <!-- SECTION:mcp_tools -->
 | Tool | Description |
 |----|-----------|
 | `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. MANDATORY START: call this first in a fresh session, then call select_active_project. |
-| `select_active_project` | Preflight tool to set/confirm the active repository context and return project-scoped readiness info. Optionally accepts repo_path to switch active root and client_profile to tailor MCP behavior for VS Code, Cline, Copilot, Ollama, or HTTP clients, then reports active project, indexed status, project-scoped graph counts, latest analysis timestamp, and enforced safety policies. MANDATORY SECOND STEP after list_projects before using non-exempt tools. |
+| `select_active_project` | Preflight tool to set/confirm the active repository context and return project-scoped readiness info. Optionally accepts repo_path to switch active root and client_profile to tailor MCP behavior for VS Code, Cline, Copilot, Ollama, or HTTP clients, then reports active project, indexed status, project-scoped graph counts, latest analysis timestamp, and enforced safety policies. MANDATORY SECOND STEP after list_projects before using the stateful graph tools. |
 | `get_schema_overview` | Return a compact, project-scoped graph schema bootstrap summary with relation patterns, label counts, key properties, important labels, and frontend graph capabilities/preset Cypher examples for the current repository. |
 | `detect_project_drift` | Detect FS↔Graph drift for a repository/project before re-index decisions. Reports filesystem file counts, graph module/file counts, and drift signals. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
@@ -603,7 +665,7 @@ claude mcp add --transport stdio code-graph-rag \
 | `run_cypher` | Execute a raw Cypher query against the Memgraph database. Requires preflight: run list_projects -> select_active_project first. Use this for advanced ad-hoc querying not covered by standard tools and for explicit single-hop/multi-hop traversal control. Default graph-first flow: query_code_graph first, then run_cypher. Query MUST be scoped to active project and MUST use $project_name parameter to avoid cross-project access. Set write=True ONLY IF you intend to modify the graph (nodes/edges). For write operations, user_requested=true and a non-empty high-quality reason are required. Write operations run safe dry-run impact analysis and are blocked when impact is too high. WARNING: Modifying the graph directly can cause inconsistencies with the actual source code. |
 | `apply_diff_safe` | Apply one or more surgical replacements in a single file. Requires 'file_path' and 'chunks', where chunks is a JSON string list of objects with 'target_code' and 'replacement_code'. |
 | `refactor_batch` | Apply multiple diff modifications across several files in a single operation. Requires 'chunks' which is a JSON formatted string containing multiple diffs. |
-| `plan_task` | Ask an agent planner to create a multi-step execution plan for a specified goal. Provide the 'goal' and optional 'context' the planner might need. Mandatory in strict mode for complex/multi-step intents before execution tools. |
+| `plan_task` | Ask an agent planner to create a multi-step execution plan for a specified goal. Provide the 'goal' and optional 'context' the planner might need. Advisory tool for complex or multi-step work; core graph tools remain callable without it. |
 | `test_generate` | Ask a specialized test-generation agent to create test cases for a specific function or class. Supports output_mode='code' (default), 'plan_json', or 'both'. Return code-first, runnable test output when possible; keep assumptions explicit and minimal. |
 | `memory_add` | Add a memory entry (context, decision, or fact) to the persistent memory store. Tags are optional but help categorize memories (e.g. 'architecture', 'auth'). |
 | `memory_list` | List recently added memory entries from the persistent memory store. |

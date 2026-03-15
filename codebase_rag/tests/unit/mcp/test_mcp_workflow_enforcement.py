@@ -53,8 +53,8 @@ class TestMCPWorkflowEnforcement:
         settings.MCP_ENFORCE_MEMORY_PRIMING_GATE = True
         try:
             payload = mcp_registry.get_workflow_gate_payload(
-                "query_code_graph",
-                {"natural_language_query": "list core modules"},
+                "read_file",
+                {"file_path": "src/services/auth_service.py"},
             )
 
             assert payload is not None
@@ -74,9 +74,12 @@ class TestMCPWorkflowEnforcement:
 
         try:
             payload = mcp_registry.get_workflow_gate_payload(
-                "query_code_graph",
+                "read_file",
                 {
-                    "natural_language_query": "analyze multi-file dependency chain refactor impact"
+                    "file_path": (
+                        "src/very/long/path/that/represents/a/multi-file/architecture/dependency/refactor/impact/"
+                        "analysis/request/for/non_core_read_file_gate_validation/example_module.py"
+                    )
                 },
             )
 
@@ -85,6 +88,25 @@ class TestMCPWorkflowEnforcement:
                 list[dict[str, object]], payload.get("exact_next_calls", [])
             )
             assert exact_next_calls[0].get("tool") == "plan_task"
+        finally:
+            settings.MCP_ENFORCE_COMPLEX_PLAN_GATE = previous
+
+    def test_workflow_gate_does_not_block_core_query_code_graph_for_complex_query(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["memory_primed"] = True
+        previous = settings.MCP_ENFORCE_COMPLEX_PLAN_GATE
+        settings.MCP_ENFORCE_COMPLEX_PLAN_GATE = True
+
+        try:
+            payload = mcp_registry.get_workflow_gate_payload(
+                "query_code_graph",
+                {
+                    "natural_language_query": "analyze multi-file dependency chain refactor impact across services, repositories, handlers, and router composition"
+                },
+            )
+
+            assert payload is None
         finally:
             settings.MCP_ENFORCE_COMPLEX_PLAN_GATE = previous
 
@@ -122,6 +144,25 @@ class TestMCPWorkflowEnforcement:
         assert payload.get("gate") == "visibility"
         assert payload.get("blocked_tool") == "context7_docs"
         assert "query_code_graph" in cast(list[str], payload.get("visible_tools", []))
+
+    def test_visibility_gate_recovers_with_select_active_project_when_session_state_is_missing(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        mcp_registry._session_state["preflight_project_selected"] = False
+        mcp_registry._session_state["preflight_schema_summary_loaded"] = False
+
+        payload = mcp_registry.get_visibility_gate_payload(
+            "query_code_graph",
+            {"natural_language_query": "trace auth flow"},
+        )
+
+        assert payload is not None
+        exact_next_calls = cast(
+            list[dict[str, object]], payload.get("exact_next_calls", [])
+        )
+        assert exact_next_calls[0].get("tool") == "list_projects"
+        assert exact_next_calls[1].get("tool") == "select_active_project"
+        assert payload.get("tool_stage") == "graph_bootstrap"
 
     async def test_run_cypher_parameterizes_literal_scope(
         self, mcp_registry: MCPToolsRegistry

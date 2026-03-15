@@ -91,6 +91,14 @@ class TestMCPNewTools:
             [{"count": 3}],
             [{"count": 2}],
             [{"count": 5}],
+            [
+                {
+                    "source_label": "Module",
+                    "relationship_type": "DEFINES",
+                    "target_label": "Function",
+                    "count": 5,
+                }
+            ],
         ]
 
         result = await mcp_registry.select_active_project()
@@ -116,7 +124,13 @@ class TestMCPNewTools:
         assert exact_next_calls[0].get("tool") == "query_code_graph"
         next_best_action = cast(dict[str, object], result.get("next_best_action", {}))
         assert next_best_action.get("tool") == "query_code_graph"
-        assert result.get("session_contract") in ({}, None)
+        session_contract = cast(dict[str, object], result.get("session_contract", {}))
+        assert session_contract.get("active_project") == project_name
+        preflight = cast(dict[str, object], result.get("preflight", {}))
+        assert preflight.get("status") == "ok"
+        assert (
+            mcp_registry._session_state.get("preflight_schema_summary_loaded") is True
+        )
         assert result.get("policy") in ({}, None)
         assert result.get("analysis_resources") in (None, [])
         assert result.get("analysis_prompts") in (None, [])
@@ -171,6 +185,14 @@ class TestMCPNewTools:
             [{"count": 2}],
             [{"count": 1}],
             [{"count": 3}],
+            [
+                {
+                    "source_label": "Module",
+                    "relationship_type": "DEFINES",
+                    "target_label": "Function",
+                    "count": 3,
+                }
+            ],
         ]
 
         result = await mcp_registry.select_active_project(client_profile="ollama")

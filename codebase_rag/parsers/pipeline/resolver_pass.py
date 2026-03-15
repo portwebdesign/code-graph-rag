@@ -223,6 +223,8 @@ class ResolverPass:
         self._link_jsx_components(root_node, module_qn, language)
         self._link_next_component_endpoints(file_path, module_qn)
         self._link_component_requests(file_path, module_qn)
+        self._link_symbol_requests(file_path, root_node, module_qn)
+        self._link_tanstack_request_references(root_node, module_qn)
         self._link_error_handlers(root_node, module_qn, language)
         self._link_state_mutations(root_node, module_qn, language)
 
@@ -550,6 +552,12 @@ class ResolverPass:
             component_props[cs.KEY_PATH] = relative_path
             component_props[cs.KEY_REPO_REL_PATH] = relative_path
             component_props[cs.KEY_ABS_PATH] = file_path.resolve().as_posix()
+            next_kind = self._next_special_kind(file_path)
+            if next_kind:
+                component_props["next_kind"] = next_kind
+                route_path = self._route_path_for_next_app_entry(file_path)
+                if route_path:
+                    component_props["next_route_path"] = route_path
         if namespace:
             component_props[cs.KEY_NAMESPACE] = namespace
             component_props[cs.KEY_PACKAGE] = namespace
@@ -969,9 +977,10 @@ class ResolverPass:
             resolved_qn = self._resolve_hook_import(qualified, hook_name)
             if resolved_qn:
                 return resolved_qn, hook_name
-        return self._ensure_external_hook_node(
-            hook_name, f"{base_name}.{hook_name}"
-        ), hook_name
+        return (
+            self._ensure_external_hook_node(hook_name, f"{base_name}.{hook_name}"),
+            hook_name,
+        )
 
     def _resolve_hook_import(
         self, imported_full_name: str, hook_name: str
@@ -1382,33 +1391,24 @@ class ResolverPass:
             if source_node is None:
                 continue
             component_source = safe_decode_with_fallback(source_node)
-            for request in self._extract_component_request_endpoints(component_source):
-                endpoint_qn = self._ensure_request_endpoint_node(
-                    relative_path,
-                    cast(str, request["framework"]),
-                    cast(str, request["method"]),
-                    cast(str, request["path"]),
-                    cast(str, request["raw_path"]),
-                )
-                self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.COMPONENT, cs.KEY_QUALIFIED_NAME, component_qn),
-                    cs.RelationshipType.REQUESTS_ENDPOINT,
-                    (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                    {
-                        cs.KEY_RELATION_TYPE: "http_request",
-                        cs.KEY_FRAMEWORK: cast(str, request["framework"]),
-                        cs.KEY_HTTP_METHOD: cast(str, request["method"]),
-                        cs.KEY_ROUTE_PATH: cast(str, request["path"]),
-                        cs.KEY_RAW_PATH: cast(str, request["raw_path"]),
-                        "source_parser": "resolver_pass",
-                    },
-                )
+            self._link_request_descriptors(
+                relative_path,
+                (cs.NodeLabel.COMPONENT, cs.KEY_QUALIFIED_NAME, component_qn),
+                component_source,
+                request_origin="component_body",
+            )
 
     def _extract_component_request_endpoints(self, source: str) -> list[dict[str, str]]:
         requests: list[dict[str, str]] = []
         seen: set[tuple[str, str, str]] = set()
 
-        def _append(framework: str, method: str, raw_path: str) -> None:
+        def _append(
+            framework: str,
+            method: str,
+            raw_path: str,
+            *,
+            client_kind: str = "direct",
+        ) -> None:
             normalized_path = self._normalize_request_path(raw_path)
             if not normalized_path:
                 return
@@ -1422,6 +1422,7 @@ class ResolverPass:
                     "method": method.upper(),
                     "path": normalized_path,
                     "raw_path": raw_path,
+                    "client_kind": client_kind,
                 }
             )
 
@@ -1441,23 +1442,314 @@ class ResolverPass:
             r"axios\.(get|post|put|delete|patch)\s*\(\s*(['\"`])(?P<path>[^'\"`]+)\2",
             re.IGNORECASE,
         )
+        member_http_pattern = re.compile(
+            r"\b(?:[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*\.(get|post|put|delete|patch)\s*\(\s*(['\"`])(?P<path>[^'\"`]+)\2",
+            re.IGNORECASE,
+        )
+        request_block_pattern = re.compile(
+            r"\b(?:[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*)*\.request\s*\(\s*\{(?P<body>[\s\S]{0,400}?)\}\s*\)",
+            re.IGNORECASE,
+        )
+        request_url_pattern = re.compile(
+            r"\b(?:url|path)\s*:\s*['\"`]([^'\"`]+)['\"`]",
+            re.IGNORECASE,
+        )
 
         for match in fetch_pattern.finditer(source):
             options = match.group(3) or ""
             method_match = method_pattern.search(options)
             _append(
-                "http", method_match.group(1) if method_match else "GET", match.group(1)
+                "http",
+                method_match.group(1) if method_match else "GET",
+                match.group(1),
+                client_kind="fetch",
             )
         for match in fetch_template_pattern.finditer(source):
             options = match.group(3) or ""
             method_match = method_pattern.search(options)
             _append(
-                "http", method_match.group(1) if method_match else "GET", match.group(1)
+                "http",
+                method_match.group(1) if method_match else "GET",
+                match.group(1),
+                client_kind="fetch_template",
             )
         for match in axios_pattern.finditer(source):
-            _append("http", match.group(1), match.group("path"))
+            _append("http", match.group(1), match.group("path"), client_kind="axios")
+        for match in member_http_pattern.finditer(source):
+            _append(
+                "http",
+                match.group(1),
+                match.group("path"),
+                client_kind="http_client_member",
+            )
+        for match in request_block_pattern.finditer(source):
+            body = match.group("body") or ""
+            method_match = method_pattern.search(body)
+            url_match = request_url_pattern.search(body)
+            if not url_match:
+                continue
+            _append(
+                "http",
+                method_match.group(1) if method_match else "GET",
+                url_match.group(1),
+                client_kind="http_client_request",
+            )
 
         return requests
+
+    def _link_request_descriptors(
+        self,
+        relative_path: str,
+        source_node: tuple[str, str, str],
+        source_text: str,
+        *,
+        request_origin: str,
+    ) -> None:
+        for request in self._extract_component_request_endpoints(source_text):
+            endpoint_qn = self._ensure_request_endpoint_node(
+                relative_path,
+                cast(str, request["framework"]),
+                cast(str, request["method"]),
+                cast(str, request["path"]),
+                cast(str, request["raw_path"]),
+            )
+            self.ingestor.ensure_relationship_batch(
+                source_node,
+                cs.RelationshipType.REQUESTS_ENDPOINT,
+                (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                {
+                    cs.KEY_RELATION_TYPE: "http_request",
+                    cs.KEY_FRAMEWORK: cast(str, request["framework"]),
+                    cs.KEY_HTTP_METHOD: cast(str, request["method"]),
+                    cs.KEY_ROUTE_PATH: cast(str, request["path"]),
+                    cs.KEY_RAW_PATH: cast(str, request["raw_path"]),
+                    "client_kind": cast(str, request.get("client_kind") or "direct"),
+                    "request_origin": request_origin,
+                    "source_parser": "resolver_pass",
+                },
+            )
+
+    def _link_symbol_requests(
+        self,
+        file_path: Path,
+        root_node: object,
+        module_qn: str,
+    ) -> None:
+        relative_path = file_path.relative_to(self.repo_path).as_posix()
+        for source_label, source_qn, source_node in self._iter_js_ts_request_sources(
+            cast(Node, root_node),
+            module_qn,
+        ):
+            source_text = safe_decode_with_fallback(source_node)
+            self._link_request_descriptors(
+                relative_path,
+                (source_label, cs.KEY_QUALIFIED_NAME, source_qn),
+                source_text,
+                request_origin="symbol_body",
+            )
+
+    def _link_tanstack_request_references(
+        self,
+        root_node: object,
+        module_qn: str,
+    ) -> None:
+        reference_pattern = re.compile(
+            r"\b(?:queryFn|mutationFn)\s*:\s*(?!async\b|function\b|\()(?P<ref>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)",
+            re.IGNORECASE,
+        )
+        for source_label, source_qn, source_node in self._iter_js_ts_request_sources(
+            cast(Node, root_node),
+            module_qn,
+            include_components=True,
+        ):
+            source_text = safe_decode_with_fallback(source_node)
+            for match in reference_pattern.finditer(source_text):
+                reference = str(match.group("ref") or "").strip()
+                if not reference:
+                    continue
+                target = self._resolve_callable_reference(module_qn, reference)
+                if target is None:
+                    continue
+                target_label, target_qn = target
+                if target_qn == source_qn:
+                    continue
+                self.ingestor.ensure_relationship_batch(
+                    (source_label, cs.KEY_QUALIFIED_NAME, source_qn),
+                    cs.RelationshipType.CALLS,
+                    (target_label, cs.KEY_QUALIFIED_NAME, target_qn),
+                    {
+                        cs.KEY_RELATION_TYPE: "tanstack_query_fn_reference",
+                        "reference_name": reference,
+                        "source_parser": "resolver_pass",
+                        "confidence": 0.82,
+                    },
+                )
+
+    def _iter_js_ts_request_sources(
+        self,
+        root_node: Node,
+        module_qn: str,
+        *,
+        include_components: bool = False,
+    ) -> list[tuple[str, str, Node]]:
+        sources: list[tuple[str, str, Node]] = []
+        seen_qns: set[str] = set()
+
+        if include_components:
+            for component_name, component_qn in self._components_by_module.get(
+                module_qn, {}
+            ).items():
+                source_node = self._component_source_nodes.get(component_qn)
+                if source_node is None or component_qn in seen_qns:
+                    continue
+                seen_qns.add(component_qn)
+                _ = component_name
+                sources.append((cs.NodeLabel.COMPONENT, component_qn, source_node))
+
+        component_source_ids = {
+            id(node)
+            for component_qn, node in self._component_source_nodes.items()
+            if component_qn.startswith(f"{module_qn}{cs.SEPARATOR_DOT}")
+            or component_qn == module_qn
+        }
+
+        for node in self._walk_nodes(root_node):
+            if id(node) in component_source_ids:
+                continue
+            resolved = self._resolve_js_ts_source_symbol(module_qn, node)
+            if resolved is None:
+                continue
+            source_label, source_qn = resolved
+            if source_qn in seen_qns:
+                continue
+            seen_qns.add(source_qn)
+            sources.append((source_label, source_qn, node))
+        return sources
+
+    def _resolve_js_ts_source_symbol(
+        self,
+        module_qn: str,
+        node: Node,
+    ) -> tuple[str, str] | None:
+        if node.type == cs.TS_FUNCTION_DECLARATION:
+            name_node = node.child_by_field_name(cs.FIELD_NAME)
+            name = safe_decode_with_fallback(name_node) if name_node else ""
+            if not name:
+                return None
+            return self._resolve_named_callable(module_qn, name)
+
+        if node.type == cs.TS_VARIABLE_DECLARATOR:
+            value_node = node.child_by_field_name(cs.FIELD_VALUE)
+            if value_node is None or value_node.type not in {
+                "arrow_function",
+                "function_expression",
+            }:
+                return None
+            name_node = node.child_by_field_name(cs.FIELD_NAME)
+            name = safe_decode_with_fallback(name_node) if name_node else ""
+            if not name:
+                return None
+            return self._resolve_named_callable(module_qn, name)
+
+        if node.type == cs.TS_METHOD_DEFINITION:
+            name_node = node.child_by_field_name(cs.FIELD_NAME)
+            method_name = safe_decode_with_fallback(name_node) if name_node else ""
+            class_name = self._enclosing_class_name(node)
+            if not method_name or not class_name:
+                return None
+            exact_qn = f"{module_qn}{cs.SEPARATOR_DOT}{class_name}{cs.SEPARATOR_DOT}{method_name}"
+            target = self._resolve_symbol_target(exact_qn)
+            if target is not None:
+                return target
+            return self._resolve_named_callable(
+                module_qn,
+                method_name,
+                preferred_prefix=f"{module_qn}{cs.SEPARATOR_DOT}{class_name}{cs.SEPARATOR_DOT}",
+            )
+        return None
+
+    def _resolve_named_callable(
+        self,
+        module_qn: str,
+        symbol_name: str,
+        *,
+        preferred_prefix: str | None = None,
+    ) -> tuple[str, str] | None:
+        exact_qn = f"{module_qn}{cs.SEPARATOR_DOT}{symbol_name}"
+        target = self._resolve_symbol_target(exact_qn)
+        if target is not None:
+            return target
+        return self._find_function_like_symbol(
+            symbol_name,
+            preferred_prefix=preferred_prefix or f"{module_qn}{cs.SEPARATOR_DOT}",
+        )
+
+    def _find_function_like_symbol(
+        self,
+        symbol_name: str,
+        *,
+        preferred_prefix: str | None = None,
+    ) -> tuple[str, str] | None:
+        candidates = self.function_registry.find_ending_with(symbol_name)
+        if preferred_prefix:
+            for qn in candidates:
+                node_type = self.function_registry.get(qn)
+                if node_type and qn.startswith(preferred_prefix):
+                    return node_type.value, qn
+        for qn in candidates:
+            node_type = self.function_registry.get(qn)
+            if node_type:
+                return node_type.value, qn
+        return None
+
+    def _enclosing_class_name(self, node: Node) -> str | None:
+        current = node.parent
+        while current:
+            if current.type in {
+                cs.TS_CLASS_DECLARATION,
+                cs.TS_ABSTRACT_CLASS_DECLARATION,
+            }:
+                name_node = current.child_by_field_name(cs.FIELD_NAME)
+                return safe_decode_with_fallback(name_node) if name_node else None
+            current = current.parent
+        return None
+
+    def _resolve_callable_reference(
+        self,
+        module_qn: str,
+        reference: str,
+    ) -> tuple[str, str] | None:
+        import_mapping = self.import_processor.import_mapping.get(module_qn, {})
+        if cs.SEPARATOR_DOT not in reference:
+            imported_full_name = import_mapping.get(reference)
+            if imported_full_name:
+                target = self._resolve_symbol_target(imported_full_name)
+                if target is not None:
+                    return target
+                return self._find_function_like_symbol(
+                    reference,
+                    preferred_prefix=f"{imported_full_name}{cs.SEPARATOR_DOT}",
+                )
+            return self._resolve_named_callable(module_qn, reference)
+
+        base_name, member_path = reference.split(cs.SEPARATOR_DOT, 1)
+        imported_full_name = import_mapping.get(base_name)
+        leaf_name = member_path.split(cs.SEPARATOR_DOT)[-1]
+        if imported_full_name:
+            target = self._resolve_symbol_target(
+                f"{imported_full_name}{cs.SEPARATOR_DOT}{member_path}"
+            )
+            if target is not None:
+                return target
+            return self._find_function_like_symbol(
+                leaf_name,
+                preferred_prefix=f"{imported_full_name}{cs.SEPARATOR_DOT}",
+            )
+
+        return self._find_function_like_symbol(
+            leaf_name,
+            preferred_prefix=f"{module_qn}{cs.SEPARATOR_DOT}",
+        )
 
     def _ensure_request_endpoint_node(
         self,

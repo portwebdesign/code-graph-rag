@@ -164,6 +164,120 @@ def test_dead_code_except_test_report_contains_graph_confidence_and_risk(
     assert symbol["graph_confidence"]["call_in_degree"] == 0
 
 
+def test_dead_code_report_payload_suppresses_noise_and_adds_guidance(
+    tmp_path: Path,
+) -> None:
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
+
+    route_modules = tmp_path / "frontend" / "src" / "app" / "routeModules.tsx"
+    route_modules.parent.mkdir(parents=True, exist_ok=True)
+    route_modules.write_text(
+        """import { lazy } from \"react\";
+
+const routeModuleLoaders = {
+  \"/dashboard\": () => import(\"@/features/screens/DashboardScreen\"),
+};
+
+export const DashboardRouteScreen = lazy(() =>
+  import(\"@/features/screens/DashboardScreen\").then((module) => ({ default: module.DashboardScreen })),
+);
+
+export async function preloadRouteModule() {
+  await routeModuleLoaders[\"/dashboard\"]();
+}
+""",
+        encoding="utf-8",
+    )
+
+    smoke_spec = tmp_path / "frontend" / "e2e" / "smoke.spec.ts"
+    smoke_spec.parent.mkdir(parents=True, exist_ok=True)
+    smoke_spec.write_text(
+        """function installApiMocks() {
+  const existingSession = { id: 1 };
+  return existingSession;
+}
+""",
+        encoding="utf-8",
+    )
+
+    sql_file = tmp_path / "docker" / "postgres" / "init" / "02-schema.sql"
+    sql_file.parent.mkdir(parents=True, exist_ok=True)
+    sql_file.write_text(
+        """CREATE OR REPLACE FUNCTION trigger_set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER set_updated_at
+BEFORE UPDATE ON tenants
+FOR EACH ROW EXECUTE FUNCTION trigger_set_updated_at();
+""",
+        encoding="utf-8",
+    )
+
+    candidate_file = tmp_path / "src" / "domain" / "payment.py"
+    candidate_file.parent.mkdir(parents=True, exist_ok=True)
+    candidate_file.write_text(
+        """def reconcile():
+    return 42
+""",
+        encoding="utf-8",
+    )
+
+    report, filtered_dead_functions, suppression_reason_counts = (
+        runner._build_dead_code_report_payload(
+            total_functions=4,
+            dead_functions=[
+                {
+                    "qualified_name": "abey.frontend.src.app.routeModules.routeModuleLoaders",
+                    "name": "routeModuleLoaders",
+                    "path": "frontend/src/app/routeModules.tsx",
+                    "start_line": 3,
+                },
+                {
+                    "qualified_name": "abey.frontend.src.app.routeModules.DashboardRouteScreen",
+                    "name": "DashboardRouteScreen",
+                    "path": "frontend/src/app/routeModules.tsx",
+                    "start_line": 7,
+                },
+                {
+                    "qualified_name": "abey.frontend.e2e.smoke.spec.installApiMocks.existingSession",
+                    "name": "existingSession",
+                    "path": "frontend/e2e/smoke.spec.ts",
+                    "start_line": 2,
+                },
+                {
+                    "qualified_name": "abey.docker.postgres.init.02-schema.trigger_set_updated_at",
+                    "name": "trigger_set_updated_at",
+                    "path": "docker/postgres/init/02-schema.sql",
+                    "start_line": 1,
+                },
+                {
+                    "qualified_name": "abey.src.domain.payment.reconcile",
+                    "name": "reconcile",
+                    "path": "src/domain/payment.py",
+                    "start_line": 1,
+                },
+            ],
+        )
+    )
+
+    assert report["summary"]["do_not_delete_blindly"] is True
+    assert report["summary"]["confidence"] == "medium"
+    assert report["summary"]["reported_dead_functions"] == 1
+    assert report["summary"]["suppressed_dead_functions"] == 4
+    assert suppression_reason_counts["test_path"] >= 1
+    assert suppression_reason_counts["non_runtime_source"] >= 1
+    assert suppression_reason_counts["frontend_route_registration"] >= 1
+    assert suppression_reason_counts["source_exported_symbol"] >= 1
+    assert suppression_reason_counts["local_symbol_reference"] >= 1
+    assert [item["qualified_name"] for item in filtered_dead_functions] == [
+        "abey.src.domain.payment.reconcile"
+    ]
+
+
 def test_dead_code_report_db_query_excludes_decorated_entry_points(
     tmp_path: Path,
 ) -> None:
@@ -178,3 +292,28 @@ def test_dead_code_report_db_query_excludes_decorated_entry_points(
         "HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE"
         in ingestor.captured_query
     )
+
+
+def test_dead_code_except_test_report_includes_guidance_summary(tmp_path: Path) -> None:
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
+    runner._write_dead_code_except_test_report(
+        [
+            {
+                "qualified_name": "proj.codebase_rag.domain.payment.reconcile",
+                "name": "reconcile",
+                "path": "codebase_rag/domain/payment.py",
+                "start_line": 77,
+            }
+        ],
+        raw_total_dead_symbols=5,
+        suppression_reason_counts={"test_path": 2, "non_runtime_source": 2},
+        suppressed_dead_symbols=4,
+    )
+
+    report_path = tmp_path / "output" / "analysis" / "dead-code-except-test.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    summary = report["summary"]
+    assert summary["do_not_delete_blindly"] is True
+    assert summary["confidence"] == "medium"
+    assert summary["suppressed_dead_symbols"] == 4
+    assert summary["suppression_reasons"]["test_path"] == 2

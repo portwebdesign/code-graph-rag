@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..protocols import AnalysisRunnerProtocol
 
@@ -298,6 +298,9 @@ class DeadCodeExportsMixin:
         dead_functions: list[dict[str, Any]],
         *,
         max_files: int = 200,
+        raw_total_dead_symbols: int | None = None,
+        suppression_reason_counts: dict[str, int] | None = None,
+        suppressed_dead_symbols: int | None = None,
     ) -> dict[str, Any]:
         filtered_items: list[dict[str, Any]] = []
         category_totals: dict[str, int] = {}
@@ -402,12 +405,26 @@ class DeadCodeExportsMixin:
         payload = {
             "summary": {
                 "max_files": max_files,
-                "total_dead_symbols": len(dead_functions),
+                "total_dead_symbols": (
+                    raw_total_dead_symbols
+                    if raw_total_dead_symbols is not None
+                    else len(dead_functions)
+                ),
                 "filtered_dead_symbols": len(filtered_items),
                 "candidate_files": len(file_map),
                 "selected_files": len(selected_files),
                 "category_totals": category_totals,
                 "high_risk_files": len(high_risk_files),
+                "suppressed_dead_symbols": int(suppressed_dead_symbols or 0),
+                "suppression_reasons": suppression_reason_counts or {},
+                "confidence": "medium",
+                "do_not_delete_blindly": True,
+                "review_policy": "manual_review_required",
+                "warning": (
+                    "Heuristic dead-code candidates only. Dynamic registrations, "
+                    "framework wiring, router assembly, generated clients, SQL runtime hooks, "
+                    "and local symbol references can produce false positives."
+                ),
             },
             "high_risk_files": high_risk_files,
             "files": selected_files,
@@ -418,3 +435,175 @@ class DeadCodeExportsMixin:
             "selected_files": len(selected_files),
             "filtered_dead_symbols": len(filtered_items),
         }
+
+    def _filter_dead_code_candidates(
+        self: AnalysisRunnerProtocol,
+        dead_functions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        filtered: list[dict[str, Any]] = []
+        suppression_reason_counts: dict[str, int] = {}
+
+        for item in dead_functions:
+            reasons = self._dead_code_suppression_reasons(item)
+            if reasons:
+                for reason in reasons:
+                    suppression_reason_counts[reason] = (
+                        suppression_reason_counts.get(reason, 0) + 1
+                    )
+                continue
+            filtered.append(item)
+
+        return filtered, suppression_reason_counts
+
+    def _build_dead_code_report_payload(
+        self: AnalysisRunnerProtocol,
+        *,
+        total_functions: int,
+        dead_functions: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, int]]:
+        filtered_dead_functions, suppression_reason_counts = (
+            self._filter_dead_code_candidates(dead_functions)
+        )
+        payload = {
+            "summary": {
+                "total_functions": total_functions,
+                "raw_dead_functions": len(dead_functions),
+                "reported_dead_functions": len(filtered_dead_functions),
+                "suppressed_dead_functions": len(dead_functions)
+                - len(filtered_dead_functions),
+                "suppression_reasons": suppression_reason_counts,
+                "confidence": "medium",
+                "do_not_delete_blindly": True,
+                "review_policy": "manual_review_required",
+                "warning": (
+                    "Heuristic dead-code candidates only. Framework/runtime registrations, "
+                    "frontend route assembly, generated clients, local JS/TS symbol references, "
+                    "and SQL trigger wiring can hide real usage."
+                ),
+            },
+            "total_functions": total_functions,
+            "dead_functions": filtered_dead_functions,
+        }
+        return payload, filtered_dead_functions, suppression_reason_counts
+
+    def _dead_code_suppression_reasons(
+        self: AnalysisRunnerProtocol,
+        item: dict[str, Any],
+    ) -> list[str]:
+        path = self._normalize_dead_code_path(str(item.get("path") or ""))
+        name = str(item.get("name") or "").strip()
+        if not path or not name:
+            return ["missing_symbol_identity"]
+
+        reasons: list[str] = []
+        if self._is_test_dead_code_item(path, name):
+            reasons.append("test_path")
+        if self._is_generated_or_noise_path(path):
+            reasons.append("generated_or_noise_path")
+        if not self._is_runtime_source_path(path):
+            reasons.append("non_runtime_source")
+        if name.startswith("anonymous_"):
+            reasons.append("anonymous_callback")
+
+        source_text = self._read_dead_code_source_text(path)
+        if source_text:
+            if self._has_sql_runtime_registration(path, name, source_text):
+                reasons.append("sql_runtime_registration")
+            if self._is_frontend_route_registration(path, name, source_text):
+                reasons.append("frontend_route_registration")
+            if self._is_source_exported_symbol(path, name, source_text):
+                reasons.append("source_exported_symbol")
+            if self._has_local_symbol_references(path, name, source_text):
+                reasons.append("local_symbol_reference")
+
+        return list(dict.fromkeys(reasons))
+
+    def _read_dead_code_source_text(
+        self: AnalysisRunnerProtocol,
+        path: str,
+    ) -> str:
+        cache = getattr(self, "_dead_code_source_text_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            setattr(self, "_dead_code_source_text_cache", cache)
+        if path in cache:
+            return cast(str, cache[path])
+
+        file_path = self.repo_path / path
+        if not file_path.exists() or not file_path.is_file():
+            cache[path] = ""
+            return ""
+        try:
+            source_text = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            source_text = ""
+        cache[path] = source_text
+        return source_text
+
+    @staticmethod
+    def _count_symbol_occurrences(source_text: str, name: str) -> int:
+        if not source_text or not name:
+            return 0
+        pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])")
+        return len(pattern.findall(source_text))
+
+    def _has_local_symbol_references(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool:
+        suffix = Path(path).suffix.lower()
+        if suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            return False
+        return self._count_symbol_occurrences(source_text, name) > 1
+
+    def _is_source_exported_symbol(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool:
+        suffix = Path(path).suffix.lower()
+        if suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            return False
+        patterns = (
+            rf"^\s*export\s+(?:const|let|var|class|function|async\s+function)\s+{re.escape(name)}\b",
+            rf"^\s*export\s+default\s+(?:function|class)\s+{re.escape(name)}\b",
+            rf"^\s*export\s*\{{[^}}]*\b{re.escape(name)}\b[^}}]*\}}",
+        )
+        return any(
+            re.search(pattern, source_text, re.IGNORECASE | re.MULTILINE)
+            for pattern in patterns
+        )
+
+    def _is_frontend_route_registration(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool:
+        suffix = Path(path).suffix.lower()
+        if suffix not in {".js", ".jsx", ".ts", ".tsx"}:
+            return False
+        if not path.startswith("frontend/"):
+            return False
+        if name == "routeModuleLoaders":
+            return "lazy(" in source_text or "preloadRouteModule" in source_text
+        if not name.endswith("RouteScreen"):
+            return False
+        return "lazy(" in source_text or "withLazyRoute(" in source_text
+
+    def _has_sql_runtime_registration(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool:
+        if Path(path).suffix.lower() != ".sql":
+            return False
+        pattern = re.compile(
+            rf"EXECUTE\s+FUNCTION\s+{re.escape(name)}\s*\(",
+            re.IGNORECASE,
+        )
+        return bool(pattern.search(source_text))

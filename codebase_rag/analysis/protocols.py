@@ -126,7 +126,59 @@ class AnalysisRunnerProtocol(Protocol):
         dead_functions: list[dict[str, Any]],
         *,
         max_files: int = 200,
+        raw_total_dead_symbols: int | None = None,
+        suppression_reason_counts: dict[str, int] | None = None,
+        suppressed_dead_symbols: int | None = None,
     ) -> dict[str, Any]: ...
+
+    def _filter_dead_code_candidates(
+        self,
+        dead_functions: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]: ...
+
+    def _build_dead_code_report_payload(
+        self,
+        *,
+        total_functions: int,
+        dead_functions: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, int]]: ...
+
+    def _dead_code_suppression_reasons(
+        self,
+        item: dict[str, Any],
+    ) -> list[str]: ...
+
+    def _read_dead_code_source_text(self, path: str) -> str: ...
+
+    def _count_symbol_occurrences(self, source_text: str, name: str) -> int: ...
+
+    def _has_local_symbol_references(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool: ...
+
+    def _is_source_exported_symbol(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool: ...
+
+    def _is_frontend_route_registration(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool: ...
+
+    def _has_sql_runtime_registration(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool: ...
 
     def _apply_dead_code_node_cache(
         self,
