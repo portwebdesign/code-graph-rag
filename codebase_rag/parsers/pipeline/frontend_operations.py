@@ -163,8 +163,9 @@ def normalize_http_path(path: str) -> str:
 def _extract_request_descriptors(
     body: str,
     *,
-    operation_bindings: dict[tuple[str, str], OpenApiEndpointContractBinding]
-    | None = None,
+    operation_bindings: (
+        dict[tuple[str, str], OpenApiEndpointContractBinding] | None
+    ) = None,
     operation_bindings_by_id: dict[str, OpenApiEndpointContractBinding] | None = None,
 ) -> list[dict[str, str]]:
     operation_bindings = operation_bindings or {}
