@@ -156,8 +156,8 @@ class TestMCPNewTools:
             assert "semantic_search" in visible_tools
             assert "plan_task" in visible_tools
             assert "list_directory" in visible_tools
+            assert "test_generate" in visible_tools
             assert "read_file" not in visible_tools
-            assert "test_generate" not in visible_tools
 
             assert (
                 mcp_registry.get_visibility_gate_payload(
@@ -168,9 +168,9 @@ class TestMCPNewTools:
             assert (
                 mcp_registry.get_visibility_gate_payload("security_scan", None) is None
             )
-            payload = mcp_registry.get_visibility_gate_payload("test_generate", None)
-            assert payload is not None
-            assert payload.get("blocked_tool") == "test_generate"
+            assert (
+                mcp_registry.get_visibility_gate_payload("test_generate", None) is None
+            )
         finally:
             settings.MCP_TOOLSET = previous
 
@@ -349,9 +349,11 @@ class TestMCPNewTools:
         assert "get_schema_overview" in initial_tool_names
         assert "query_code_graph" in initial_tool_names
         assert "multi_hop_analysis" in initial_tool_names
+        assert "run_cypher" in initial_tool_names
         assert "semantic_search" in initial_tool_names
         assert "list_directory" in initial_tool_names
         assert "plan_task" in initial_tool_names
+        assert "test_generate" in initial_tool_names
         assert "read_file" not in initial_tool_names
         schema_descriptions = {
             schema.name: schema.description
@@ -359,6 +361,7 @@ class TestMCPNewTools:
         }
         assert "Session stage:" in str(schema_descriptions.get("query_code_graph", ""))
         assert "Session stage:" in str(schema_descriptions.get("plan_task", ""))
+        assert "Session stage:" in str(schema_descriptions.get("test_generate", ""))
 
     async def test_get_schema_overview_returns_cached_project_summary(
         self, mcp_registry: MCPToolsRegistry

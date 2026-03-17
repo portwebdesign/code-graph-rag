@@ -99,6 +99,7 @@ _CORE_MCP_TOOL_NAMES: frozenset[str] = frozenset(
         cs.MCPToolName.RUN_CYPHER,
         cs.MCPToolName.SEMANTIC_SEARCH,
         cs.MCPToolName.PLAN_TASK,
+        cs.MCPToolName.TEST_GENERATE,
         cs.MCPToolName.LIST_DIRECTORY,
     }
 )
@@ -1844,6 +1845,7 @@ class MCPToolsRegistry:
             cs.MCPToolName.CHANGE_BUNDLE,
             cs.MCPToolName.RISK_BUNDLE,
             cs.MCPToolName.TEST_BUNDLE,
+            cs.MCPToolName.TEST_GENERATE,
             cs.MCPToolName.RUN_ANALYSIS,
             cs.MCPToolName.RUN_ANALYSIS_SUBSET,
             cs.MCPToolName.SECURITY_SCAN,
@@ -2074,6 +2076,7 @@ class MCPToolsRegistry:
             cs.MCPToolName.MEMORY_QUERY_PATTERNS,
             cs.MCPToolName.MEMORY_LIST,
             cs.MCPToolName.PLAN_TASK,
+            cs.MCPToolName.TEST_GENERATE,
             cs.MCPToolName.QUERY_CODE_GRAPH,
             cs.MCPToolName.MULTI_HOP_ANALYSIS,
             cs.MCPToolName.IMPACT_GRAPH,
@@ -2207,6 +2210,7 @@ class MCPToolsRegistry:
                         cs.MCPToolName.SECURITY_SCAN,
                         cs.MCPToolName.PERFORMANCE_HOTSPOTS,
                         cs.MCPToolName.TEST_BUNDLE,
+                        cs.MCPToolName.TEST_GENERATE,
                         cs.MCPToolName.PLAN_TASK,
                         cs.MCPToolName.GET_EXECUTION_READINESS,
                     ],
