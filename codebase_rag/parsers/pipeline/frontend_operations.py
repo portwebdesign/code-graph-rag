@@ -42,6 +42,26 @@ _REQUEST_URL_PATTERN = re.compile(
     r"\b(?:url|path)\s*:\s*['\"`]([^'\"`]+)['\"`]",
     re.IGNORECASE,
 )
+_REQUEST_OPERATION_PATTERN = re.compile(
+    r"\brequestOperation(?:Record)?(?:<[^>]+>)?\s*\(\s*[^,]+,\s*['\"`](?P<operation_id>[^'\"`]+)['\"`]",
+    re.IGNORECASE,
+)
+_CREATE_QUERY_CONFIG_PATTERN = re.compile(
+    r"\bcreateOperationQueryConfig(?:<[^>]+>)?\s*\(\s*[^,]+,\s*['\"`](?P<operation_id>[^'\"`]+)['\"`]",
+    re.IGNORECASE,
+)
+_USE_OPERATION_QUERY_PATTERN = re.compile(
+    r"\buseOperationQuery(?:<[^>]+>)?\s*\(\s*['\"`](?P<operation_id>[^'\"`]+)['\"`]",
+    re.IGNORECASE,
+)
+_GET_OPERATION_PATTERN = re.compile(
+    r"\bgetOperation\s*\(\s*['\"`](?P<operation_id>[^'\"`]+)['\"`]\s*\)",
+    re.IGNORECASE,
+)
+_GET_OPERATION_BY_PATH_PATTERN = re.compile(
+    r"\bgetOperationByPath\s*\(\s*['\"`](?P<method>get|post|put|delete|patch|options|head)['\"`]\s*,\s*['\"`](?P<path>[^'\"`]+)['\"`]",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -68,8 +88,17 @@ def extract_frontend_operation_observations(
     """Extracts generated-client and raw-bypass operation usage from TS/TSX."""
 
     observations: list[FrontendOperationObservation] = []
+    bindings_by_operation_id = {
+        binding.operation_id: binding
+        for binding in operation_bindings.values()
+        if binding.operation_id
+    }
     for block in extract_typescript_symbol_blocks(source):
-        for request in _extract_request_descriptors(block.body):
+        for request in _extract_request_descriptors(
+            block.body,
+            operation_bindings=operation_bindings,
+            operation_bindings_by_id=bindings_by_operation_id,
+        ):
             method = request["method"]
             path = normalize_http_path(request["path"])
             binding = operation_bindings.get((method, path))
@@ -89,12 +118,18 @@ def extract_frontend_operation_observations(
                     symbol_name=block.symbol_name,
                     symbol_kind=_symbol_kind_for_block(block, relative_path),
                     operation_name=operation_name,
-                    operation_id=binding.operation_id if binding else None,
+                    operation_id=(
+                        request.get("operation_id")
+                        or (binding.operation_id if binding else None)
+                    ),
                     method=method,
                     path=path,
                     client_kind=request["client_kind"],
                     governance_kind=governance_kind,
-                    manifest_source="openapi" if binding else None,
+                    manifest_source=(
+                        request.get("manifest_source")
+                        or ("openapi" if binding else None)
+                    ),
                     line_start=block.line_start,
                     line_end=block.line_end,
                 )
@@ -125,11 +160,26 @@ def normalize_http_path(path: str) -> str:
     return normalized or "/"
 
 
-def _extract_request_descriptors(body: str) -> list[dict[str, str]]:
+def _extract_request_descriptors(
+    body: str,
+    *,
+    operation_bindings: dict[tuple[str, str], OpenApiEndpointContractBinding]
+    | None = None,
+    operation_bindings_by_id: dict[str, OpenApiEndpointContractBinding] | None = None,
+) -> list[dict[str, str]]:
+    operation_bindings = operation_bindings or {}
+    operation_bindings_by_id = operation_bindings_by_id or {}
     requests: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
 
-    def _append(method: str, raw_path: str, *, client_kind: str) -> None:
+    def _append(
+        method: str,
+        raw_path: str,
+        *,
+        client_kind: str,
+        operation_id: str | None = None,
+        manifest_source: str | None = None,
+    ) -> None:
         path = normalize_http_path(raw_path)
         if not _looks_like_route_like_path(raw_path, path):
             return
@@ -137,9 +187,16 @@ def _extract_request_descriptors(body: str) -> list[dict[str, str]]:
         if key in seen:
             return
         seen.add(key)
-        requests.append(
-            {"method": method.upper(), "path": path, "client_kind": client_kind}
-        )
+        request: dict[str, str] = {
+            "method": method.upper(),
+            "path": path,
+            "client_kind": client_kind,
+        }
+        if operation_id:
+            request["operation_id"] = operation_id
+        if manifest_source:
+            request["manifest_source"] = manifest_source
+        requests.append(request)
 
     for match in _FETCH_PATTERN.finditer(body):
         options = match.group("options") or ""
@@ -185,7 +242,83 @@ def _extract_request_descriptors(body: str) -> list[dict[str, str]]:
             client_kind="http_client_request",
         )
 
+    _append_operation_id_descriptors(
+        requests,
+        seen,
+        body,
+        operation_bindings=operation_bindings,
+        operation_bindings_by_id=operation_bindings_by_id,
+    )
+
     return requests
+
+
+def _append_operation_id_descriptors(
+    requests: list[dict[str, str]],
+    seen: set[tuple[str, str, str]],
+    body: str,
+    *,
+    operation_bindings: dict[tuple[str, str], OpenApiEndpointContractBinding],
+    operation_bindings_by_id: dict[str, OpenApiEndpointContractBinding],
+) -> None:
+    helper_patterns = (
+        (_REQUEST_OPERATION_PATTERN, "operation_request"),
+        (_CREATE_QUERY_CONFIG_PATTERN, "operation_query_config"),
+        (_USE_OPERATION_QUERY_PATTERN, "operation_query_hook"),
+        (_GET_OPERATION_PATTERN, "operation_lookup"),
+    )
+    for pattern, client_kind in helper_patterns:
+        for match in pattern.finditer(body):
+            operation_id = match.group("operation_id")
+            binding = operation_bindings_by_id.get(operation_id)
+            if binding is None:
+                continue
+            _append_bound_operation_descriptor(
+                requests,
+                seen,
+                binding,
+                client_kind=client_kind,
+                operation_id=operation_id,
+            )
+
+    for match in _GET_OPERATION_BY_PATH_PATTERN.finditer(body):
+        method = match.group("method").upper()
+        path = normalize_http_path(match.group("path"))
+        binding = operation_bindings.get((method, path))
+        if binding is None:
+            continue
+        _append_bound_operation_descriptor(
+            requests,
+            seen,
+            binding,
+            client_kind="operation_path_lookup",
+            operation_id=binding.operation_id,
+        )
+
+
+def _append_bound_operation_descriptor(
+    requests: list[dict[str, str]],
+    seen: set[tuple[str, str, str]],
+    binding: OpenApiEndpointContractBinding,
+    *,
+    client_kind: str,
+    operation_id: str | None,
+) -> None:
+    method = binding.method.upper()
+    path = normalize_http_path(binding.path)
+    key = (method, path, client_kind)
+    if key in seen:
+        return
+    seen.add(key)
+    request: dict[str, str] = {
+        "method": method,
+        "path": path,
+        "client_kind": client_kind,
+        "manifest_source": "openapi",
+    }
+    if operation_id:
+        request["operation_id"] = operation_id
+    requests.append(request)
 
 
 def _classify_governance_kind(
@@ -196,8 +329,17 @@ def _classify_governance_kind(
 ) -> str:
     normalized_path = relative_path.replace("\\", "/").lower()
     raw_clients = {"fetch", "fetch_template", "axios"}
+    manifest_clients = {
+        "operation_lookup",
+        "operation_path_lookup",
+        "operation_query_config",
+        "operation_query_hook",
+        "operation_request",
+    }
     if client_kind in raw_clients:
         return "bypass"
+    if client_kind in manifest_clients and binding is not None:
+        return "manifest"
     if "/generated/" in f"/{normalized_path}/":
         return "generated"
     if binding is not None and client_kind.startswith("http_client"):
