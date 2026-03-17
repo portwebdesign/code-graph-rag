@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from codebase_rag.core import constants as cs
+from codebase_rag.security.security_scanner import SecurityScanner
 
 from ..protocols import AnalysisRunnerProtocol
 from ..types import NodeRecord
@@ -271,14 +272,8 @@ class StaticChecksMixin:
         file_paths: list[str] | None = None,
     ) -> dict[str, int]:
         file_paths = file_paths or self._collect_file_paths(nodes)
-        patterns = {
-            "aws_access_key": r"AKIA[0-9A-Z]{16}",
-            "google_api_key": r"AIza[0-9A-Za-z\-_]{35}",
-            "github_token": r"ghp_[0-9A-Za-z]{36,}",
-            "slack_token": r"xox[baprs]-[0-9A-Za-z-]{10,48}",
-            "private_key": r"-----BEGIN (?:RSA|DSA|EC|OPENSSH) PRIVATE KEY-----",
-        }
-        findings: list[dict[str, object]] = []
+        scanner = SecurityScanner()
+        findings = []
 
         for path in file_paths:
             file_path = self.repo_path / path
@@ -288,20 +283,11 @@ class StaticChecksMixin:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 continue
+            findings.extend(scanner.scan_secret_text(content, path))
 
-            for label, pattern in patterns.items():
-                for match in re.finditer(pattern, content):
-                    line_number = content.count("\n", 0, match.start()) + 1
-                    findings.append(
-                        {
-                            "path": path,
-                            "type": label,
-                            "line": line_number,
-                        }
-                    )
-
-        self._write_json_report("secret_scan_report.json", findings)
+        payload = [finding.to_payload() for finding in findings]
+        self._write_json_report("secret_scan_report.json", payload)
         return {
-            "findings": len(findings),
-            "files_with_findings": len({item["path"] for item in findings}),
+            "findings": len(payload),
+            "files_with_findings": len({str(item["path"]) for item in payload}),
         }

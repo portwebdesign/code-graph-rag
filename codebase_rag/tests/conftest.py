@@ -220,8 +220,27 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         "tests/integration/parsers/",
         "tests/unit/parsers/stdlib/test_stdlib_extractor.py::TestStdlibExtractorExtractModulePath::test_go_uppercase_entity",
     )
+    windows_skip_exceptions = (
+        "tests/unit/parsers/pipeline/test_semantic_pass_registration.py",
+        "tests/unit/parsers/pipeline/test_semantic_pass_env_flags.py",
+        "tests/unit/parsers/pipeline/test_contract_semantics_typescript.py",
+        "tests/unit/parsers/pipeline/test_contract_semantics_openapi.py",
+        "tests/unit/parsers/pipeline/test_sql_query_fingerprint_normalization.py",
+        "tests/unit/parsers/pipeline/test_cypher_query_fingerprint_normalization.py",
+        "tests/unit/parsers/pipeline/test_frontend_generated_client_detection.py",
+        "tests/unit/parsers/pipeline/test_frontend_raw_fetch_bypass_detection.py",
+        "tests/unit/parsers/pipeline/test_config_semantics_env_readers.py",
+        "tests/unit/parsers/pipeline/test_config_semantics_feature_flags.py",
+        "tests/unit/parsers/pipeline/test_config_semantics_secret_refs_masked.py",
+        "tests/unit/parsers/passes/test_query_fingerprint_dedup_prevents_explosion.py",
+        "tests/unit/parsers/pipeline/test_testcase_symbol_edges.py",
+        "tests/unit/parsers/pipeline/test_testcase_endpoint_edges.py",
+        "tests/integration/parsers/test_semantic_pass_order_is_deterministic.py",
+    )
 
     for item in items:
         nodeid = item.nodeid.replace("\\", "/")
+        if any(exception in nodeid for exception in windows_skip_exceptions):
+            continue
         if any(pattern in nodeid for pattern in windows_skip_patterns):
             item.add_marker(skip_windows)

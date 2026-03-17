@@ -121,6 +121,9 @@ MCP_QUERY_CODE_GRAPH = (
     "PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. "
     "Ask questions like 'What functions call UserService.create_user?' or "
     "'Show me all classes that implement the Repository interface'. "
+    "Also use it for semantic API questions such as auth coverage, dependency-provider visibility, "
+    "request/response contract paths, unprotected endpoint discovery, testcase/contract coverage gaps, "
+    "and config-runtime drift questions such as undefined env readers, orphan secret refs, or unused feature flags. "
     "For React/Next.js repos, also ask things like 'Show the component tree', "
     "'Which components pass props to child components?', "
     "'Which hooks are used by this page?', or "
@@ -133,7 +136,8 @@ MCP_MULTI_HOP_ANALYSIS = (
     "Build a compressed multi-hop evidence bundle around a symbol or file. "
     "Aggregates inbound/outbound relationships across CALLS/IMPORTS/INHERITS/USES, summarizes blast radius, "
     "highlights affected symbols/files, and recommends the next retrieval steps. "
-    "Use this for complex architecture, dependency-chain, and impact analysis in large projects."
+    "Use this for complex architecture, dependency-chain, impact analysis, source symbol -> endpoint/contract -> testcase traversal, "
+    "and infra resource -> env -> code reader / feature flag / secret multi-hop analysis in large projects."
 )
 
 MCP_SEMANTIC_SEARCH = (
@@ -172,7 +176,7 @@ MCP_WRITE_FILE = "Write content to a file, creating it if it doesn't exist."
 MCP_LIST_DIRECTORY = "List contents of a directory in the project."
 MCP_GET_SCHEMA_OVERVIEW = (
     "Return a compact, project-scoped graph schema bootstrap summary with relation patterns, "
-    "label counts, key properties, important labels, and frontend graph capabilities/preset Cypher examples "
+    "label counts, key properties, important labels, and semantic preset Cypher examples "
     "for the current repository."
 )
 
@@ -299,7 +303,7 @@ MCP_RISK_BUNDLE = (
 )
 
 MCP_TEST_BUNDLE = (
-    "Build a normalized test bundle using coverage, blast radius, public API, and impacted-test context. "
+    "Build a normalized test bundle using semantic testcase graph coverage, runtime coverage, blast radius, public API, and impacted-test context. "
     "Use this before test_generate or test_quality_gate."
 )
 
@@ -312,6 +316,11 @@ MCP_RUN_CYPHER = (
     "Execute a raw Cypher query against the Memgraph database. "
     "Requires preflight: run list_projects -> select_active_project first. "
     "Use this for advanced ad-hoc querying not covered by standard tools and for explicit single-hop/multi-hop traversal control. "
+    "This is also the exact tool for running semantic auth/contract preset queries returned by get_schema_overview "
+    "(for example unprotected endpoints, auth scope coverage, dependency visibility, contract-gap checks, "
+    "frontend bypass queries, client-operation governance checks, untested-public-endpoint checks, contract-test-coverage checks, "
+    "undefined-env readers, orphan/unbound secret refs, orphan feature flags, resource-without-reader checks, "
+    "reader-without-resource checks, and unused feature flags). "
     "Default graph-first flow: query_code_graph first, then run_cypher. "
     "Query MUST be scoped to active project and MUST use $project_name parameter to avoid cross-project access. "
     "Set write=True ONLY IF you intend to modify the graph (nodes/edges). "

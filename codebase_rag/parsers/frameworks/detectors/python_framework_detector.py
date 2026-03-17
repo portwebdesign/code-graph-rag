@@ -3,6 +3,10 @@ from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
 from typing import Any
 
+from codebase_rag.parsers.frameworks.fastapi_semantics import (
+    extract_fastapi_route_semantics,
+)
+
 
 class PythonFrameworkType(Enum):
     """Supported Python frameworks."""
@@ -66,6 +70,9 @@ class FastAPIRoute:
     method: str
     response_model: str | None = None
     dependencies: list[str] = field(default_factory=list)
+    security_dependencies: list[str] = field(default_factory=list)
+    security_scopes: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -421,38 +428,18 @@ class PythonFrameworkDetector:
             for route in routes:
                 print(f"{route.method.upper()} {route.path}")
         """
-        routes = []
-
-        pattern = r"@(?P<router>\w+)\.(?P<method>get|post|put|delete|patch|api_route)\((?P<args>[^)]*)\)"
-        for match in re.finditer(pattern, source_code):
-            method = match.group("method")
-            args = match.group("args")
-            path = self._extract_first_string_arg(args)
-            if not path:
-                continue
-            response_model = self._extract_response_model(args)
-            dependencies = self._extract_dependencies(args)
-            if method == "api_route":
-                api_method = self._extract_api_route_method(args)
-                routes.append(
-                    FastAPIRoute(
-                        path=path,
-                        method=api_method,
-                        response_model=response_model,
-                        dependencies=dependencies,
-                    )
-                )
-                continue
-            routes.append(
-                FastAPIRoute(
-                    path=path,
-                    method=method.upper(),
-                    response_model=response_model,
-                    dependencies=dependencies,
-                )
+        return [
+            FastAPIRoute(
+                path=route.path,
+                method=route.method,
+                response_model=route.response_model,
+                dependencies=route.dependencies,
+                security_dependencies=route.security_dependencies,
+                security_scopes=route.security_scopes,
+                tags=route.tags,
             )
-
-        return routes
+            for route in extract_fastapi_route_semantics(source_code)
+        ]
 
     def _extract_first_string_arg(self, args: str) -> str | None:
         match = re.search(r'["\"]([^"\"]+)["\"]', args)

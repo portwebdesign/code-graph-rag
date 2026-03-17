@@ -62,6 +62,8 @@ class GraphUpdateOrchestrator:
             logger.info("Linking framework endpoints")
             ctx.resolver_service.process_framework_links(ctx.simple_name_lookup)
 
+        ctx.resolver_service.process_semantic_passes(ctx.ast_cache)
+
         if (
             ctx.config.tailwind_metadata_enabled
             or ctx.config.framework_metadata_enabled

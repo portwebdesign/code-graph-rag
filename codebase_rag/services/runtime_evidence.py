@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from codebase_rag.core import constants as cs
+from codebase_rag.core.event_flow_identity import (
+    build_event_flow_canonical_key,
+    normalize_channel_name,
+    normalize_event_name,
+)
 
 
 class RuntimeGraphIngestorProtocol(Protocol):
@@ -69,6 +74,7 @@ class RuntimeEvidenceIngestor:
                 cs.KEY_PATH: runtime_file.relative_to(self.repo_path).as_posix(),
                 cs.KEY_PROJECT_NAME: self.project_name,
                 "kind": self._artifact_kind(runtime_file),
+                "source_parser": "runtime_evidence",
             }
             ingestor.ensure_node_batch(cs.NodeLabel.RUNTIME_ARTIFACT, artifact_payload)
             ingestor.ensure_relationship_batch(
@@ -88,6 +94,7 @@ class RuntimeEvidenceIngestor:
                     cs.KEY_QUALIFIED_NAME: event_qn,
                     cs.KEY_NAME: str(event.get("kind", "runtime_event")),
                     cs.KEY_PROJECT_NAME: self.project_name,
+                    "source_parser": "runtime_evidence",
                     **event,
                 }
                 ingestor.ensure_node_batch(cs.NodeLabel.RUNTIME_EVENT, event_payload)
@@ -238,6 +245,22 @@ class RuntimeEvidenceIngestor:
         redis_pattern = re.compile(
             r"\b(redis|get|set|del|publish|subscribe)\b", re.IGNORECASE
         )
+        event_name_pattern = re.compile(
+            r"\b(?:event|event_name|message_type|subject)=([A-Za-z0-9_.:\-]+)",
+            re.IGNORECASE,
+        )
+        channel_pattern = re.compile(
+            r"\b(?:queue|queue_name|stream|stream_name|topic|topic_name|channel|channel_name)=([A-Za-z0-9_.:\-]+)",
+            re.IGNORECASE,
+        )
+        dlq_pattern = re.compile(
+            r"\b(?:dlq|dead_letter_queue|dead_letter_topic|retry_queue)=([A-Za-z0-9_.:\-]+)",
+            re.IGNORECASE,
+        )
+        handler_pattern = re.compile(
+            r"\b(?:handler|consumer|worker)=([A-Za-z0-9_.:\-]+)",
+            re.IGNORECASE,
+        )
         gql_pattern = re.compile(r"\b(query|mutation|subscription)\b", re.IGNORECASE)
         exception_pattern = re.compile(
             r"\b(exception|traceback|error)\b", re.IGNORECASE
@@ -254,9 +277,25 @@ class RuntimeEvidenceIngestor:
                     "method": match.group(1),
                     "route_path": match.group(2),
                 }
-            elif sql_pattern.search(normalized_line):
+            else:
+                event_name_match = event_name_pattern.search(normalized_line)
+                channel_match = channel_pattern.search(normalized_line)
+                dlq_match = dlq_pattern.search(normalized_line)
+                handler_match = handler_pattern.search(normalized_line)
+                if event_name_match or channel_match:
+                    event = {
+                        "kind": "event_runtime",
+                        "event_name": event_name_match.group(1)
+                        if event_name_match
+                        else "",
+                        "queue_name": channel_match.group(1) if channel_match else "",
+                        "dlq_name": dlq_match.group(1) if dlq_match else "",
+                        "handler_name": handler_match.group(1) if handler_match else "",
+                        "stage": self._infer_runtime_stage(normalized_line),
+                    }
+            if event is None and sql_pattern.search(normalized_line):
                 event = {"kind": "sql", "statement": normalized_line[:240]}
-            elif redis_pattern.search(normalized_line):
+            elif event is None and redis_pattern.search(normalized_line):
                 event = {"kind": "redis", "statement": normalized_line[:240]}
             elif gql_pattern.search(normalized_line):
                 event = {"kind": "graphql", "statement": normalized_line[:240]}
@@ -283,6 +322,49 @@ class RuntimeEvidenceIngestor:
         redis = str(payload.get("redis") or payload.get("command") or "").strip()
         graphql = str(payload.get("graphql") or payload.get("operation") or "").strip()
         file_path = str(payload.get("file_path") or payload.get("path") or "").strip()
+        event_name = str(
+            payload.get("event_name")
+            or payload.get("event")
+            or payload.get("message_type")
+            or payload.get("subject")
+            or ""
+        ).strip()
+        channel_name = str(
+            payload.get("queue_name")
+            or payload.get("queue")
+            or payload.get("stream_name")
+            or payload.get("stream")
+            or payload.get("topic_name")
+            or payload.get("topic")
+            or payload.get("channel_name")
+            or payload.get("channel")
+            or ""
+        ).strip()
+        dlq_name = str(
+            payload.get("dlq_name")
+            or payload.get("dlq")
+            or payload.get("dead_letter_queue")
+            or payload.get("dead_letter_topic")
+            or payload.get("retry_queue")
+            or ""
+        ).strip()
+        handler_name = str(
+            payload.get("handler_name")
+            or payload.get("handler")
+            or payload.get("consumer")
+            or payload.get("worker")
+            or payload.get("symbol_name")
+            or ""
+        ).strip()
+        stage = str(
+            payload.get("stage")
+            or payload.get("action")
+            or payload.get("operation")
+            or ""
+        ).strip()
+        retry_count = payload.get("retry_count") or payload.get("retries")
+        if retry_count is None:
+            retry_count = payload.get("attempt")
 
         if not kind:
             if route_path:
@@ -293,6 +375,8 @@ class RuntimeEvidenceIngestor:
                 kind = "redis"
             elif graphql:
                 kind = "graphql"
+            elif event_name or channel_name or dlq_name:
+                kind = "event_runtime"
             elif "exception" in payload or "error" in payload:
                 kind = "exception"
 
@@ -310,6 +394,28 @@ class RuntimeEvidenceIngestor:
             normalized["operation"] = graphql[:240]
         if file_path:
             normalized["file_path"] = file_path.replace("\\", "/")
+        if event_name:
+            normalized["event_name"] = event_name
+            normalized["normalized_event_name"] = normalize_event_name(event_name)
+        if channel_name:
+            normalized["channel_name"] = channel_name
+            normalized["normalized_channel_name"] = normalize_channel_name(channel_name)
+        if dlq_name:
+            normalized["dlq_name"] = dlq_name
+            normalized["normalized_dlq_name"] = normalize_channel_name(dlq_name)
+        if event_name or channel_name:
+            normalized["canonical_key"] = build_event_flow_canonical_key(
+                event_name=event_name,
+                channel_name=channel_name,
+                fallback_name=event_name or channel_name,
+            )
+        if handler_name:
+            normalized["handler_name"] = handler_name
+        if stage:
+            normalized["stage"] = stage.lower()
+        if isinstance(retry_count, int | float | str) and str(retry_count).strip():
+            normalized["retry_count"] = retry_count
+            normalized["has_retry"] = True
         duration = payload.get("duration_ms") or payload.get("duration")
         if isinstance(duration, int | float | str):
             normalized["duration_ms"] = duration
@@ -325,6 +431,7 @@ class RuntimeEvidenceIngestor:
         if ingestor is None:
             return
         kind = str(event.get("kind", "")).strip().lower()
+        self._link_runtime_event_semantics(event_qn, event)
         if kind == "coverage":
             file_path = str(event.get("file_path", "")).strip()
             if file_path:
@@ -352,6 +459,16 @@ class RuntimeEvidenceIngestor:
                         ),
                         cs.RelationshipType.OBSERVED_IN_RUNTIME,
                         (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                        {"observation_kind": "http"},
+                    )
+                    self._ensure_reverse_runtime_link(
+                        (
+                            cs.NodeLabel.ENDPOINT,
+                            cs.KEY_QUALIFIED_NAME,
+                            endpoint_qn,
+                        ),
+                        event_qn,
+                        {"observation_kind": "http"},
                     )
             return
 
@@ -376,6 +493,15 @@ class RuntimeEvidenceIngestor:
                     cs.RelationshipType.OBSERVED_IN_RUNTIME,
                     (cs.NodeLabel.DATA_STORE, cs.KEY_QUALIFIED_NAME, datastore_qn),
                 )
+                self._ensure_reverse_runtime_link(
+                    (
+                        cs.NodeLabel.DATA_STORE,
+                        cs.KEY_QUALIFIED_NAME,
+                        datastore_qn,
+                    ),
+                    event_qn,
+                    {"observation_kind": "sql"},
+                )
             return
 
         if kind == "redis":
@@ -392,6 +518,15 @@ class RuntimeEvidenceIngestor:
                     ),
                     cs.RelationshipType.OBSERVED_IN_RUNTIME,
                     (cs.NodeLabel.CACHE_STORE, cs.KEY_QUALIFIED_NAME, cache_qn),
+                )
+                self._ensure_reverse_runtime_link(
+                    (
+                        cs.NodeLabel.CACHE_STORE,
+                        cs.KEY_QUALIFIED_NAME,
+                        cache_qn,
+                    ),
+                    event_qn,
+                    {"observation_kind": "redis"},
                 )
             return
 
@@ -412,6 +547,15 @@ class RuntimeEvidenceIngestor:
                         cs.KEY_QUALIFIED_NAME,
                         graphql_qn,
                     ),
+                )
+                self._ensure_reverse_runtime_link(
+                    (
+                        cs.NodeLabel.GRAPHQL_OPERATION,
+                        cs.KEY_QUALIFIED_NAME,
+                        graphql_qn,
+                    ),
+                    event_qn,
+                    {"observation_kind": "graphql"},
                 )
             return
 
@@ -516,6 +660,237 @@ class RuntimeEvidenceIngestor:
         candidate = str(row.get("qualified_name", "")).strip()
         return candidate or None
 
+    def _link_runtime_event_semantics(
+        self, event_qn: str, event: dict[str, object]
+    ) -> None:
+        ingestor = self._ingestor_api()
+        if ingestor is None:
+            return
+
+        event_name = str(event.get("event_name", "")).strip()
+        channel_name = str(
+            event.get("channel_name") or event.get("queue_name") or ""
+        ).strip()
+        dlq_name = str(event.get("dlq_name", "")).strip()
+        handler_name = str(event.get("handler_name", "")).strip()
+        stage = str(event.get("stage", "")).strip().lower()
+
+        event_flow_qn = self._find_event_flow_qn(
+            event_name=event_name,
+            channel_name=channel_name,
+        )
+        if event_flow_qn:
+            payload = {
+                "observation_kind": stage or "event_runtime",
+                "event_name": event_name or None,
+                "channel_name": channel_name or None,
+                "canonical_key": build_event_flow_canonical_key(
+                    event_name=event_name,
+                    channel_name=channel_name,
+                    fallback_name=event_name or channel_name or event_qn,
+                ),
+            }
+            ingestor.ensure_relationship_batch(
+                (
+                    cs.NodeLabel.RUNTIME_EVENT,
+                    cs.KEY_QUALIFIED_NAME,
+                    event_qn,
+                ),
+                cs.RelationshipType.OBSERVED_IN_RUNTIME,
+                (cs.NodeLabel.EVENT_FLOW, cs.KEY_QUALIFIED_NAME, event_flow_qn),
+                payload,
+            )
+            self._ensure_reverse_runtime_link(
+                (
+                    cs.NodeLabel.EVENT_FLOW,
+                    cs.KEY_QUALIFIED_NAME,
+                    event_flow_qn,
+                ),
+                event_qn,
+                payload,
+            )
+
+        for queue_name, role in ((channel_name, "primary"), (dlq_name, "dlq")):
+            if not queue_name:
+                continue
+            queue_qn = self._find_queue_qn(queue_name)
+            if not queue_qn:
+                continue
+            payload = {
+                "observation_kind": stage or "event_runtime",
+                "queue_name": queue_name,
+                "queue_role": role,
+            }
+            ingestor.ensure_relationship_batch(
+                (
+                    cs.NodeLabel.RUNTIME_EVENT,
+                    cs.KEY_QUALIFIED_NAME,
+                    event_qn,
+                ),
+                cs.RelationshipType.OBSERVED_IN_RUNTIME,
+                (cs.NodeLabel.QUEUE, cs.KEY_QUALIFIED_NAME, queue_qn),
+                payload,
+            )
+            self._ensure_reverse_runtime_link(
+                (
+                    cs.NodeLabel.QUEUE,
+                    cs.KEY_QUALIFIED_NAME,
+                    queue_qn,
+                ),
+                event_qn,
+                payload,
+            )
+
+        handler_spec = self._find_handler_spec(handler_name)
+        if handler_spec is not None:
+            payload = {
+                "observation_kind": stage or "event_runtime",
+                "handler_name": handler_name,
+            }
+            ingestor.ensure_relationship_batch(
+                (
+                    cs.NodeLabel.RUNTIME_EVENT,
+                    cs.KEY_QUALIFIED_NAME,
+                    event_qn,
+                ),
+                cs.RelationshipType.OBSERVED_IN_RUNTIME,
+                handler_spec,
+                payload,
+            )
+            self._ensure_reverse_runtime_link(handler_spec, event_qn, payload)
+
+    def _ensure_reverse_runtime_link(
+        self,
+        source_spec: tuple[str, str, str],
+        event_qn: str,
+        payload: dict[str, object] | None = None,
+    ) -> None:
+        ingestor = self._ingestor_api()
+        if ingestor is None:
+            return
+        ingestor.ensure_relationship_batch(
+            source_spec,
+            cs.RelationshipType.OBSERVED_IN_RUNTIME,
+            (
+                cs.NodeLabel.RUNTIME_EVENT,
+                cs.KEY_QUALIFIED_NAME,
+                event_qn,
+            ),
+            payload,
+        )
+
+    def _find_event_flow_qn(
+        self,
+        *,
+        event_name: str,
+        channel_name: str,
+    ) -> str | None:
+        ingestor = self._ingestor_api()
+        if ingestor is None:
+            return None
+        rows = ingestor.fetch_all(
+            """
+            MATCH (e:EventFlow {project_name: $project_name})
+            RETURN
+              coalesce(e.qualified_name, '') AS qualified_name,
+              coalesce(e.canonical_key, '') AS canonical_key,
+              coalesce(e.event_name, '') AS event_name,
+              coalesce(e.channel_name, '') AS channel_name
+            LIMIT 100
+            """,
+            {cs.KEY_PROJECT_NAME: self.project_name},
+        )
+        expected_key = build_event_flow_canonical_key(
+            event_name=event_name,
+            channel_name=channel_name,
+            fallback_name=event_name or channel_name,
+        )
+        normalized_event = normalize_event_name(event_name)
+        normalized_channel = normalize_channel_name(channel_name)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_dict = cast(dict[str, object], row)
+            candidate_qn = str(row_dict.get("qualified_name", "")).strip()
+            if not candidate_qn:
+                continue
+            candidate_key = str(row_dict.get("canonical_key", "")).strip().lower()
+            candidate_event = normalize_event_name(str(row_dict.get("event_name", "")))
+            candidate_channel = normalize_channel_name(
+                str(row_dict.get("channel_name", ""))
+            )
+            if expected_key and candidate_key == expected_key:
+                return candidate_qn
+            if normalized_event and candidate_event == normalized_event:
+                if not normalized_channel or candidate_channel == normalized_channel:
+                    return candidate_qn
+            if normalized_channel and not normalized_event:
+                if candidate_channel == normalized_channel:
+                    return candidate_qn
+        return None
+
+    def _find_queue_qn(self, queue_name: str) -> str | None:
+        ingestor = self._ingestor_api()
+        if ingestor is None:
+            return None
+        rows = ingestor.fetch_all(
+            """
+            MATCH (q:Queue {project_name: $project_name})
+            RETURN
+              coalesce(q.qualified_name, '') AS qualified_name,
+              coalesce(q.queue_name, q.name, '') AS queue_name
+            LIMIT 100
+            """,
+            {cs.KEY_PROJECT_NAME: self.project_name},
+        )
+        expected = normalize_channel_name(queue_name)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_dict = cast(dict[str, object], row)
+            candidate_qn = str(row_dict.get("qualified_name", "")).strip()
+            candidate_name = normalize_channel_name(str(row_dict.get("queue_name", "")))
+            if candidate_qn and candidate_name == expected:
+                return candidate_qn
+        return None
+
+    def _find_handler_spec(self, handler_name: str) -> tuple[str, str, str] | None:
+        normalized = handler_name.strip()
+        if not normalized:
+            return None
+        simple_name = normalized.split(".")[-1].lower()
+        ingestor = self._ingestor_api()
+        if ingestor is None:
+            return None
+        rows = ingestor.fetch_all(
+            """
+            MATCH (n)
+            WHERE coalesce(n.project_name, $project_name) = $project_name
+              AND (n:Function OR n:Method)
+            RETURN
+              labels(n) AS labels,
+              coalesce(n.qualified_name, '') AS qualified_name,
+              coalesce(n.name, '') AS name
+            LIMIT 500
+            """,
+            {cs.KEY_PROJECT_NAME: self.project_name},
+        )
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row_dict = cast(dict[str, object], row)
+            qualified_name = str(row_dict.get("qualified_name", "")).strip()
+            name = str(row_dict.get("name", "")).strip().lower()
+            labels = cast(list[str], row_dict.get("labels", []))
+            if not qualified_name or not labels:
+                continue
+            if (
+                qualified_name.lower().endswith(normalized.lower())
+                or name == simple_name
+            ):
+                return (labels[0], cs.KEY_QUALIFIED_NAME, qualified_name)
+        return None
+
     def _find_service_qn(self) -> str | None:
         ingestor = self._ingestor_api()
         if ingestor is None:
@@ -558,3 +933,18 @@ class RuntimeEvidenceIngestor:
         if "log" in lowered:
             return "log"
         return runtime_file.suffix.lower().removeprefix(".") or "runtime"
+
+    @staticmethod
+    def _infer_runtime_stage(text: str) -> str:
+        lowered = text.lower()
+        if any(token in lowered for token in ("replay", "redrive", "requeue")):
+            return "replay"
+        if "dlq" in lowered or "dead-letter" in lowered or "dead_letter" in lowered:
+            return "dlq"
+        if any(token in lowered for token in ("consume", "consumer", "subscribe")):
+            return "consume"
+        if any(
+            token in lowered for token in ("publish", "emit", "dispatch", "enqueue")
+        ):
+            return "publish"
+        return "event_runtime"

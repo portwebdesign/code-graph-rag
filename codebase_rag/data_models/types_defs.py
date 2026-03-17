@@ -612,6 +612,87 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
         "{qualified_name: string, name: string, framework: string, http_method: string, route_path: string, path: string}",
     ),
     NodeSchema(
+        NodeLabel.CONTRACT,
+        "{qualified_name: string, name: string, path: string, symbol_qn: string, framework: string}",
+    ),
+    NodeSchema(
+        NodeLabel.CONTRACT_FIELD,
+        "{qualified_name: string, name: string, contract_qn: string, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.DEPENDENCY_PROVIDER,
+        "{qualified_name: string, name: string, path: string, is_placeholder: boolean}",
+    ),
+    NodeSchema(
+        NodeLabel.AUTH_POLICY,
+        "{qualified_name: string, name: string, path: string, is_placeholder: boolean}",
+    ),
+    NodeSchema(NodeLabel.AUTH_SCOPE, "{qualified_name: string, name: string}"),
+    NodeSchema(
+        NodeLabel.EVENT_FLOW,
+        "{qualified_name: string, name: string, canonical_key: string, event_name: string, channel_name: string, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.SQL_QUERY,
+        "{qualified_name: string, name: string, path: string, query_kind: string, fingerprint: string, query_intent: string, symbol_qn: string}",
+    ),
+    NodeSchema(
+        NodeLabel.CYPHER_QUERY,
+        "{qualified_name: string, name: string, path: string, query_kind: string, fingerprint: string, query_intent: string, symbol_qn: string}",
+    ),
+    NodeSchema(
+        NodeLabel.QUERY_FINGERPRINT,
+        "{qualified_name: string, name: string, path: string, query_kind: string, fingerprint: string}",
+    ),
+    NodeSchema(
+        NodeLabel.QUEUE,
+        "{qualified_name: string, name: string, queue_name: string, engine: string, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.DATA_STORE,
+        "{qualified_name: string, name: string, path: string, store_kind: string, table_name: string}",
+    ),
+    NodeSchema(
+        NodeLabel.TRANSACTION_BOUNDARY,
+        "{qualified_name: string, name: string, symbol_qn: string, boundary_kind: string, mechanism: string, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.SIDE_EFFECT,
+        "{qualified_name: string, name: string, symbol_qn: string, effect_kind: string, operation_name: string, order_index: int, path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.RUNTIME_ARTIFACT,
+        "{qualified_name: string, name: string, path: string, kind: string}",
+    ),
+    NodeSchema(
+        NodeLabel.RUNTIME_EVENT,
+        "{qualified_name: string, name: string, kind: string, path: string, file_path: string, event_name: string, channel_name: string, stage: string}",
+    ),
+    NodeSchema(
+        NodeLabel.CLIENT_OPERATION,
+        "{qualified_name: string, name: string, path: string, http_method: string, route_path: string, client_kind: string, governance_kind: string, operation_id: string}",
+    ),
+    NodeSchema(
+        NodeLabel.TEST_SUITE,
+        "{qualified_name: string, name: string, path: string, framework: string, suite_kind: string}",
+    ),
+    NodeSchema(
+        NodeLabel.TEST_CASE,
+        "{qualified_name: string, name: string, path: string, framework: string, case_kind: string, suite_qn: string}",
+    ),
+    NodeSchema(
+        NodeLabel.ENV_VAR,
+        "{qualified_name: string, name: string, path: string, source_kind: string, has_definition: bool, has_reader: bool}",
+    ),
+    NodeSchema(
+        NodeLabel.FEATURE_FLAG,
+        "{qualified_name: string, name: string, path: string, source_kind: string, has_definition: bool, has_reader: bool, default_enabled: bool}",
+    ),
+    NodeSchema(
+        NodeLabel.SECRET_REF,
+        "{qualified_name: string, name: string, path: string, source_kind: string, has_definition: bool, has_reader: bool, masked: bool}",
+    ),
+    NodeSchema(
         NodeLabel.HOOK, "{qualified_name: string, name: string, hook_name: string}"
     ),
     NodeSchema(
@@ -646,6 +727,10 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(NodeLabel.CONCEPT, "{name: string}"),
     NodeSchema(NodeLabel.SOURCE, "{name: string}"),
+    NodeSchema(
+        NodeLabel.GRAPH_NODE_LABEL,
+        "{qualified_name: string, name: string, path: string}",
+    ),
     NodeSchema(
         NodeLabel.ANALYSIS_REPORT,
         "{title: string, type: string, generated_at: string}",
@@ -852,6 +937,292 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.COMPONENT),
         RelationshipType.REQUESTS_ENDPOINT,
         (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLIENT_OPERATION,),
+        RelationshipType.REQUESTS_ENDPOINT,
+        (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.COMPONENT,
+        ),
+        RelationshipType.USES_OPERATION,
+        (NodeLabel.CLIENT_OPERATION,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.PROJECT, NodeLabel.RUNTIME_ARTIFACT),
+        RelationshipType.CONTAINS,
+        (NodeLabel.RUNTIME_ARTIFACT, NodeLabel.RUNTIME_EVENT),
+    ),
+    RelationshipSchema(
+        (NodeLabel.TEST_SUITE,),
+        RelationshipType.CONTAINS,
+        (NodeLabel.TEST_CASE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.USES_DEPENDENCY,
+        (NodeLabel.DEPENDENCY_PROVIDER,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.SECURED_BY,
+        (NodeLabel.AUTH_POLICY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.AUTH_POLICY,),
+        RelationshipType.REQUIRES_SCOPE,
+        (NodeLabel.AUTH_SCOPE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.ACCEPTS_CONTRACT,
+        (NodeLabel.CONTRACT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT, NodeLabel.FUNCTION, NodeLabel.METHOD),
+        RelationshipType.RETURNS_CONTRACT,
+        (NodeLabel.CONTRACT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.WRITES_OUTBOX,
+        (NodeLabel.EVENT_FLOW,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.ENDPOINT, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.PUBLISHES_EVENT,
+        (NodeLabel.EVENT_FLOW,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.CONSUMES_EVENT,
+        (NodeLabel.EVENT_FLOW,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.REPLAYS_EVENT,
+        (NodeLabel.EVENT_FLOW,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.WRITES_DLQ,
+        (NodeLabel.QUEUE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.EVENT_FLOW,),
+        RelationshipType.USES_HANDLER,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (NodeLabel.EVENT_FLOW, NodeLabel.SERVICE),
+        RelationshipType.USES_QUEUE,
+        (NodeLabel.QUEUE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.BEGINS_TRANSACTION,
+        (NodeLabel.TRANSACTION_BOUNDARY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.COMMITS_TRANSACTION,
+        (NodeLabel.TRANSACTION_BOUNDARY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.ROLLBACKS_TRANSACTION,
+        (NodeLabel.TRANSACTION_BOUNDARY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.SERVICE),
+        RelationshipType.PERFORMS_SIDE_EFFECT,
+        (NodeLabel.SIDE_EFFECT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.SIDE_EFFECT,),
+        RelationshipType.WITHIN_TRANSACTION,
+        (NodeLabel.TRANSACTION_BOUNDARY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.SIDE_EFFECT,),
+        RelationshipType.BEFORE,
+        (NodeLabel.SIDE_EFFECT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.SIDE_EFFECT,),
+        RelationshipType.AFTER,
+        (NodeLabel.SIDE_EFFECT,),
+    ),
+    RelationshipSchema(
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.COMPONENT,
+        ),
+        RelationshipType.EXECUTES_SQL,
+        (NodeLabel.SQL_QUERY,),
+    ),
+    RelationshipSchema(
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.COMPONENT,
+        ),
+        RelationshipType.EXECUTES_CYPHER,
+        (NodeLabel.CYPHER_QUERY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.SQL_QUERY, NodeLabel.CYPHER_QUERY),
+        RelationshipType.HAS_FINGERPRINT,
+        (NodeLabel.QUERY_FINGERPRINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.SQL_QUERY,),
+        RelationshipType.READS_TABLE,
+        (NodeLabel.DATA_STORE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.SQL_QUERY,),
+        RelationshipType.WRITES_TABLE,
+        (NodeLabel.DATA_STORE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.SQL_QUERY,),
+        RelationshipType.JOINS_TABLE,
+        (NodeLabel.DATA_STORE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CYPHER_QUERY,),
+        RelationshipType.READS_LABEL,
+        (NodeLabel.GRAPH_NODE_LABEL,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CYPHER_QUERY,),
+        RelationshipType.WRITES_LABEL,
+        (NodeLabel.GRAPH_NODE_LABEL,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLIENT_OPERATION,),
+        RelationshipType.GENERATED_FROM_SPEC,
+        (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CLIENT_OPERATION,),
+        RelationshipType.BYPASSES_MANIFEST,
+        (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.TEST_CASE,),
+        RelationshipType.TESTS_SYMBOL,
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.COMPONENT,
+        ),
+    ),
+    RelationshipSchema(
+        (NodeLabel.TEST_CASE,),
+        RelationshipType.TESTS_ENDPOINT,
+        (NodeLabel.ENDPOINT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.TEST_CASE,),
+        RelationshipType.ASSERTS_CONTRACT,
+        (NodeLabel.CONTRACT,),
+    ),
+    RelationshipSchema(
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.CLASS,
+            NodeLabel.COMPONENT,
+            NodeLabel.SERVICE,
+            NodeLabel.INFRA_RESOURCE,
+        ),
+        RelationshipType.READS_ENV,
+        (NodeLabel.ENV_VAR,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.INFRA_RESOURCE,),
+        RelationshipType.SETS_ENV,
+        (NodeLabel.ENV_VAR,),
+    ),
+    RelationshipSchema(
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.CLASS,
+            NodeLabel.COMPONENT,
+            NodeLabel.SERVICE,
+            NodeLabel.INFRA_RESOURCE,
+        ),
+        RelationshipType.USES_SECRET,
+        (NodeLabel.SECRET_REF,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.FEATURE_FLAG,),
+        RelationshipType.GATES_CODE_PATH,
+        (
+            NodeLabel.MODULE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+            NodeLabel.CLASS,
+            NodeLabel.COMPONENT,
+            NodeLabel.SERVICE,
+        ),
+    ),
+    RelationshipSchema(
+        (NodeLabel.RUNTIME_EVENT,),
+        RelationshipType.OBSERVED_IN_RUNTIME,
+        (
+            NodeLabel.ENDPOINT,
+            NodeLabel.DATA_STORE,
+            NodeLabel.CACHE_STORE,
+            NodeLabel.GRAPHQL_OPERATION,
+            NodeLabel.EVENT_FLOW,
+            NodeLabel.QUEUE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+        ),
+    ),
+    RelationshipSchema(
+        (
+            NodeLabel.ENDPOINT,
+            NodeLabel.DATA_STORE,
+            NodeLabel.CACHE_STORE,
+            NodeLabel.GRAPHQL_OPERATION,
+            NodeLabel.EVENT_FLOW,
+            NodeLabel.QUEUE,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+        ),
+        RelationshipType.OBSERVED_IN_RUNTIME,
+        (NodeLabel.RUNTIME_EVENT,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.RUNTIME_EVENT,),
+        RelationshipType.COVERS_MODULE,
+        (NodeLabel.FILE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.RUNTIME_EVENT,),
+        RelationshipType.RAISES_EXCEPTION,
+        (NodeLabel.SERVICE,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.CONTRACT,),
+        RelationshipType.DECLARES_FIELD,
+        (NodeLabel.CONTRACT_FIELD,),
     ),
     RelationshipSchema(
         (NodeLabel.MODULE,),

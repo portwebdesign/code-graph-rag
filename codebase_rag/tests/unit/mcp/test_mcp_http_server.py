@@ -469,7 +469,14 @@ async def test_http_stateful_core_tools_remain_callable_after_project_selection(
 
     assert run_cypher_payload["status"] == "ok"
     run_cypher_result = cast(dict[str, object], run_cypher_payload["payload"])
-    assert run_cypher_result["status"] == "ok"
+    assert "run_cypher_advanced_mode_required" in str(
+        run_cypher_result.get("error", "")
+    )
+    assert run_cypher_result.get("results") == []
+    exact_next_call = cast(
+        dict[str, object], run_cypher_result.get("exact_next_call", {})
+    )
+    assert exact_next_call.get("tool") == cs.MCPToolName.QUERY_CODE_GRAPH
     assert "flow_advisory" in run_cypher_result
 
     query_payload = await service.call_tool_payload(

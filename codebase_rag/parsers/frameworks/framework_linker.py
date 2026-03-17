@@ -10,7 +10,17 @@ from codebase_rag.core import constants as cs
 from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     NodeType,
+    PropertyValue,
     SimpleNameLookup,
+)
+from codebase_rag.parsers.frameworks.fastapi_semantics import (
+    extract_fastapi_route_semantics,
+)
+from codebase_rag.parsers.pipeline.semantic_metadata import (
+    build_placeholder_flag,
+    build_semantic_metadata,
+    build_semantic_qn,
+    sanitize_semantic_identity,
 )
 from codebase_rag.services import IngestorProtocol
 
@@ -26,7 +36,7 @@ class EndpointMatch:
         path (str): The URL path definition.
         handler_name (str | None): Name of the function/method handling the request.
         controller_name (str | None): Name of the controller class (if applicable).
-        metadata (dict[str, str] | None): Additional framework-specific metadata.
+        metadata (dict[str, PropertyValue] | None): Additional framework-specific metadata.
     """
 
     framework: str
@@ -34,7 +44,7 @@ class EndpointMatch:
     path: str
     handler_name: str | None = None
     controller_name: str | None = None
-    metadata: dict[str, str] | None = None
+    metadata: dict[str, PropertyValue] | None = None
 
 
 @dataclass
@@ -43,6 +53,13 @@ class FastAPILocalEndpoint:
     method: str
     path: str
     handler_name: str
+    response_model: str | None = None
+    dependencies: list[str] | None = None
+    security_dependencies: list[str] | None = None
+    security_scopes: list[str] | None = None
+    tags: list[str] | None = None
+    line_start: int | None = None
+    line_end: int | None = None
 
 
 @dataclass
@@ -111,6 +128,9 @@ class FrameworkLinker:
         self._template_index: dict[str, str] | None = None
         self._asset_index: dict[str, str] | None = None
         self._env_values = self._load_env_values()
+        self._fastapi_semantics_enabled = os.getenv(
+            "CODEGRAPH_FASTAPI_SEMANTICS", "1"
+        ).lower() not in {"0", "false", "no"}
         self._fastapi_manifests: dict[str, FastAPIModuleManifest] = {}
 
     _SKIP_DIR_PARTS = {
@@ -614,6 +634,244 @@ class FrameworkLinker:
                 return qn
         return candidates[0] if candidates else None
 
+    @staticmethod
+    def _sanitize_semantic_identity(value: str) -> str:
+        return sanitize_semantic_identity(value)
+
+    def _semantic_qn(self, family: str, value: str) -> str:
+        return build_semantic_qn(self.project_name, family, value)
+
+    def _semantic_metadata(
+        self,
+        *,
+        relative_path: str,
+        evidence_kind: str,
+        line_start: int | None,
+        line_end: int | None,
+        confidence: float = 0.9,
+        extra: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        return build_semantic_metadata(
+            source_parser="framework_linker",
+            evidence_kind=evidence_kind,
+            file_path=relative_path,
+            confidence=confidence,
+            language="python",
+            line_start=line_start,
+            line_end=line_end,
+            extra=extra,
+        )
+
+    def _ensure_contract_node(
+        self,
+        contract_name: str,
+        *,
+        relative_path: str,
+        line_start: int | None,
+        line_end: int | None,
+    ) -> str:
+        resolved_qn = self._find_best_qn_by_simple_name(contract_name)
+        contract_qn = self._semantic_qn("contract", resolved_qn or contract_name)
+        props = {
+            cs.KEY_QUALIFIED_NAME: contract_qn,
+            cs.KEY_NAME: contract_name,
+            cs.KEY_FRAMEWORK: "fastapi",
+        }
+        props.update(
+            self._semantic_metadata(
+                relative_path=relative_path,
+                evidence_kind="response_model",
+                line_start=line_start,
+                line_end=line_end,
+                confidence=0.95 if resolved_qn else 0.7,
+                extra={
+                    "symbol_qn": resolved_qn,
+                },
+            )
+        )
+        if resolved_qn is None:
+            props.update(build_placeholder_flag(placeholder_name=contract_name))
+        self.ingestor.ensure_node_batch(cs.NodeLabel.CONTRACT, props)
+        return contract_qn
+
+    def _ensure_dependency_provider_node(
+        self,
+        provider_name: str,
+        *,
+        relative_path: str,
+        line_start: int | None,
+        line_end: int | None,
+    ) -> str:
+        resolved_qn = self._find_best_qn_by_simple_name(provider_name)
+        provider_qn = self._semantic_qn(
+            "dependency_provider", resolved_qn or provider_name
+        )
+        props = {
+            cs.KEY_QUALIFIED_NAME: provider_qn,
+            cs.KEY_NAME: provider_name,
+            cs.KEY_FRAMEWORK: "fastapi",
+        }
+        props.update(
+            self._semantic_metadata(
+                relative_path=relative_path,
+                evidence_kind="depends",
+                line_start=line_start,
+                line_end=line_end,
+                confidence=0.9 if resolved_qn else 0.65,
+                extra={"symbol_qn": resolved_qn},
+            )
+        )
+        if resolved_qn is None:
+            props.update(build_placeholder_flag(placeholder_name=provider_name))
+        self.ingestor.ensure_node_batch(cs.NodeLabel.DEPENDENCY_PROVIDER, props)
+        return provider_qn
+
+    def _ensure_auth_policy_node(
+        self,
+        policy_name: str,
+        *,
+        relative_path: str,
+        line_start: int | None,
+        line_end: int | None,
+    ) -> str:
+        resolved_qn = self._find_best_qn_by_simple_name(policy_name)
+        policy_qn = self._semantic_qn("auth_policy", resolved_qn or policy_name)
+        props = {
+            cs.KEY_QUALIFIED_NAME: policy_qn,
+            cs.KEY_NAME: policy_name,
+            cs.KEY_FRAMEWORK: "fastapi",
+        }
+        props.update(
+            self._semantic_metadata(
+                relative_path=relative_path,
+                evidence_kind="security",
+                line_start=line_start,
+                line_end=line_end,
+                confidence=0.92 if resolved_qn else 0.68,
+                extra={"symbol_qn": resolved_qn},
+            )
+        )
+        if resolved_qn is None:
+            props.update(build_placeholder_flag(placeholder_name=policy_name))
+        self.ingestor.ensure_node_batch(cs.NodeLabel.AUTH_POLICY, props)
+        return policy_qn
+
+    def _ensure_auth_scope_node(
+        self,
+        scope_name: str,
+        *,
+        relative_path: str,
+        line_start: int | None,
+        line_end: int | None,
+    ) -> str:
+        scope_qn = self._semantic_qn("auth_scope", scope_name)
+        props = {
+            cs.KEY_QUALIFIED_NAME: scope_qn,
+            cs.KEY_NAME: scope_name,
+            cs.KEY_FRAMEWORK: "fastapi",
+        }
+        props.update(
+            self._semantic_metadata(
+                relative_path=relative_path,
+                evidence_kind="security_scope",
+                line_start=line_start,
+                line_end=line_end,
+                confidence=0.95,
+            )
+        )
+        self.ingestor.ensure_node_batch(cs.NodeLabel.AUTH_SCOPE, props)
+        return scope_qn
+
+    def _emit_fastapi_semantic_edges(
+        self,
+        *,
+        endpoint_qn: str,
+        endpoint: FastAPILocalEndpoint,
+        handler_qn: str | None,
+        handler_type: NodeType | None,
+        relative_path: str,
+    ) -> None:
+        if not self._fastapi_semantics_enabled:
+            return
+
+        semantic_props = self._semantic_metadata(
+            relative_path=relative_path,
+            evidence_kind="fastapi_route_semantics",
+            line_start=endpoint.line_start,
+            line_end=endpoint.line_end,
+        )
+        source_specs: list[tuple[str, str, str]] = [
+            (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn)
+        ]
+        if handler_qn and handler_type:
+            source_specs.append((handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn))
+
+        for dependency_name in endpoint.dependencies or []:
+            provider_qn = self._ensure_dependency_provider_node(
+                dependency_name,
+                relative_path=relative_path,
+                line_start=endpoint.line_start,
+                line_end=endpoint.line_end,
+            )
+            for source_spec in source_specs:
+                self.ingestor.ensure_relationship_batch(
+                    source_spec,
+                    cs.RelationshipType.USES_DEPENDENCY,
+                    (
+                        cs.NodeLabel.DEPENDENCY_PROVIDER,
+                        cs.KEY_QUALIFIED_NAME,
+                        provider_qn,
+                    ),
+                    semantic_props | {"dependency_name": dependency_name},
+                )
+
+        policy_qns: list[str] = []
+        for policy_name in endpoint.security_dependencies or []:
+            policy_qn = self._ensure_auth_policy_node(
+                policy_name,
+                relative_path=relative_path,
+                line_start=endpoint.line_start,
+                line_end=endpoint.line_end,
+            )
+            policy_qns.append(policy_qn)
+            for source_spec in source_specs:
+                self.ingestor.ensure_relationship_batch(
+                    source_spec,
+                    cs.RelationshipType.SECURED_BY,
+                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
+                    semantic_props | {"policy_name": policy_name},
+                )
+
+        for policy_qn in policy_qns:
+            for scope_name in endpoint.security_scopes or []:
+                scope_qn = self._ensure_auth_scope_node(
+                    scope_name,
+                    relative_path=relative_path,
+                    line_start=endpoint.line_start,
+                    line_end=endpoint.line_end,
+                )
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
+                    cs.RelationshipType.REQUIRES_SCOPE,
+                    (cs.NodeLabel.AUTH_SCOPE, cs.KEY_QUALIFIED_NAME, scope_qn),
+                    semantic_props | {"scope_name": scope_name},
+                )
+
+        if endpoint.response_model:
+            contract_qn = self._ensure_contract_node(
+                endpoint.response_model,
+                relative_path=relative_path,
+                line_start=endpoint.line_start,
+                line_end=endpoint.line_end,
+            )
+            for source_spec in source_specs:
+                self.ingestor.ensure_relationship_batch(
+                    source_spec,
+                    cs.RelationshipType.RETURNS_CONTRACT,
+                    (cs.NodeLabel.CONTRACT, cs.KEY_QUALIFIED_NAME, contract_qn),
+                    semantic_props | {"contract_name": endpoint.response_model},
+                )
+
     def _collect_fastapi_module(self, file_path: Path, source: str) -> None:
         """Collect FastAPI router/app composition metadata for later graph materialization."""
         if "fastapi" not in source.lower() and "include_router(" not in source:
@@ -810,29 +1068,22 @@ class FrameworkLinker:
     def _extract_fastapi_local_endpoints(
         self, source: str
     ) -> list[FastAPILocalEndpoint]:
-        endpoints: list[FastAPILocalEndpoint] = []
-        pattern = re.compile(
-            r"@(?P<router>[A-Za-z_][A-Za-z0-9_]*)\.(?P<method>get|post|put|delete|patch|api_route)\((?P<args>[\s\S]*?)\)\s*(?:async\s+def|def)\s+(?P<handler>[A-Za-z_][A-Za-z0-9_]*)",
-            re.IGNORECASE,
-        )
-        for match in pattern.finditer(source):
-            router_name = match.group("router")
-            method = match.group("method").upper()
-            args = match.group("args")
-            path = self._extract_first_string_arg(args)
-            if not path:
-                continue
-            if method == "API_ROUTE":
-                method = self._extract_api_route_method(args)
-            endpoints.append(
-                FastAPILocalEndpoint(
-                    router_name=router_name,
-                    method=method,
-                    path=path,
-                    handler_name=match.group("handler"),
-                )
+        return [
+            FastAPILocalEndpoint(
+                router_name=route.router_name,
+                method=route.method,
+                path=route.path,
+                handler_name=route.handler_name,
+                response_model=route.response_model,
+                dependencies=route.dependencies,
+                security_dependencies=route.security_dependencies,
+                security_scopes=route.security_scopes,
+                tags=route.tags,
+                line_start=route.line_start,
+                line_end=route.line_end,
             )
-        return endpoints
+            for route in extract_fastapi_route_semantics(source)
+        ]
 
     def _extract_fastapi_include_edges(
         self,
@@ -1194,9 +1445,15 @@ class FrameworkLinker:
                 handler_name=endpoint.handler_name,
                 metadata={
                     "source_module": module_qn,
-                    "source_parser": "framework_linker",
+                    cs.KEY_SOURCE_PARSER: "framework_linker",
                     "local_route_path": endpoint.path,
                     "handler_name": endpoint.handler_name,
+                    "response_model": endpoint.response_model,
+                    "tags": endpoint.tags or [],
+                    cs.KEY_START_LINE: endpoint.line_start,
+                    cs.KEY_END_LINE: endpoint.line_end,
+                    cs.KEY_CONFIDENCE: 0.95,
+                    cs.KEY_EVIDENCE_KIND: "fastapi_route",
                 },
             ),
             module_path,
@@ -1210,7 +1467,7 @@ class FrameworkLinker:
             "route_path": final_path,
             "local_route_path": endpoint.path,
             "framework": "fastapi",
-            "source_parser": "framework_linker",
+            cs.KEY_SOURCE_PARSER: "framework_linker",
         }
 
         if handler_qn and handler_type:
@@ -1226,6 +1483,14 @@ class FrameworkLinker:
                 (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
                 endpoint_props,
             )
+
+        self._emit_fastapi_semantic_edges(
+            endpoint_qn=endpoint_qn,
+            endpoint=endpoint,
+            handler_qn=handler_qn,
+            handler_type=handler_type,
+            relative_path=module_path,
+        )
 
         for exposed_module_qn, exposed_module_path in module_chain:
             self.ingestor.ensure_relationship_batch(
@@ -1730,7 +1995,7 @@ class FrameworkLinker:
             method = match.group(1).upper()
             path = match.group("path")
 
-            metadata: dict[str, str] = {}
+            metadata: dict[str, PropertyValue] = {}
             trigger = self._extract_attribute_value(element_text, "hx-trigger")
             target = self._extract_attribute_value(element_text, "hx-target")
             swap = self._extract_attribute_value(element_text, "hx-swap")

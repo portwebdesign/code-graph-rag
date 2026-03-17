@@ -629,14 +629,14 @@ After `select_active_project`, the exposed core HTTP tools stay callable without
 |----|-----------|
 | `list_projects` | List all indexed projects in the knowledge graph database. Returns a list of project names that have been indexed. MANDATORY START: call this first in a fresh session, then call select_active_project. |
 | `select_active_project` | Preflight tool to set/confirm the active repository context and return project-scoped readiness info. Optionally accepts repo_path to switch active root and client_profile to tailor MCP behavior for VS Code, Cline, Copilot, Ollama, or HTTP clients, then reports active project, indexed status, project-scoped graph counts, latest analysis timestamp, and enforced safety policies. MANDATORY SECOND STEP after list_projects before using the stateful graph tools. |
-| `get_schema_overview` | Return a compact, project-scoped graph schema bootstrap summary with relation patterns, label counts, key properties, important labels, and frontend graph capabilities/preset Cypher examples for the current repository. |
+| `get_schema_overview` | Return a compact, project-scoped graph schema bootstrap summary with relation patterns, label counts, key properties, important labels, and semantic preset Cypher examples for the current repository. |
 | `detect_project_drift` | Detect FS↔Graph drift for a repository/project before re-index decisions. Reports filesystem file counts, graph module/file counts, and drift signals. |
 | `delete_project` | Delete a specific project from the knowledge graph database. This removes all nodes associated with the project while preserving other projects. Use list_projects first to see available projects. |
 | `wipe_database` | WARNING: Completely wipe the entire database, removing ALL indexed projects. This cannot be undone. Use delete_project for removing individual projects. |
 | `index_repository` | Parse and ingest the repository into the Memgraph knowledge graph. This builds a comprehensive graph of functions, classes, dependencies, and relationships. Note: This preserves other projects - only the current project is re-indexed. This tool MUST be called only when the user explicitly asks for re-indexing and requires user_requested=true. A non-empty reason is required; for already indexed projects, drift confirmation is required. |
 | `sync_graph_updates` | Refresh graph state for the active repository without deleting project data first. Supports sync_mode='fast' (default, incremental/selective when possible) and sync_mode='full' (force full reparse for maximum consistency). |
-| `query_code_graph` | PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. For React/Next.js repos, also ask things like 'Show the component tree', 'Which components pass props to child components?', 'Which hooks are used by this page?', or 'Map Next.js pages and layouts to routes'. MUST be used before read_file and before default run_cypher flow. Requires preflight: run list_projects -> select_active_project first. |
-| `multi_hop_analysis` | Build a compressed multi-hop evidence bundle around a symbol or file. Aggregates inbound/outbound relationships across CALLS/IMPORTS/INHERITS/USES, summarizes blast radius, highlights affected symbols/files, and recommends the next retrieval steps. Use this for complex architecture, dependency-chain, and impact analysis in large projects. |
+| `query_code_graph` | PRIMARY GRAPH ENTRYPOINT. Query the codebase knowledge graph using natural language. Ask questions like 'What functions call UserService.create_user?' or 'Show me all classes that implement the Repository interface'. Also use it for semantic API questions such as auth coverage, dependency-provider visibility, request/response contract paths, unprotected endpoint discovery, testcase/contract coverage gaps, and config-runtime drift questions such as undefined env readers, orphan secret refs, or unused feature flags. For React/Next.js repos, also ask things like 'Show the component tree', 'Which components pass props to child components?', 'Which hooks are used by this page?', or 'Map Next.js pages and layouts to routes'. MUST be used before read_file and before default run_cypher flow. Requires preflight: run list_projects -> select_active_project first. |
+| `multi_hop_analysis` | Build a compressed multi-hop evidence bundle around a symbol or file. Aggregates inbound/outbound relationships across CALLS/IMPORTS/INHERITS/USES, summarizes blast radius, highlights affected symbols/files, and recommends the next retrieval steps. Use this for complex architecture, dependency-chain, impact analysis, source symbol -> endpoint/contract -> testcase traversal, and infra resource -> env -> code reader / feature flag / secret multi-hop analysis in large projects. |
 | `semantic_search` | Perform semantic (vector-based) code search using embeddings. Use this for intent-based discovery such as 'auth flow' or 'error handling'. |
 | `context7_docs` | Fetch Context7 documentation for an external library/framework and persist it into cache/graph/memory when configured. Use this only when repo evidence is insufficient and the task depends on external library behavior. |
 | `get_function_source` | Retrieve source code for a function or method by graph node ID. Typically used after semantic_search returns candidate node IDs. |
@@ -660,9 +660,9 @@ After `select_active_project`, the exposed core HTTP tools stay callable without
 | `architecture_bundle` | Build a normalized architecture bundle from analysis artifacts, repo semantics, and typed service/data/infra signals. Use this before deep multi-hop architecture work. |
 | `change_bundle` | Build a normalized change-planning bundle combining analysis artifacts with impact/multi-hop session evidence. Use this before edits, refactors, or test generation. |
 | `risk_bundle` | Build a normalized security/performance/dependency risk bundle for a goal or target. Use this when validating risky areas or before approving a change. |
-| `test_bundle` | Build a normalized test bundle using coverage, blast radius, public API, and impacted-test context. Use this before test_generate or test_quality_gate. |
+| `test_bundle` | Build a normalized test bundle using semantic testcase graph coverage, runtime coverage, blast radius, public API, and impacted-test context. Use this before test_generate or test_quality_gate. |
 | `export_mermaid` | Export a Mermaid diagram generated from current graph data to disk. Provide a diagram type/name supported by MermaidExporter and optionally an output path. |
-| `run_cypher` | Execute a raw Cypher query against the Memgraph database. Requires preflight: run list_projects -> select_active_project first. Use this for advanced ad-hoc querying not covered by standard tools and for explicit single-hop/multi-hop traversal control. Default graph-first flow: query_code_graph first, then run_cypher. Query MUST be scoped to active project and MUST use $project_name parameter to avoid cross-project access. Set write=True ONLY IF you intend to modify the graph (nodes/edges). For write operations, user_requested=true and a non-empty high-quality reason are required. Write operations run safe dry-run impact analysis and are blocked when impact is too high. WARNING: Modifying the graph directly can cause inconsistencies with the actual source code. |
+| `run_cypher` | Execute a raw Cypher query against the Memgraph database. Requires preflight: run list_projects -> select_active_project first. Use this for advanced ad-hoc querying not covered by standard tools and for explicit single-hop/multi-hop traversal control. This is also the exact tool for running semantic auth/contract preset queries returned by get_schema_overview (for example unprotected endpoints, auth scope coverage, dependency visibility, contract-gap checks, frontend bypass queries, client-operation governance checks, untested-public-endpoint checks, contract-test-coverage checks, undefined-env readers, orphan/unbound secret refs, orphan feature flags, resource-without-reader checks, reader-without-resource checks, and unused feature flags). Default graph-first flow: query_code_graph first, then run_cypher. Query MUST be scoped to active project and MUST use $project_name parameter to avoid cross-project access. Set write=True ONLY IF you intend to modify the graph (nodes/edges). For write operations, user_requested=true and a non-empty high-quality reason are required. Write operations run safe dry-run impact analysis and are blocked when impact is too high. WARNING: Modifying the graph directly can cause inconsistencies with the actual source code. |
 | `apply_diff_safe` | Apply one or more surgical replacements in a single file. Requires 'file_path' and 'chunks', where chunks is a JSON string list of objects with 'target_code' and 'replacement_code'. |
 | `refactor_batch` | Apply multiple diff modifications across several files in a single operation. Requires 'chunks' which is a JSON formatted string containing multiple diffs. |
 | `plan_task` | Ask an agent planner to create a multi-step execution plan for a specified goal. Provide the 'goal' and optional 'context' the planner might need. Advisory tool for complex or multi-step work; core graph tools remain callable without it. |
@@ -737,6 +737,27 @@ The knowledge graph uses the following node types and relationships:
 | Function | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
 | Method | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
 | Endpoint | `{qualified_name: string, name: string, framework: string, http_method: string, route_path: string, path: string}` |
+| Contract | `{qualified_name: string, name: string, path: string, symbol_qn: string, framework: string}` |
+| ContractField | `{qualified_name: string, name: string, contract_qn: string, path: string}` |
+| DependencyProvider | `{qualified_name: string, name: string, path: string, is_placeholder: boolean}` |
+| AuthPolicy | `{qualified_name: string, name: string, path: string, is_placeholder: boolean}` |
+| AuthScope | `{qualified_name: string, name: string}` |
+| EventFlow | `{qualified_name: string, name: string, canonical_key: string, event_name: string, channel_name: string, path: string}` |
+| SqlQuery | `{qualified_name: string, name: string, path: string, query_kind: string, fingerprint: string, query_intent: string, symbol_qn: string}` |
+| CypherQuery | `{qualified_name: string, name: string, path: string, query_kind: string, fingerprint: string, query_intent: string, symbol_qn: string}` |
+| QueryFingerprint | `{qualified_name: string, name: string, path: string, query_kind: string, fingerprint: string}` |
+| Queue | `{qualified_name: string, name: string, queue_name: string, engine: string, path: string}` |
+| DataStore | `{qualified_name: string, name: string, path: string, store_kind: string, table_name: string}` |
+| TransactionBoundary | `{qualified_name: string, name: string, symbol_qn: string, boundary_kind: string, mechanism: string, path: string}` |
+| SideEffect | `{qualified_name: string, name: string, symbol_qn: string, effect_kind: string, operation_name: string, order_index: int, path: string}` |
+| RuntimeArtifact | `{qualified_name: string, name: string, path: string, kind: string}` |
+| RuntimeEvent | `{qualified_name: string, name: string, kind: string, path: string, file_path: string, event_name: string, channel_name: string, stage: string}` |
+| ClientOperation | `{qualified_name: string, name: string, path: string, http_method: string, route_path: string, client_kind: string, governance_kind: string, operation_id: string}` |
+| TestSuite | `{qualified_name: string, name: string, path: string, framework: string, suite_kind: string}` |
+| TestCase | `{qualified_name: string, name: string, path: string, framework: string, case_kind: string, suite_qn: string}` |
+| EnvVar | `{qualified_name: string, name: string, path: string, source_kind: string, has_definition: bool, has_reader: bool}` |
+| FeatureFlag | `{qualified_name: string, name: string, path: string, source_kind: string, has_definition: bool, has_reader: bool, default_enabled: bool}` |
+| SecretRef | `{qualified_name: string, name: string, path: string, source_kind: string, has_definition: bool, has_reader: bool, masked: bool}` |
 | Hook | `{qualified_name: string, name: string, hook_name: string}` |
 | Import | `{qualified_name: string, name: string, import_source: string, imported_symbol: string, local_name: string, module_qn: string}` |
 | Component | `{qualified_name: string, name: string, framework: string, path: string, module_qn: string}` |
@@ -752,6 +773,7 @@ The knowledge graph uses the following node types and relationships:
 | DocChunk | `{qualified_name: string, title: string, topic: string, doc_version: string, status: string}` |
 | Concept | `{name: string}` |
 | Source | `{name: string}` |
+| GraphNodeLabel | `{qualified_name: string, name: string, path: string}` |
 | AnalysisReport | `{title: string, type: string, generated_at: string}` |
 | AnalysisMetric | `{name: string, value: float, unit: string}` |
 | AnalysisRun | `{timestamp: string, status: string, duration: float}` |
@@ -820,6 +842,51 @@ The knowledge graph uses the following node types and relationships:
 | Endpoint | ROUTES_TO_CONTROLLER | Class |
 | Endpoint | ROUTES_TO_ACTION | Function, Method, Class |
 | Module, Function, Method, Component | REQUESTS_ENDPOINT | Endpoint |
+| ClientOperation | REQUESTS_ENDPOINT | Endpoint |
+| Module, Function, Method, Component | USES_OPERATION | ClientOperation |
+| Project, RuntimeArtifact | CONTAINS | RuntimeArtifact, RuntimeEvent |
+| TestSuite | CONTAINS | TestCase |
+| Endpoint, Function, Method | USES_DEPENDENCY | DependencyProvider |
+| Endpoint, Function, Method | SECURED_BY | AuthPolicy |
+| AuthPolicy | REQUIRES_SCOPE | AuthScope |
+| Endpoint, Function, Method | ACCEPTS_CONTRACT | Contract |
+| Endpoint, Function, Method | RETURNS_CONTRACT | Contract |
+| Endpoint, Function, Method, Service | WRITES_OUTBOX | EventFlow |
+| Endpoint, Function, Method, Service | PUBLISHES_EVENT | EventFlow |
+| Function, Method, Service | CONSUMES_EVENT | EventFlow |
+| Function, Method, Service | REPLAYS_EVENT | EventFlow |
+| Function, Method, Service | WRITES_DLQ | Queue |
+| EventFlow | USES_HANDLER | Function, Method |
+| EventFlow, Service | USES_QUEUE | Queue |
+| Function, Method, Service | BEGINS_TRANSACTION | TransactionBoundary |
+| Function, Method, Service | COMMITS_TRANSACTION | TransactionBoundary |
+| Function, Method, Service | ROLLBACKS_TRANSACTION | TransactionBoundary |
+| Function, Method, Service | PERFORMS_SIDE_EFFECT | SideEffect |
+| SideEffect | WITHIN_TRANSACTION | TransactionBoundary |
+| SideEffect | BEFORE | SideEffect |
+| SideEffect | AFTER | SideEffect |
+| Module, Function, Method, Component | EXECUTES_SQL | SqlQuery |
+| Module, Function, Method, Component | EXECUTES_CYPHER | CypherQuery |
+| SqlQuery, CypherQuery | HAS_FINGERPRINT | QueryFingerprint |
+| SqlQuery | READS_TABLE | DataStore |
+| SqlQuery | WRITES_TABLE | DataStore |
+| SqlQuery | JOINS_TABLE | DataStore |
+| CypherQuery | READS_LABEL | GraphNodeLabel |
+| CypherQuery | WRITES_LABEL | GraphNodeLabel |
+| ClientOperation | GENERATED_FROM_SPEC | Endpoint |
+| ClientOperation | BYPASSES_MANIFEST | Endpoint |
+| TestCase | TESTS_SYMBOL | Module, Function, Method, Component |
+| TestCase | TESTS_ENDPOINT | Endpoint |
+| TestCase | ASSERTS_CONTRACT | Contract |
+| Module, Function, Method, Class, Component, Service, InfraResource | READS_ENV | EnvVar |
+| InfraResource | SETS_ENV | EnvVar |
+| Module, Function, Method, Class, Component, Service, InfraResource | USES_SECRET | SecretRef |
+| FeatureFlag | GATES_CODE_PATH | Module, Function, Method, Class, Component, Service |
+| RuntimeEvent | OBSERVED_IN_RUNTIME | Endpoint, DataStore, CacheStore, GraphQLOperation, EventFlow, Queue, Function, Method |
+| Endpoint, DataStore, CacheStore, GraphQLOperation, EventFlow, Queue, Function, Method | OBSERVED_IN_RUNTIME | RuntimeEvent |
+| RuntimeEvent | COVERS_MODULE | File |
+| RuntimeEvent | RAISES_EXCEPTION | Service |
+| Contract | DECLARES_FIELD | ContractField |
 | Module | EXPOSES_ENDPOINT | Endpoint |
 | Module | PREFIXES_ENDPOINT | Endpoint |
 | Project | HAS_METRIC | AnalysisMetric |
@@ -864,6 +931,181 @@ Configuration is managed through environment variables in `.env` file:
 - `MEMGRAPH_BATCH_SIZE`: Batch size for Memgraph operations (default: `1000`)
 - `TARGET_REPO_PATH`: Default repository path (default: `.`)
 - `LOCAL_MODEL_ENDPOINT`: Fallback endpoint for Ollama (default: `http://localhost:11434/v1`)
+- `CODEGRAPH_FASTAPI_SEMANTICS`: Enable FastAPI dependency/auth/response-contract semantic graph enrichment (default: `1`)
+- `CODEGRAPH_CONTRACT_SEMANTICS`: Enable Python contract definition and FastAPI request-contract graph enrichment (default: `1`)
+- `CODEGRAPH_EVENT_FLOW_SEMANTICS`: Enable Python event/outbox/DLQ/replay semantic graph enrichment (default: `1`)
+- `CODEGRAPH_QUERY_FINGERPRINT_SEMANTICS`: Enable SQL/Cypher query node, fingerprint, and read/write graph enrichment (default: `1`)
+- `CODEGRAPH_TRANSACTION_FLOW_SEMANTICS`: Enable Python transaction-boundary and side-effect-order semantic graph enrichment (default: `1`)
+- `CODEGRAPH_FRONTEND_OPERATION_SEMANTICS`: Enable frontend client-operation, operation-id, and raw bypass graph enrichment (default: `1`)
+- `CODEGRAPH_CONFIG_SEMANTICS`: Enable env/feature-flag/secret semantic graph enrichment plus infra-resource config projection (default: `1`)
+- `CODEGRAPH_TEST_SEMANTICS`: Enable static testcase/testsuite graph enrichment and semantic test-selection coverage edges (default: `1`)
+
+### Semantic Pass Registry
+
+Semantic post-passes now run through a central `SemanticPassRegistry` instead of being hard-coded one-by-one in the orchestrator.
+
+- Current deterministic order: `contract_semantics` -> `event_flow_semantics` -> `query_fingerprint_semantics` -> `transaction_flow_semantics` -> `frontend_operation_semantics` -> `config_semantics` -> `test_semantics`
+- Current env gates: `CODEGRAPH_CONTRACT_SEMANTICS`, `CODEGRAPH_EVENT_FLOW_SEMANTICS`, `CODEGRAPH_QUERY_FINGERPRINT_SEMANTICS`, `CODEGRAPH_TRANSACTION_FLOW_SEMANTICS`, `CODEGRAPH_FRONTEND_OPERATION_SEMANTICS`, `CODEGRAPH_CONFIG_SEMANTICS`, `CODEGRAPH_TEST_SEMANTICS`
+- Current validation surface: registration/env-flag/order tests plus semantic fixture regression packs
+
+See `docs/architecture/semantic-pass-registry.md` for the current order, rationale, and test surface.
+
+### FastAPI Semantic Graph
+
+CodeGraphRAG now emits first-wave FastAPI semantic nodes and edges for:
+
+- `Depends(...)` -> `DependencyProvider`
+- `Security(...)` -> `AuthPolicy` / `AuthScope`
+- `response_model=...` -> `Contract`
+- Python Pydantic / `@dataclass` / `TypedDict` definitions -> `Contract` / `ContractField`
+- request body model annotations -> `ACCEPTS_CONTRACT`
+- API semantic query presets for auth coverage, dependency visibility, contract gaps, and unprotected endpoints via `get_schema_overview(scope="api")`
+
+See `docs/architecture/fastapi-semantic-graph.md` for current scope, known limits, and graph examples.
+
+### Contract Semantic Graph
+
+CodeGraphRAG now also emits first-wave contract semantics across backend, frontend, and spec sources:
+
+- Python `BaseModel` / `@dataclass` / `TypedDict`
+- TypeScript `interface` and object-literal `type` aliases
+- Zod `z.object(...)`
+- OpenAPI `components.schemas`
+- FastAPI and OpenAPI request/response contract edges
+- TypeScript function request/response contract edges
+
+See `docs/architecture/contract-semantic-graph.md` for the supported source families, validation surface, and current limits.
+
+### Event Flow Semantic Graph
+
+CodeGraphRAG now also emits first-wave Python event-flow semantics for:
+
+- outbox writes
+- event publish calls
+- consumer handlers
+- replay handlers
+- primary queue and DLQ bindings
+- runtime event artifacts reconciled back to static event flow, queue, and handler nodes
+- multi-hop traversal across event flow, queue, handler, DLQ, and runtime observation edges
+- event reliability presets for outbox-without-transaction, consumer-without-dlq, replay paths, external-call-before-commit, and duplicate publishers
+
+See `docs/architecture/event-flow-semantic-graph.md` for the current scope, canonical identity model, validation surface, and known limits.
+
+### Transaction Semantic Graph
+
+CodeGraphRAG now also emits first-wave Python transaction semantics for:
+
+- explicit transaction begin / commit / rollback markers
+- transaction context-manager boundaries
+- side-effect nodes for db/cache/queue/outbox/http/graph/filesystem writes
+- lexical ordering edges between side effects inside the same transaction
+- multi-hop traversal across function, side effect, ordering, and transaction boundary nodes
+
+See `docs/architecture/transaction-semantic-graph.md` for the current scope, heuristics, validation surface, and known limits.
+
+### Query Fingerprint Semantic Graph
+
+CodeGraphRAG now also emits first-wave SQL/Cypher query semantics for:
+
+- `SqlQuery`, `CypherQuery`, and `QueryFingerprint` nodes
+- `EXECUTES_SQL` / `EXECUTES_CYPHER` source-to-query edges
+- `READS_TABLE`, `WRITES_TABLE`, `JOINS_TABLE`, `READS_LABEL`, and `WRITES_LABEL` target edges
+- deterministic literal normalization and fingerprint canonicalization
+- multi-hop traversal across source symbol -> query -> table/label paths
+
+See `docs/architecture/query-fingerprint-semantic-graph.md` for normalization rules, supported heuristics, and current limits.
+
+### Frontend Operation Semantic Graph
+
+CodeGraphRAG now also emits first-wave frontend request-governance semantics for:
+
+- `ClientOperation` nodes derived from generated client calls and raw request calls
+- `USES_OPERATION` source-to-operation edges
+- `REQUESTS_ENDPOINT`, `GENERATED_FROM_SPEC`, and `BYPASSES_MANIFEST` governance edges
+- OpenAPI `operationId` binding for generated/governed operations
+- schema overview presets for governed operations and raw bypass discovery
+
+See `docs/architecture/frontend-operation-semantic-graph.md` for supported client families, manifest matching rules, and known limits.
+
+### Test Semantic Graph
+
+CodeGraphRAG now also emits first-wave test coverage semantics for:
+
+- `TestSuite` and `TestCase` nodes for pytest/unittest and jest/vitest style test files
+- `TESTS_SYMBOL`, `TESTS_ENDPOINT`, and `ASSERTS_CONTRACT` coverage edges
+- bounded endpoint resolution so test endpoint calls can bind to existing backend `Endpoint` nodes when present
+- runtime `COVERS_MODULE` evidence coexisting with static test graph edges
+- schema overview presets for `untested_public_endpoints` and `contract_test_coverage`
+- MCP `test_bundle` / `test_generate` semantic-first selection with `semantic_candidate_testcases`, `semantic_gaps`, and runtime coverage context
+
+See `docs/architecture/test-semantic-graph.md` for supported framework families, query surface, and current limits.
+
+### Config Semantic Graph
+
+CodeGraphRAG now also emits first-wave control-plane config semantics for:
+
+- `.env`, Docker Compose, and Kubernetes env definitions
+- Python `os.getenv(...)`, `os.environ.get(...)`, `os.environ[...]`, and bounded settings-class field detection
+- TypeScript/JavaScript `process.env.FOO` and `process.env["FOO"]`
+- `EnvVar`, `FeatureFlag`, and `SecretRef` nodes with `READS_ENV`, `SETS_ENV`, `USES_SECRET`, and `GATES_CODE_PATH` edges
+- topology projection from `InfraResource.environment` payloads into canonical semantic env/secret nodes
+- secret-scan alignment where hardcoded secret findings keep only sanitized identifier/location metadata and never persist raw secret values
+- schema overview presets for `undefined_env_readers`, `unbound_secret_refs`, `orphan_secret_refs`, `orphan_feature_flags`, `resource_without_readers`, `reader_without_resource`, and `unused_feature_flags`
+
+See `docs/architecture/config-semantic-graph.md` for supported source families, redaction behavior, config-drift query workflows, and current limits.
+
+### Semantic Fixture Packs
+
+Semantic regression coverage now uses reusable fixture repositories under `codebase_rag/tests/integration/semantic_fixtures/`:
+
+- FastAPI auth + contract
+- event flow
+- runtime/static event reconciliation
+- transaction ordering
+- frontend generated-client vs raw fetch
+- query fingerprint read/write fixture
+- frontend operation-id and bypass fixture
+- testcase/runtime coverage coexist fixture
+- env/flag/secret control-plane source fixtures plus infra-resource projection, secret-scan alignment, and config-drift query smoke
+
+### Semantic Guardrails
+
+Semantic post-passes now ship with bounded guardrails for the highest-risk cardinality families:
+
+- query observations: per-symbol, per-file, and per-query target caps
+- event-flow observations: per-symbol and per-file caps
+- config/env observations: per-file definition caps plus per-source/per-file reader caps
+- transaction semantics: per-symbol/per-file boundary and side-effect caps
+- parse-time and RSS-growth budgets are regression-tested against a synthetic stress fixture
+
+See `codebase_rag/parsers/pipeline/semantic_guardrails.py` for the shipped thresholds.
+
+### Semantic Validation Matrix
+
+CodeGraphRAG now ships an executable validation matrix for semantic coverage:
+
+- canonical validation queries live in `build_semantic_validation_query_pack()`
+- fixture-to-capability mapping lives in `docs/architecture/semantic-validation-matrix.md`
+- CI runs explicit semantic acceptance tests before the broader integration suite
+
+See `docs/architecture/semantic-validation-matrix.md` for the current fixture/query mapping.
+
+### Semantic Schema Versioning
+
+CodeGraphRAG now exposes semantic schema metadata through `get_schema_overview(...).semantic_schema`.
+
+- current semantic schema version: `1.0.0`
+- signal planes are explicitly separated into `static`, `runtime`, and `heuristic`
+- compatibility guidance and version bump rules live alongside the semantic docs
+
+See `docs/architecture/semantic-schema-versioning.md` for versioning policy and capability indexing.
+
+### Semantic Release Closure
+
+The shipped semantic capability set, release gates, and known limits are documented in a
+dedicated closure note.
+
+See `docs/architecture/semantic-release-closure.md` for the current release closure checklist.
 
 ### Custom Ignore Patterns
 

@@ -19,3 +19,16 @@ def test_scan_text_detects_xss_pattern() -> None:
     findings = scanner.scan_text(text, "sample.js")
 
     assert any(finding.pattern.startswith("xss_") for finding in findings)
+
+
+def test_scan_secret_text_reports_identifier_without_raw_secret_value() -> None:
+    scanner = SecurityScanner()
+    text = 'APP_SECRET="super-secret-value"\n'
+
+    findings = scanner.scan_secret_text(text, "sample.env")
+
+    assert findings
+    payload = findings[0].to_payload()
+    assert payload["secret_name"] == "APP_SECRET"
+    assert payload["masked"] is True
+    assert "super-secret-value" not in str(payload)

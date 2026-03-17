@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 SECRET_KEYWORDS = [
     "password",
     "passwd",
@@ -44,14 +46,19 @@ SECRET_KEYWORDS = [
 HARDCODED_SECRET_PATTERNS: list[tuple[str, str]] = []
 
 for keyword in SECRET_KEYWORDS:
+    escaped_keyword = re.escape(keyword)
+    identifier = rf"[A-Za-z_][A-Za-z0-9_]*{escaped_keyword}[A-Za-z0-9_]*"
     HARDCODED_SECRET_PATTERNS.append(
-        (f"secret_assign_{keyword}", rf"{keyword}\s*[:=]\s*['\"][^'\"]{{6,}}['\"]")
+        (
+            f"secret_assign_{keyword}",
+            rf"{identifier}\s*[:=]\s*(?:['\"][^'\"]{{6,}}['\"]|(?![\$\{{])[^\s#]{{6,}})",
+        )
     )
     HARDCODED_SECRET_PATTERNS.append(
-        (f"secret_env_{keyword}", rf"{keyword}\s*[:=]\s*os\.environ")
+        (f"secret_env_{keyword}", rf"{identifier}\s*[:=]\s*os\.environ")
     )
     HARDCODED_SECRET_PATTERNS.append(
-        (f"secret_config_{keyword}", rf"{keyword}\s*[:=]\s*config")
+        (f"secret_config_{keyword}", rf"{identifier}\s*[:=]\s*config")
     )
 
 HARDCODED_SECRET_PATTERNS.extend(

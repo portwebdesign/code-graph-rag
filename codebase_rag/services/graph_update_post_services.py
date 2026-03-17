@@ -27,6 +27,10 @@ from codebase_rag.infrastructure.language_spec import LANGUAGE_FQN_SPECS
 from codebase_rag.parsers.core.incremental_cache import GitDeltaCache
 from codebase_rag.parsers.core.pre_scanner import PreScanIndex, PreScanner
 from codebase_rag.parsers.pipeline.cross_file_resolver import CrossFileResolver
+from codebase_rag.parsers.pipeline.semantic_pass_registry import (
+    SemanticPassContext,
+    SemanticPassRegistry,
+)
 from codebase_rag.parsers.query.declarative_parser import DeclarativeParser
 from codebase_rag.services.runtime_evidence import RuntimeEvidenceIngestor
 from codebase_rag.services.topology_graph_enricher import TopologyGraphEnricher
@@ -73,6 +77,14 @@ class ResolverPassService:
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.pre_scan_index = pre_scan_index
+        self.semantic_pass_registry = SemanticPassRegistry(
+            SemanticPassContext(
+                ingestor=ingestor,
+                repo_path=repo_path,
+                project_name=project_name,
+                function_registry=function_registry,
+            )
+        )
 
     def process_framework_links(self, simple_name_lookup) -> None:
         """Processes and links framework-specific entities like API endpoints."""
@@ -104,6 +116,16 @@ class ResolverPassService:
             ).process_ast_cache(ast_cache.items())
         except Exception as exc:
             logger.warning("Tailwind usage processor failed: {}", exc)
+
+    def process_semantic_passes(self, ast_cache: AstCacheProtocol) -> None:
+        """Runs registered semantic passes in deterministic order."""
+        try:
+            ast_cache_items = tuple(ast_cache.items())
+            for definition in self.semantic_pass_registry.enabled_definitions():
+                logger.info("Running {} pass", definition.display_name)
+            self.semantic_pass_registry.run_enabled(ast_cache_items)
+        except Exception as exc:
+            logger.warning("Semantic pass registry failed: {}", exc)
 
     def process_function_calls(
         self,

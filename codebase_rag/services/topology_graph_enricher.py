@@ -6,7 +6,23 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from codebase_rag.core import constants as cs
+from codebase_rag.core.config_semantic_identity import (
+    build_env_var_qn,
+    build_feature_flag_qn,
+    build_secret_ref_qn,
+    is_feature_flag_name,
+    is_secret_like_name,
+    parse_env_truthiness,
+    redact_secret_value,
+)
 from codebase_rag.parsers.config.config_parser import ConfigParserMixin
+from codebase_rag.parsers.pipeline.config_semantics import (
+    extract_kubernetes_env_bindings,
+)
+from codebase_rag.parsers.pipeline.semantic_metadata import build_semantic_metadata
+from codebase_rag.parsers.pipeline.semantic_pass_registry import (
+    is_semantic_pass_enabled,
+)
 
 
 class TopologyGraphIngestorProtocol(Protocol):
@@ -70,6 +86,9 @@ class TopologyGraphEnricher(ConfigParserMixin):
         self.repo_path = repo_path.resolve()
         self.project_name = project_name
         self.ingestor = ingestor
+        self.config_semantics_enabled = is_semantic_pass_enabled(
+            "CODEGRAPH_CONFIG_SEMANTICS"
+        )
 
     def enrich(self) -> dict[str, object]:
         if not all(
@@ -125,6 +144,7 @@ class TopologyGraphEnricher(ConfigParserMixin):
                     resource_qn,
                 ),
             )
+            self._project_resource_config_edges(resource)
 
         for store in datastores:
             store_qn = str(store.get("qualified_name", "")).strip()
@@ -397,6 +417,7 @@ class TopologyGraphEnricher(ConfigParserMixin):
                 continue
             try:
                 parsed = self.parse_config_file(str(file_path))
+                source = file_path.read_text(encoding="utf-8", errors="ignore")
             except Exception:
                 continue
 
@@ -404,9 +425,32 @@ class TopologyGraphEnricher(ConfigParserMixin):
                 services = parsed.get("services", [])
                 if isinstance(services, list):
                     for item in services:
-                        service_name = str(
-                            getattr(item, "name", "") or item.get("name", "")
-                        ).strip()
+                        item_name = (
+                            item.get("name", "")
+                            if isinstance(item, dict)
+                            else getattr(item, "name", "")
+                        )
+                        item_image = (
+                            item.get("image", "")
+                            if isinstance(item, dict)
+                            else getattr(item, "image", "")
+                        )
+                        item_build = (
+                            item.get("build", "")
+                            if isinstance(item, dict)
+                            else getattr(item, "build", "")
+                        )
+                        item_environment = (
+                            item.get("environment", {})
+                            if isinstance(item, dict)
+                            else getattr(item, "environment", {})
+                        )
+                        item_depends_on = (
+                            item.get("depends_on", [])
+                            if isinstance(item, dict)
+                            else getattr(item, "depends_on", [])
+                        )
+                        service_name = str(item_name).strip()
                         if not service_name:
                             continue
                         resources.append(
@@ -418,26 +462,20 @@ class TopologyGraphEnricher(ConfigParserMixin):
                                 "service_name": service_name,
                                 "kind": "docker-compose",
                                 "path": relative,
-                                "image": str(
-                                    getattr(item, "image", "") or item.get("image", "")
-                                ).strip(),
-                                "build": str(
-                                    getattr(item, "build", "") or item.get("build", "")
-                                ).strip(),
-                                "environment": (
-                                    getattr(item, "environment", {})
-                                    if not isinstance(item, dict)
-                                    else item.get("environment", {})
+                                "image": str(item_image).strip(),
+                                "build": str(item_build).strip(),
+                                "environment": self._sanitize_environment(
+                                    item_environment
                                 ),
-                                "depends_on": (
-                                    getattr(item, "depends_on", [])
-                                    if not isinstance(item, dict)
-                                    else item.get("depends_on", [])
+                                "depends_on": item_depends_on,
+                                "secret_refs": self._extract_secret_refs(
+                                    item_environment
                                 ),
                             }
                         )
             elif config_type == "kubernetes":
                 k8s_resources = parsed.get("resources", [])
+                env_bindings = extract_kubernetes_env_bindings(source)
                 if isinstance(k8s_resources, list):
                     for item in k8s_resources:
                         kind = str(
@@ -452,6 +490,12 @@ class TopologyGraphEnricher(ConfigParserMixin):
                         ).strip()
                         if not kind or not name:
                             continue
+                        resource_bindings = [
+                            binding
+                            for binding in env_bindings
+                            if binding.resource_kind == kind
+                            and binding.resource_name == name
+                        ]
                         resources.append(
                             {
                                 "qualified_name": self._infra_qn(
@@ -461,6 +505,25 @@ class TopologyGraphEnricher(ConfigParserMixin):
                                 "service_name": name,
                                 "kind": "kubernetes",
                                 "path": relative,
+                                "environment": {
+                                    binding.env_name: (
+                                        redact_secret_value(binding.literal_value)
+                                        if is_secret_like_name(binding.env_name)
+                                        else str(binding.literal_value or "")
+                                    )
+                                    for binding in resource_bindings
+                                },
+                                "secret_refs": [
+                                    {
+                                        "env_name": binding.env_name,
+                                        "secret_name": binding.secret_name
+                                        or binding.env_name,
+                                        "secret_key": binding.secret_key or "",
+                                    }
+                                    for binding in resource_bindings
+                                    if binding.secret_name
+                                    or is_secret_like_name(binding.env_name)
+                                ],
                             }
                         )
         return resources
@@ -724,6 +787,202 @@ class TopologyGraphEnricher(ConfigParserMixin):
         if lowered in {"worker", "jobs", "queue"}:
             return "worker"
         return "backend"
+
+    def _project_resource_config_edges(self, resource: dict[str, object]) -> None:
+        ingestor = self._ingestor_api()
+        if ingestor is None or not self.config_semantics_enabled:
+            return
+        resource_qn = str(resource.get("qualified_name", "")).strip()
+        resource_path = str(resource.get("path", "")).strip()
+        if not resource_qn:
+            return
+
+        environment = resource.get("environment", {})
+        if isinstance(environment, dict):
+            for env_name, raw_value in environment.items():
+                normalized_name = str(env_name).strip()
+                if not normalized_name:
+                    continue
+                env_qn = build_env_var_qn(self.project_name, normalized_name)
+                env_payload = {
+                    cs.KEY_QUALIFIED_NAME: env_qn,
+                    cs.KEY_NAME: normalized_name,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    "source_kind": "infra_resource",
+                    "has_definition": True,
+                }
+                env_payload.update(
+                    self._config_semantic_metadata(
+                        evidence_kind="infra_env_projection",
+                        path=resource_path,
+                        extra={
+                            "is_secret_like": is_secret_like_name(normalized_name),
+                            "is_feature_flag": is_feature_flag_name(normalized_name),
+                        },
+                    )
+                )
+                ingestor.ensure_node_batch(cs.NodeLabel.ENV_VAR, env_payload)
+                ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.INFRA_RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
+                    cs.RelationshipType.SETS_ENV,
+                    (cs.NodeLabel.ENV_VAR, cs.KEY_QUALIFIED_NAME, env_qn),
+                    self._config_semantic_metadata(
+                        evidence_kind="infra_env_projection",
+                        path=resource_path,
+                        extra={"source": "topology_config_projection"},
+                    ),
+                )
+
+                if is_feature_flag_name(normalized_name):
+                    feature_payload = {
+                        cs.KEY_QUALIFIED_NAME: build_feature_flag_qn(
+                            self.project_name, normalized_name
+                        ),
+                        cs.KEY_NAME: normalized_name,
+                        cs.KEY_PROJECT_NAME: self.project_name,
+                        "source_kind": "infra_resource",
+                        "has_definition": True,
+                    }
+                    default_enabled = parse_env_truthiness(raw_value)
+                    if default_enabled is not None:
+                        feature_payload["default_enabled"] = default_enabled
+                    feature_payload.update(
+                        self._config_semantic_metadata(
+                            evidence_kind="infra_feature_flag_projection",
+                            path=resource_path,
+                        )
+                    )
+                    ingestor.ensure_node_batch(
+                        cs.NodeLabel.FEATURE_FLAG,
+                        feature_payload,
+                    )
+
+                if is_secret_like_name(normalized_name):
+                    ingestor.ensure_node_batch(
+                        cs.NodeLabel.SECRET_REF,
+                        {
+                            cs.KEY_QUALIFIED_NAME: build_secret_ref_qn(
+                                self.project_name, normalized_name
+                            ),
+                            cs.KEY_NAME: normalized_name,
+                            cs.KEY_PROJECT_NAME: self.project_name,
+                            "source_kind": "infra_resource",
+                            "has_definition": True,
+                            "masked": True,
+                            **self._config_semantic_metadata(
+                                evidence_kind="infra_secret_projection",
+                                path=resource_path,
+                            ),
+                        },
+                    )
+
+        secret_refs = resource.get("secret_refs", [])
+        if not isinstance(secret_refs, list):
+            return
+        for secret_ref in secret_refs:
+            if not isinstance(secret_ref, dict):
+                continue
+            secret_ref_dict = cast(dict[str, object], secret_ref)
+            env_name = str(secret_ref_dict.get("env_name", "")).strip()
+            secret_name = (
+                str(secret_ref_dict.get("secret_name", "")).strip() or env_name
+            )
+            if not env_name or not secret_name:
+                continue
+            env_qn = build_env_var_qn(self.project_name, env_name)
+            secret_qn = build_secret_ref_qn(self.project_name, secret_name)
+            ingestor.ensure_node_batch(
+                cs.NodeLabel.ENV_VAR,
+                {
+                    cs.KEY_QUALIFIED_NAME: env_qn,
+                    cs.KEY_NAME: env_name,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    "source_kind": "infra_resource",
+                    "has_definition": True,
+                    **self._config_semantic_metadata(
+                        evidence_kind="infra_secret_env_projection",
+                        path=resource_path,
+                        extra={"is_secret_like": True},
+                    ),
+                },
+            )
+            ingestor.ensure_node_batch(
+                cs.NodeLabel.SECRET_REF,
+                {
+                    cs.KEY_QUALIFIED_NAME: secret_qn,
+                    cs.KEY_NAME: secret_name,
+                    cs.KEY_PROJECT_NAME: self.project_name,
+                    "source_kind": "infra_resource",
+                    "has_definition": True,
+                    "masked": True,
+                    "secret_key": str(secret_ref_dict.get("secret_key", "")).strip(),
+                    **self._config_semantic_metadata(
+                        evidence_kind="infra_secret_projection",
+                        path=resource_path,
+                    ),
+                },
+            )
+            ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.INFRA_RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
+                cs.RelationshipType.USES_SECRET,
+                (cs.NodeLabel.SECRET_REF, cs.KEY_QUALIFIED_NAME, secret_qn),
+                self._config_semantic_metadata(
+                    evidence_kind="infra_secret_projection",
+                    path=resource_path,
+                    extra={
+                        "env_name": env_name,
+                        "source": "topology_config_projection",
+                    },
+                ),
+            )
+            ingestor.ensure_relationship_batch(
+                (cs.NodeLabel.INFRA_RESOURCE, cs.KEY_QUALIFIED_NAME, resource_qn),
+                cs.RelationshipType.SETS_ENV,
+                (cs.NodeLabel.ENV_VAR, cs.KEY_QUALIFIED_NAME, env_qn),
+                self._config_semantic_metadata(
+                    evidence_kind="infra_secret_env_projection",
+                    path=resource_path,
+                    extra={"source": "topology_secret_env_projection"},
+                ),
+            )
+
+    def _sanitize_environment(self, env: object) -> dict[str, str]:
+        flattened = self._flatten_env(env if isinstance(env, dict | list) else {})
+        sanitized: dict[str, str] = {}
+        for env_name, value in flattened.items():
+            sanitized[env_name] = (
+                redact_secret_value(value)
+                if is_secret_like_name(env_name)
+                else str(value)
+            )
+        return sanitized
+
+    def _extract_secret_refs(self, env: object) -> list[dict[str, str]]:
+        flattened = self._flatten_env(env if isinstance(env, dict | list) else {})
+        return [
+            {
+                "env_name": str(env_name),
+                "secret_name": str(env_name),
+                "secret_key": "",
+            }
+            for env_name in flattened
+            if is_secret_like_name(str(env_name))
+        ]
+
+    def _config_semantic_metadata(
+        self,
+        *,
+        evidence_kind: str,
+        path: str,
+        extra: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        return build_semantic_metadata(
+            source_parser="topology_graph_enricher",
+            evidence_kind=evidence_kind,
+            file_path=path,
+            confidence=0.84,
+            extra=extra,
+        )
 
     def _ingestor_api(self) -> TopologyGraphIngestorProtocol | None:
         required = ("ensure_node_batch", "ensure_relationship_batch", "fetch_all")

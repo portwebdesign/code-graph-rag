@@ -27,7 +27,7 @@ class SecurityMixin:
         output_dir.mkdir(parents=True, exist_ok=True)
         report_path = output_dir / "security_report.json"
         report_path.write_text(
-            json.dumps([finding.__dict__ for finding in findings], indent=2),
+            json.dumps([finding.to_payload() for finding in findings], indent=2),
             encoding="utf-8",
         )
         return {"findings": len(findings)}

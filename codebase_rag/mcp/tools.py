@@ -27,6 +27,7 @@ from codebase_rag.analysis.analysis_runner import AnalysisRunner
 from codebase_rag.core import constants as cs
 from codebase_rag.core import logs as lg
 from codebase_rag.core.config import settings
+from codebase_rag.core.semantic_schema_metadata import build_semantic_schema_metadata
 from codebase_rag.data_models.models import ToolMetadata
 from codebase_rag.data_models.types_defs import (
     CodeSnippetResultDict,
@@ -40,6 +41,7 @@ from codebase_rag.data_models.types_defs import (
     MCPInputSchema,
     MCPInputSchemaProperty,
     MCPToolSchema,
+    PropertyValue,
     QueryResultDict,
     ResultRow,
 )
@@ -47,7 +49,12 @@ from codebase_rag.exporters.mermaid_exporter import MermaidExporter
 from codebase_rag.graph_db.cypher_queries import (
     CYPHER_GET_LATEST_ANALYSIS_REPORT,
     CYPHER_GET_LATEST_METRIC,
+    build_config_runtime_query_pack,
     build_context_nodes_query,
+    build_event_reliability_query_pack,
+    build_frontend_operation_query_pack,
+    build_semantic_auth_contract_query_pack,
+    build_test_semantics_query_pack,
 )
 from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure import tool_errors as te
@@ -440,7 +447,22 @@ class MCPMemoryStore:
 
 
 class MCPImpactGraphService:
-    _IMPACT_REL_TYPES = "CALLS|IMPORTS|INHERITS|USES"
+    _IMPACT_REL_TYPES = (
+        "CALLS|IMPORTS|INHERITS|USES|HAS_ENDPOINT|REQUESTS_ENDPOINT|"
+        "USES_OPERATION|"
+        "USES_DEPENDENCY|SECURED_BY|REQUIRES_SCOPE|"
+        "ACCEPTS_CONTRACT|RETURNS_CONTRACT|DECLARES_FIELD|"
+        "READS_ENV|SETS_ENV|USES_SECRET|GATES_CODE_PATH|"
+        "TESTS_SYMBOL|TESTS_ENDPOINT|ASSERTS_CONTRACT|"
+        "WRITES_OUTBOX|PUBLISHES_EVENT|CONSUMES_EVENT|"
+        "WRITES_DLQ|REPLAYS_EVENT|USES_QUEUE|USES_HANDLER|"
+        "BEGINS_TRANSACTION|COMMITS_TRANSACTION|ROLLBACKS_TRANSACTION|"
+        "PERFORMS_SIDE_EFFECT|WITHIN_TRANSACTION|BEFORE|AFTER|"
+        "EXECUTES_SQL|EXECUTES_CYPHER|HAS_FINGERPRINT|"
+        "READS_TABLE|WRITES_TABLE|READS_LABEL|WRITES_LABEL|JOINS_TABLE|"
+        "GENERATED_FROM_SPEC|BYPASSES_MANIFEST|"
+        "OBSERVED_IN_RUNTIME"
+    )
 
     def __init__(self, ingestor: MemgraphIngestor) -> None:
         self._ingestor = ingestor
@@ -3098,6 +3120,11 @@ class MCPToolsRegistry:
                     "Service",
                     "DataStore",
                     "GraphQLOperation",
+                    "Contract",
+                    "ContractField",
+                    "DependencyProvider",
+                    "AuthPolicy",
+                    "AuthScope",
                 },
                 "keywords": (
                     "HAS_ENDPOINT",
@@ -3106,8 +3133,17 @@ class MCPToolsRegistry:
                     "REQUESTS_ENDPOINT",
                     "USES_SERVICE",
                     "PROVIDES_SERVICE",
+                    "USES_DEPENDENCY",
+                    "SECURED_BY",
+                    "REQUIRES_SCOPE",
+                    "ACCEPTS_CONTRACT",
+                    "RETURNS_CONTRACT",
+                    "DECLARES_FIELD",
                 ),
-                "summary": "API-focused schema bootstrap.",
+                "summary": (
+                    "API-focused schema bootstrap including endpoint auth, "
+                    "dependency injection, and contract graph semantics."
+                ),
             },
             "impact": {
                 "labels": {
@@ -3446,6 +3482,71 @@ class MCPToolsRegistry:
             },
         ]
 
+    @staticmethod
+    def _semantic_cypher_presets(project_name: str) -> list[dict[str, object]]:
+        presets: list[dict[str, object]] = []
+        for item in build_semantic_auth_contract_query_pack():
+            presets.append(
+                {
+                    "name": item["name"],
+                    "summary": item["summary"],
+                    "intent_examples": [
+                        f"Run semantic auth/contract coverage query '{item['name']}' for {project_name}",
+                        f"Inspect {item['name']} in {project_name}",
+                    ],
+                    "query": item["cypher"],
+                }
+            )
+        for item in build_test_semantics_query_pack():
+            presets.append(
+                {
+                    "name": item["name"],
+                    "summary": item["summary"],
+                    "intent_examples": [
+                        f"Run semantic test-coverage query '{item['name']}' for {project_name}",
+                        f"Inspect {item['name']} in {project_name}",
+                    ],
+                    "query": item["cypher"],
+                }
+            )
+        for item in build_event_reliability_query_pack():
+            presets.append(
+                {
+                    "name": item["name"],
+                    "summary": item["summary"],
+                    "intent_examples": [
+                        f"Run event reliability query '{item['name']}' for {project_name}",
+                        f"Inspect {item['name']} in {project_name}",
+                    ],
+                    "query": item["cypher"],
+                }
+            )
+        for item in build_frontend_operation_query_pack():
+            presets.append(
+                {
+                    "name": item["name"],
+                    "summary": item["summary"],
+                    "intent_examples": [
+                        f"Run frontend operation query '{item['name']}' for {project_name}",
+                        f"Inspect {item['name']} in {project_name}",
+                    ],
+                    "query": item["cypher"],
+                }
+            )
+        for item in build_config_runtime_query_pack():
+            presets.append(
+                {
+                    "name": item["name"],
+                    "summary": item["summary"],
+                    "intent_examples": [
+                        f"Run config/runtime query '{item['name']}' for {project_name}",
+                        f"Inspect {item['name']} in {project_name}",
+                    ],
+                    "query": item["cypher"],
+                }
+            )
+        return presets
+
     def _build_schema_overview_next_calls(
         self,
         *,
@@ -3493,6 +3594,106 @@ class MCPToolsRegistry:
                 ]
             )
         _ = frontend_section
+        if scope == "api":
+            return self._normalize_exact_next_calls(
+                [
+                    {
+                        "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                        "args": {
+                            "natural_language_query": (
+                                f"Find API endpoints in {project_name} that are missing auth coverage or request/response contracts"
+                            ),
+                            "output_format": "json",
+                        },
+                        "priority": 1,
+                        "when": "use API schema bootstrap to inspect auth and contract gaps first",
+                        "copy_paste": (
+                            "query_code_graph("
+                            f'natural_language_query="Find API endpoints in {project_name} that are missing auth coverage or request/response contracts", '
+                            'output_format="json")'
+                        ),
+                        "why": "convert_api_semantic_bootstrap_into_auth_and_contract_evidence",
+                    },
+                    {
+                        "tool": cs.MCPToolName.RUN_CYPHER,
+                        "args": {
+                            "cypher": (
+                                "MATCH (e:Endpoint {project_name: $project_name}) "
+                                "OPTIONAL MATCH (e)-[:SECURED_BY]->(p:AuthPolicy) "
+                                "WITH e, collect(DISTINCT p.name) AS auth_policies "
+                                "WHERE auth_policies = [] "
+                                "RETURN coalesce(e.route_path, e.route, e.name) AS endpoint, "
+                                "coalesce(e.http_method, e.method, 'ANY') AS method "
+                                "ORDER BY endpoint LIMIT 120"
+                            ),
+                            "advanced_mode": True,
+                        },
+                        "priority": 2,
+                        "when": "raw Cypher is needed for exact unprotected-endpoint enumeration",
+                        "copy_paste": (
+                            "run_cypher("
+                            "cypher=\"MATCH (e:Endpoint {project_name: $project_name}) OPTIONAL MATCH (e)-[:SECURED_BY]->(p:AuthPolicy) WITH e, collect(DISTINCT p.name) AS auth_policies WHERE auth_policies = [] RETURN coalesce(e.route_path, e.route, e.name) AS endpoint, coalesce(e.http_method, e.method, 'ANY') AS method ORDER BY endpoint LIMIT 120\", "
+                            "advanced_mode=true)"
+                        ),
+                        "why": "enumerate_unprotected_endpoints_with_semantic_edges",
+                    },
+                    {
+                        "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                        "args": {
+                            "natural_language_query": (
+                                f"Trace config drift in {project_name} across infra resources, env readers, feature flags, and secret refs"
+                            ),
+                            "output_format": "json",
+                        },
+                        "priority": 3,
+                        "when": "after auth gaps, inspect config/runtime drift between infra projections and code readers",
+                        "copy_paste": (
+                            "query_code_graph("
+                            f'natural_language_query="Trace config drift in {project_name} across infra resources, env readers, feature flags, and secret refs", '
+                            'output_format="json")'
+                        ),
+                        "why": "convert_config_runtime_semantics_into_drift_evidence",
+                    },
+                    {
+                        "tool": cs.MCPToolName.RUN_CYPHER,
+                        "args": {
+                            "cypher": (
+                                "MATCH (resource:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env:EnvVar {project_name: $project_name}) "
+                                "OPTIONAL MATCH (reader {project_name: $project_name})-[:READS_ENV]->(env) "
+                                "RETURN resource.qualified_name AS resource_qn, env.name AS env_name, "
+                                "collect(DISTINCT reader.qualified_name)[0..10] AS reader_qns "
+                                "ORDER BY size(reader_qns), resource_qn, env_name LIMIT 120"
+                            ),
+                            "advanced_mode": True,
+                        },
+                        "priority": 4,
+                        "when": "raw Cypher is needed to verify infra-resource to env-reader coverage and drift hotspots",
+                        "copy_paste": (
+                            "run_cypher("
+                            'cypher="MATCH (resource:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env:EnvVar {project_name: $project_name}) OPTIONAL MATCH (reader {project_name: $project_name})-[:READS_ENV]->(env) RETURN resource.qualified_name AS resource_qn, env.name AS env_name, collect(DISTINCT reader.qualified_name)[0..10] AS reader_qns ORDER BY size(reader_qns), resource_qn, env_name LIMIT 120", '
+                            "advanced_mode=true)"
+                        ),
+                        "why": "enumerate_config_drift_between_resource_projection_and_code_reads",
+                    },
+                    {
+                        "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                        "args": {
+                            "natural_language_query": (
+                                f"Find event pipelines in {project_name} that publish without transaction safety or consumer DLQ coverage"
+                            ),
+                            "output_format": "json",
+                        },
+                        "priority": 5,
+                        "when": "after auth and config drift checks, inspect event reliability and transaction safety semantics",
+                        "copy_paste": (
+                            "query_code_graph("
+                            f'natural_language_query="Find event pipelines in {project_name} that publish without transaction safety or consumer DLQ coverage", '
+                            'output_format="json")'
+                        ),
+                        "why": "convert_event_and_transaction_semantics_into_reliability_evidence",
+                    },
+                ]
+            )
         return self._normalize_exact_next_calls(
             [
                 {
@@ -4181,7 +4382,7 @@ class MCPToolsRegistry:
                 "query_code_graph",
                 "get_schema_overview(optional compact bootstrap)",
                 "plan_task(optional advisory for multi-step or backlog-driven work)",
-                "run_cypher(available immediately after select_active_project; query_code_graph remains the preferred first step)",
+                "run_cypher(after query_code_graph by default; advanced_mode only for expert traversal control)",
                 "read_file(only with graph query digest id)",
             ],
             "mandatory_startup_sequence": [
@@ -4911,6 +5112,8 @@ class MCPToolsRegistry:
             "important_labels": important_labels,
             "frontend_schema": frontend_section,
             "frontend_cypher_presets": self._frontend_cypher_presets(project_name),
+            "semantic_cypher_presets": self._semantic_cypher_presets(project_name),
+            "semantic_schema": build_semantic_schema_metadata(),
             "schema_context": schema_context,
             "schema_bootstrap_summary": summary_text,
             "exact_next_calls": exact_next_calls,
@@ -8326,21 +8529,41 @@ class MCPToolsRegistry:
         ):
             flow_advisory = {
                 "message": (
-                    "query_code_graph is the preferred first step for discovery, but run_cypher remains available for expert traversal control in this session."
+                    "query_code_graph is the default first step for discovery; use advanced_mode only when expert traversal control is explicitly intended."
                 ),
                 "recommended_flow": [
                     "select_active_project",
                     "query_code_graph",
                     "run_cypher",
                 ],
-                **self._build_policy_guidance_payload(
-                    policy_error="run_cypher_advanced_mode_required",
+            }
+            policy_error = "run_cypher_advanced_mode_required"
+            self._record_tool_usefulness(
+                cs.MCPToolName.RUN_CYPHER,
+                success=False,
+                usefulness_score=0.0,
+            )
+            response: dict[str, object] = {
+                "error": policy_error,
+                "results": [],
+                "flow_advisory": flow_advisory,
+            }
+            if normalization_notes:
+                response["scope_normalization"] = {
+                    "applied": normalization_notes,
+                    "query_used": normalized_cypher,
+                    "params_used": normalized_params,
+                }
+            response.update(
+                self._build_policy_guidance_payload(
+                    policy_error=policy_error,
                     cypher_query=normalized_cypher,
                     parsed_params=normalized_params,
                     write=write,
                     advanced_mode=advanced_mode,
-                ),
-            }
+                )
+            )
+            return response
 
         try:
             if write:
@@ -8942,6 +9165,7 @@ class MCPToolsRegistry:
             file_path=file_path,
             session_state=self._session_state,
         )
+        bundle["test_selection"] = self._build_test_selection_bundle()
         self._session_state["last_test_bundle"] = bundle
         bundle["ui_summary"] = str(bundle.get("summary", "")).strip()
         return bundle
@@ -9098,9 +9322,13 @@ class MCPToolsRegistry:
         selection_lines = [
             "Impact-aware test selection:",
             f"- Strategy: {test_selection.get('selection_strategy', 'goal-only')}",
+            f"- Selection mode: {test_selection.get('selection_mode', 'goal-only')}",
             f"- Impacted files: {test_selection.get('impacted_files', [])}",
             f"- Impacted symbols: {test_selection.get('impacted_symbols', [])}",
             f"- Candidate existing tests: {test_selection.get('candidate_existing_tests', [])}",
+            f"- Semantic candidate testcases: {test_selection.get('semantic_candidate_testcases', [])}",
+            f"- Semantic gaps: {test_selection.get('semantic_gaps', [])}",
+            f"- Runtime coverage matches: {test_selection.get('runtime_coverage_matches', [])}",
             f"- New test file hints: {test_selection.get('new_test_file_hints', [])}",
         ]
         prompt = goal if context is None else f"{goal}\nContext: {context}"
@@ -10611,11 +10839,432 @@ LIMIT $limit
                     return candidates
         return candidates
 
+    def _graph_fetch_all(
+        self,
+        query: str,
+        params: dict[str, PropertyValue],
+    ) -> list[dict[str, object]]:
+        try:
+            rows = self.ingestor.fetch_all(query, params)
+        except Exception:
+            return []
+        if not isinstance(rows, list):
+            return []
+        return [cast(dict[str, object], row) for row in rows if isinstance(row, dict)]
+
+    def _query_impacted_test_targets(
+        self,
+        *,
+        project_name: str,
+        impacted_files: list[str],
+        impacted_symbols: list[str],
+    ) -> dict[str, list[dict[str, str]]]:
+        if not impacted_files and not impacted_symbols:
+            return {"symbols": [], "endpoints": [], "contracts": []}
+
+        rows = self._graph_fetch_all(
+            """
+MATCH (n {project_name: $project_name})
+WHERE (
+    (size($impacted_symbols) > 0 AND coalesce(n.qualified_name, '') IN $impacted_symbols)
+    OR (
+        size($impacted_files) > 0
+        AND (
+            coalesce(n.path, '') IN $impacted_files
+            OR coalesce(n.file_path, '') IN $impacted_files
+        )
+    )
+)
+RETURN DISTINCT
+    labels(n) AS labels,
+    coalesce(n.qualified_name, '') AS qualified_name,
+    coalesce(n.name, '') AS name,
+    coalesce(n.path, n.file_path, '') AS path,
+    coalesce(n.http_method, '') AS http_method,
+    coalesce(n.route_path, '') AS route_path
+LIMIT 200
+""",
+            {
+                "project_name": project_name,
+                "impacted_files": impacted_files,
+                "impacted_symbols": impacted_symbols,
+            },
+        )
+
+        endpoint_label = str(cs.NodeLabel.ENDPOINT)
+        contract_label = str(cs.NodeLabel.CONTRACT)
+        symbol_labels = {
+            str(cs.NodeLabel.FUNCTION),
+            str(cs.NodeLabel.METHOD),
+            str(cs.NodeLabel.SERVICE),
+            str(cs.NodeLabel.MODULE),
+            str(cs.NodeLabel.COMPONENT),
+            str(cs.NodeLabel.CLASS),
+        }
+        targets: dict[str, list[dict[str, str]]] = {
+            "symbols": [],
+            "endpoints": [],
+            "contracts": [],
+        }
+        seen: dict[str, set[str]] = {
+            "symbols": set(),
+            "endpoints": set(),
+            "contracts": set(),
+        }
+
+        for row in rows:
+            labels = row.get("labels", [])
+            if not isinstance(labels, list):
+                continue
+            label_names = {str(label) for label in labels}
+            qualified_name = str(row.get("qualified_name", "")).strip()
+            if not qualified_name:
+                continue
+            payload = {
+                "qualified_name": qualified_name,
+                "name": str(row.get("name", "")).strip(),
+                "path": self._normalize_path_value(row.get("path")),
+                "http_method": str(row.get("http_method", "")).strip(),
+                "route_path": str(row.get("route_path", "")).strip(),
+            }
+            if (
+                endpoint_label in label_names
+                and qualified_name not in seen["endpoints"]
+            ):
+                targets["endpoints"].append(payload)
+                seen["endpoints"].add(qualified_name)
+            elif (
+                contract_label in label_names
+                and qualified_name not in seen["contracts"]
+            ):
+                targets["contracts"].append(payload)
+                seen["contracts"].add(qualified_name)
+            elif (
+                not symbol_labels.isdisjoint(label_names)
+                and qualified_name not in seen["symbols"]
+            ):
+                targets["symbols"].append(payload)
+                seen["symbols"].add(qualified_name)
+
+        return targets
+
+    def _query_semantic_test_candidates(
+        self,
+        *,
+        project_name: str,
+        impacted_files: list[str],
+        impacted_symbols: list[str],
+    ) -> tuple[list[dict[str, str]], dict[str, list[dict[str, str]]]]:
+        targets = self._query_impacted_test_targets(
+            project_name=project_name,
+            impacted_files=impacted_files,
+            impacted_symbols=impacted_symbols,
+        )
+
+        def _normalize_rows(
+            rows: list[dict[str, object]],
+            *,
+            coverage_kind: str,
+        ) -> list[dict[str, str]]:
+            normalized: list[dict[str, str]] = []
+            for row in rows:
+                testcase_qn = str(row.get("testcase_qn", "")).strip()
+                test_file = self._normalize_path_value(row.get("test_file"))
+                if not testcase_qn or not test_file:
+                    continue
+                normalized.append(
+                    {
+                        "coverage_kind": coverage_kind,
+                        "testcase_qn": testcase_qn,
+                        "testcase_name": str(row.get("testcase_name", "")).strip(),
+                        "test_file": test_file,
+                        "framework": str(row.get("framework", "")).strip(),
+                        "suite_qn": str(row.get("suite_qn", "")).strip(),
+                        "suite_name": str(row.get("suite_name", "")).strip(),
+                        "matched_target_qn": str(row.get("target_qn", "")).strip(),
+                        "matched_target_name": str(row.get("target_name", "")).strip(),
+                        "matched_target_kind": str(row.get("target_kind", "")).strip(),
+                    }
+                )
+            return normalized
+
+        candidates: list[dict[str, str]] = []
+
+        symbol_qns = [
+            target["qualified_name"]
+            for target in targets["symbols"]
+            if target.get("qualified_name")
+        ]
+        if symbol_qns:
+            candidates.extend(
+                _normalize_rows(
+                    self._graph_fetch_all(
+                        """
+MATCH (testcase:TestCase {project_name: $project_name})-[:TESTS_SYMBOL]->(target {project_name: $project_name})
+WHERE coalesce(target.qualified_name, '') IN $qualified_names
+OPTIONAL MATCH (suite:TestSuite {project_name: $project_name})-[:CONTAINS]->(testcase)
+RETURN DISTINCT
+    testcase.qualified_name AS testcase_qn,
+    testcase.name AS testcase_name,
+    testcase.path AS test_file,
+    coalesce(testcase.framework, '') AS framework,
+    coalesce(suite.qualified_name, '') AS suite_qn,
+    coalesce(suite.name, '') AS suite_name,
+    target.qualified_name AS target_qn,
+    coalesce(target.name, '') AS target_name,
+    coalesce(labels(target)[0], '') AS target_kind
+ORDER BY test_file, testcase_name
+LIMIT 200
+""",
+                        {
+                            "project_name": project_name,
+                            "qualified_names": symbol_qns,
+                        },
+                    ),
+                    coverage_kind="symbol",
+                )
+            )
+
+        endpoint_qns = [
+            target["qualified_name"]
+            for target in targets["endpoints"]
+            if target.get("qualified_name")
+        ]
+        if endpoint_qns:
+            candidates.extend(
+                _normalize_rows(
+                    self._graph_fetch_all(
+                        """
+MATCH (testcase:TestCase {project_name: $project_name})-[:TESTS_ENDPOINT]->(endpoint:Endpoint {project_name: $project_name})
+WHERE coalesce(endpoint.qualified_name, '') IN $qualified_names
+OPTIONAL MATCH (suite:TestSuite {project_name: $project_name})-[:CONTAINS]->(testcase)
+RETURN DISTINCT
+    testcase.qualified_name AS testcase_qn,
+    testcase.name AS testcase_name,
+    testcase.path AS test_file,
+    coalesce(testcase.framework, '') AS framework,
+    coalesce(suite.qualified_name, '') AS suite_qn,
+    coalesce(suite.name, '') AS suite_name,
+    endpoint.qualified_name AS target_qn,
+    coalesce(endpoint.name, endpoint.route_path, '') AS target_name,
+    coalesce(labels(endpoint)[0], '') AS target_kind
+ORDER BY test_file, testcase_name
+LIMIT 200
+""",
+                        {
+                            "project_name": project_name,
+                            "qualified_names": endpoint_qns,
+                        },
+                    ),
+                    coverage_kind="endpoint_direct",
+                )
+            )
+            candidates.extend(
+                _normalize_rows(
+                    self._graph_fetch_all(
+                        """
+MATCH (endpoint:Endpoint {project_name: $project_name})-[:ACCEPTS_CONTRACT|RETURNS_CONTRACT]->(contract:Contract {project_name: $project_name})<-[:ASSERTS_CONTRACT]-(testcase:TestCase {project_name: $project_name})
+WHERE coalesce(endpoint.qualified_name, '') IN $qualified_names
+OPTIONAL MATCH (suite:TestSuite {project_name: $project_name})-[:CONTAINS]->(testcase)
+RETURN DISTINCT
+    testcase.qualified_name AS testcase_qn,
+    testcase.name AS testcase_name,
+    testcase.path AS test_file,
+    coalesce(testcase.framework, '') AS framework,
+    coalesce(suite.qualified_name, '') AS suite_qn,
+    coalesce(suite.name, '') AS suite_name,
+    endpoint.qualified_name AS target_qn,
+    coalesce(endpoint.name, endpoint.route_path, '') AS target_name,
+    coalesce(labels(endpoint)[0], '') AS target_kind
+ORDER BY test_file, testcase_name
+LIMIT 200
+""",
+                        {
+                            "project_name": project_name,
+                            "qualified_names": endpoint_qns,
+                        },
+                    ),
+                    coverage_kind="endpoint_contract",
+                )
+            )
+
+        contract_qns = [
+            target["qualified_name"]
+            for target in targets["contracts"]
+            if target.get("qualified_name")
+        ]
+        if contract_qns:
+            candidates.extend(
+                _normalize_rows(
+                    self._graph_fetch_all(
+                        """
+MATCH (testcase:TestCase {project_name: $project_name})-[:ASSERTS_CONTRACT]->(contract:Contract {project_name: $project_name})
+WHERE coalesce(contract.qualified_name, '') IN $qualified_names
+OPTIONAL MATCH (suite:TestSuite {project_name: $project_name})-[:CONTAINS]->(testcase)
+RETURN DISTINCT
+    testcase.qualified_name AS testcase_qn,
+    testcase.name AS testcase_name,
+    testcase.path AS test_file,
+    coalesce(testcase.framework, '') AS framework,
+    coalesce(suite.qualified_name, '') AS suite_qn,
+    coalesce(suite.name, '') AS suite_name,
+    contract.qualified_name AS target_qn,
+    coalesce(contract.name, '') AS target_name,
+    coalesce(labels(contract)[0], '') AS target_kind
+ORDER BY test_file, testcase_name
+LIMIT 200
+""",
+                        {
+                            "project_name": project_name,
+                            "qualified_names": contract_qns,
+                        },
+                    ),
+                    coverage_kind="contract",
+                )
+            )
+
+        coverage_index: dict[tuple[str, str, str], dict[str, str]] = {}
+        kind_rank = {
+            "endpoint_direct": 0,
+            "endpoint_contract": 1,
+            "contract": 2,
+            "symbol": 3,
+        }
+        for candidate in candidates:
+            key = (
+                candidate["testcase_qn"],
+                candidate["coverage_kind"],
+                candidate["matched_target_qn"],
+            )
+            existing = coverage_index.get(key)
+            if existing is None or kind_rank.get(
+                candidate["coverage_kind"], 99
+            ) < kind_rank.get(existing["coverage_kind"], 99):
+                coverage_index[key] = candidate
+
+        ordered_candidates = sorted(
+            coverage_index.values(),
+            key=lambda item: (
+                kind_rank.get(item["coverage_kind"], 99),
+                item["test_file"],
+                item["testcase_name"],
+            ),
+        )
+        return ordered_candidates, targets
+
+    def _build_semantic_test_gaps(
+        self,
+        *,
+        targets: dict[str, list[dict[str, str]]],
+        semantic_candidates: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        coverage_by_target: dict[str, set[str]] = {}
+        for candidate in semantic_candidates:
+            target_qn = str(candidate.get("matched_target_qn", "")).strip()
+            if not target_qn:
+                continue
+            coverage_by_target.setdefault(target_qn, set()).add(
+                str(candidate.get("coverage_kind", "")).strip()
+            )
+
+        gaps: list[dict[str, str]] = []
+        for endpoint in targets.get("endpoints", []):
+            target_qn = endpoint.get("qualified_name", "")
+            coverage_kinds = coverage_by_target.get(target_qn, set())
+            if coverage_kinds.intersection({"endpoint_direct", "endpoint_contract"}):
+                continue
+            gaps.append(
+                {
+                    "gap_kind": "untested_endpoint",
+                    "target_qn": target_qn,
+                    "target_name": endpoint.get("name", "")
+                    or endpoint.get("route_path", ""),
+                    "http_method": endpoint.get("http_method", ""),
+                    "route_path": endpoint.get("route_path", ""),
+                }
+            )
+        for contract in targets.get("contracts", []):
+            target_qn = contract.get("qualified_name", "")
+            coverage_kinds = coverage_by_target.get(target_qn, set())
+            if "contract" in coverage_kinds:
+                continue
+            gaps.append(
+                {
+                    "gap_kind": "untested_contract",
+                    "target_qn": target_qn,
+                    "target_name": contract.get("name", ""),
+                    "path": contract.get("path", ""),
+                }
+            )
+        return gaps
+
+    def _query_runtime_coverage_matches(
+        self,
+        *,
+        project_name: str,
+        impacted_files: list[str],
+    ) -> list[dict[str, object]]:
+        if not impacted_files:
+            return []
+        rows = self._graph_fetch_all(
+            """
+MATCH (runtime_event:RuntimeEvent {project_name: $project_name})-[:COVERS_MODULE]->(file:File {project_name: $project_name})
+WHERE coalesce(file.path, '') IN $impacted_files
+RETURN DISTINCT
+    coalesce(file.path, '') AS file_path,
+    coalesce(runtime_event.qualified_name, '') AS runtime_event_qn,
+    coalesce(runtime_event.covered_lines, 0) AS covered_lines,
+    coalesce(runtime_event.total_lines, 0) AS total_lines
+ORDER BY file_path, runtime_event_qn
+LIMIT 120
+""",
+            {
+                "project_name": project_name,
+                "impacted_files": impacted_files,
+            },
+        )
+        matches: list[dict[str, object]] = []
+        for row in rows:
+            file_path = self._normalize_path_value(row.get("file_path"))
+            if not file_path:
+                continue
+            matches.append(
+                {
+                    "file_path": file_path,
+                    "runtime_event_qn": str(row.get("runtime_event_qn", "")).strip(),
+                    "covered_lines": self._coerce_int(row.get("covered_lines", 0)),
+                    "total_lines": self._coerce_int(row.get("total_lines", 0)),
+                }
+            )
+        return matches
+
     def _build_test_selection_bundle(self) -> dict[str, object]:
         impact_context = self._collect_recent_impact_context()
         impacted_files = cast(list[str], impact_context.get("impacted_files", []))
         impacted_symbols = cast(list[str], impact_context.get("impacted_symbols", []))
-        candidate_tests = self._discover_candidate_test_files(impacted_files)
+        project_name = self._active_project_name()
+        semantic_candidates, semantic_targets = self._query_semantic_test_candidates(
+            project_name=project_name,
+            impacted_files=impacted_files,
+            impacted_symbols=impacted_symbols,
+        )
+        semantic_test_files = list(
+            dict.fromkeys(
+                candidate["test_file"]
+                for candidate in semantic_candidates
+                if candidate.get("test_file")
+            )
+        )
+        runtime_coverage_matches = self._query_runtime_coverage_matches(
+            project_name=project_name,
+            impacted_files=impacted_files,
+        )
+        fallback_candidate_tests = self._discover_candidate_test_files(impacted_files)
+        candidate_tests = semantic_test_files or fallback_candidate_tests
+        semantic_gaps = self._build_semantic_test_gaps(
+            targets=semantic_targets,
+            semantic_candidates=semantic_candidates,
+        )
 
         new_test_hints: list[str] = []
         for impacted_file in impacted_files[:5]:
@@ -10623,11 +11272,28 @@ LIMIT $limit
             if stem:
                 new_test_hints.append(f"tests/test_{stem}.py")
 
+        selection_mode = "goal-only"
+        if impacted_files or impacted_symbols:
+            selection_mode = (
+                "semantic-graph-primary"
+                if semantic_candidates or semantic_gaps
+                else "filesystem-fallback"
+            )
+
         bundle = {
             "has_impact_context": bool(impact_context.get("has_impact", False)),
             "impacted_files": impacted_files,
             "impacted_symbols": impacted_symbols,
             "candidate_existing_tests": candidate_tests,
+            "selection_mode": selection_mode,
+            "semantic_candidate_testcases": semantic_candidates[:20],
+            "semantic_target_summary": {
+                "symbol_targets": len(semantic_targets.get("symbols", [])),
+                "endpoint_targets": len(semantic_targets.get("endpoints", [])),
+                "contract_targets": len(semantic_targets.get("contracts", [])),
+            },
+            "semantic_gaps": semantic_gaps[:20],
+            "runtime_coverage_matches": runtime_coverage_matches[:20],
             "new_test_file_hints": new_test_hints,
             "selection_strategy": (
                 "impact-first" if impacted_files or impacted_symbols else "goal-only"

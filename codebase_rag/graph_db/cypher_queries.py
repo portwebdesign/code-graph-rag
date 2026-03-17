@@ -138,15 +138,86 @@ DETACH DELETE m
 WITH $path AS path
 MATCH (f:File {path: path})
 DETACH DELETE f
+WITH path
+MATCH ()-[r:USES_DEPENDENCY|SECURED_BY|REQUIRES_SCOPE|ACCEPTS_CONTRACT|RETURNS_CONTRACT|DECLARES_FIELD|WRITES_OUTBOX|PUBLISHES_EVENT|CONSUMES_EVENT|WRITES_DLQ|REPLAYS_EVENT|USES_QUEUE|USES_HANDLER|BEGINS_TRANSACTION|COMMITS_TRANSACTION|ROLLBACKS_TRANSACTION|PERFORMS_SIDE_EFFECT|WITHIN_TRANSACTION|BEFORE|AFTER|EXECUTES_SQL|EXECUTES_CYPHER|HAS_FINGERPRINT|READS_TABLE|WRITES_TABLE|READS_LABEL|WRITES_LABEL|JOINS_TABLE|USES_OPERATION|GENERATED_FROM_SPEC|BYPASSES_MANIFEST|TESTS_SYMBOL|TESTS_ENDPOINT|ASSERTS_CONTRACT|READS_ENV|SETS_ENV|USES_SECRET|GATES_CODE_PATH|CONTAINS]->()
+WHERE r.path = path
+DELETE r
+WITH path
+MATCH (artifact:RuntimeArtifact {path: path})
+OPTIONAL MATCH (artifact)-[:CONTAINS]->(event:RuntimeEvent)
+DETACH DELETE event, artifact
+WITH 1 AS _
+MATCH (n)
+WHERE (
+  n:Contract
+  OR n:ContractField
+  OR n:DependencyProvider
+  OR n:AuthPolicy
+  OR n:AuthScope
+  OR n:EventFlow
+  OR n:SqlQuery
+  OR n:CypherQuery
+  OR n:QueryFingerprint
+  OR n:TransactionBoundary
+  OR n:SideEffect
+  OR n:ClientOperation
+  OR n:TestSuite
+  OR n:TestCase
+  OR n:EnvVar
+  OR n:FeatureFlag
+  OR n:SecretRef
+  OR (n:Queue AND coalesce(n.source_parser, '') = 'event_flow_pass')
+  OR (n:DataStore AND coalesce(n.source_parser, '') = 'query_fingerprint_pass')
+  OR (n:GraphNodeLabel AND coalesce(n.source_parser, '') = 'query_fingerprint_pass')
+  OR (n:Endpoint AND coalesce(n.source_parser, '') = 'frontend_operation_pass')
+)
+  AND NOT (n)--()
+DETACH DELETE n
 """
 
 CYPHER_DELETE_DYNAMIC_EDGES_BY_PATH = """
 MATCH (m:Module {path: $path})
 OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..5]->(defined)
-WITH collect(DISTINCT m) + collect(DISTINCT defined) AS nodes
+OPTIONAL MATCH (defined)-[:HAS_ENDPOINT]->(endpoint)
+WITH collect(DISTINCT m) + collect(DISTINCT defined) + collect(DISTINCT endpoint) AS nodes
 UNWIND nodes AS node
-MATCH (node)-[r:CALLS|IMPORTS|EXPORTS|EXPORTS_MODULE|IMPLEMENTS_MODULE|INHERITS|IMPLEMENTS|OVERRIDES|RETURNS_TYPE|PARAMETER_TYPE|CAUGHT_BY|THROWS|DECORATES|ANNOTATES|REQUIRES_LIBRARY|DEPENDS_ON|DEPENDS_ON_EXTERNAL|HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|RENDERS_VIEW|USES_MIDDLEWARE|REGISTERS_SERVICE|ELOQUENT_RELATION|HOOKS|REGISTERS_BLOCK|USES_ASSET|USES_UTILITY|RESOLVES_IMPORT|USES_COMPONENT|HANDLES_ERROR|MUTATES_STATE|HAS_PARAMETER|HAS_TYPE_PARAMETER|EMBEDS|REQUESTS_ENDPOINT|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]-()
+MATCH (node)-[r:CALLS|IMPORTS|EXPORTS|EXPORTS_MODULE|IMPLEMENTS_MODULE|INHERITS|IMPLEMENTS|OVERRIDES|RETURNS_TYPE|PARAMETER_TYPE|CAUGHT_BY|THROWS|DECORATES|ANNOTATES|REQUIRES_LIBRARY|DEPENDS_ON|DEPENDS_ON_EXTERNAL|HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|RENDERS_VIEW|USES_MIDDLEWARE|REGISTERS_SERVICE|ELOQUENT_RELATION|HOOKS|REGISTERS_BLOCK|USES_ASSET|USES_UTILITY|RESOLVES_IMPORT|USES_COMPONENT|HANDLES_ERROR|MUTATES_STATE|HAS_PARAMETER|HAS_TYPE_PARAMETER|EMBEDS|REQUESTS_ENDPOINT|USES_OPERATION|USES_DEPENDENCY|SECURED_BY|REQUIRES_SCOPE|ACCEPTS_CONTRACT|RETURNS_CONTRACT|DECLARES_FIELD|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE|WRITES_OUTBOX|PUBLISHES_EVENT|CONSUMES_EVENT|WRITES_DLQ|REPLAYS_EVENT|BEGINS_TRANSACTION|COMMITS_TRANSACTION|ROLLBACKS_TRANSACTION|PERFORMS_SIDE_EFFECT|WITHIN_TRANSACTION|BEFORE|AFTER|EXECUTES_SQL|EXECUTES_CYPHER|HAS_FINGERPRINT|READS_TABLE|WRITES_TABLE|READS_LABEL|WRITES_LABEL|JOINS_TABLE|GENERATED_FROM_SPEC|BYPASSES_MANIFEST|TESTS_SYMBOL|TESTS_ENDPOINT|ASSERTS_CONTRACT|READS_ENV|SETS_ENV|USES_SECRET|GATES_CODE_PATH]-()
 DELETE r
+WITH $path AS path
+MATCH ()-[r:USES_DEPENDENCY|SECURED_BY|REQUIRES_SCOPE|ACCEPTS_CONTRACT|RETURNS_CONTRACT|DECLARES_FIELD|WRITES_OUTBOX|PUBLISHES_EVENT|CONSUMES_EVENT|WRITES_DLQ|REPLAYS_EVENT|USES_QUEUE|USES_HANDLER|BEGINS_TRANSACTION|COMMITS_TRANSACTION|ROLLBACKS_TRANSACTION|PERFORMS_SIDE_EFFECT|WITHIN_TRANSACTION|BEFORE|AFTER|EXECUTES_SQL|EXECUTES_CYPHER|HAS_FINGERPRINT|READS_TABLE|WRITES_TABLE|READS_LABEL|WRITES_LABEL|JOINS_TABLE|USES_OPERATION|GENERATED_FROM_SPEC|BYPASSES_MANIFEST|TESTS_SYMBOL|TESTS_ENDPOINT|ASSERTS_CONTRACT|READS_ENV|SETS_ENV|USES_SECRET|GATES_CODE_PATH|CONTAINS]->()
+WHERE r.path = path
+DELETE r
+WITH path
+MATCH (artifact:RuntimeArtifact {path: path})
+OPTIONAL MATCH (artifact)-[:CONTAINS]->(event:RuntimeEvent)
+DETACH DELETE event, artifact
+WITH 1 AS _
+MATCH (n)
+WHERE (
+  n:Contract
+  OR n:ContractField
+  OR n:DependencyProvider
+  OR n:AuthPolicy
+  OR n:AuthScope
+  OR n:EventFlow
+  OR n:SqlQuery
+  OR n:CypherQuery
+  OR n:QueryFingerprint
+  OR n:TransactionBoundary
+  OR n:SideEffect
+  OR n:ClientOperation
+  OR n:TestSuite
+  OR n:TestCase
+  OR n:EnvVar
+  OR n:FeatureFlag
+  OR n:SecretRef
+  OR (n:Queue AND coalesce(n.source_parser, '') = 'event_flow_pass')
+  OR (n:DataStore AND coalesce(n.source_parser, '') = 'query_fingerprint_pass')
+  OR (n:GraphNodeLabel AND coalesce(n.source_parser, '') = 'query_fingerprint_pass')
+  OR (n:Endpoint AND coalesce(n.source_parser, '') = 'frontend_operation_pass')
+)
+  AND NOT (n)--()
+DETACH DELETE n
 """
 
 
@@ -204,6 +275,601 @@ WHERE c.qualified_name ENDS WITH '.UserService'
 RETURN m.name AS name, m.qualified_name AS qualified_name, labels(m) AS type
 LIMIT {CYPHER_DEFAULT_LIMIT}"""
 """Example query to find methods defined by a specific class."""
+
+CYPHER_SEMANTIC_ENDPOINT_AUTH_COVERAGE = """
+MATCH (e:Endpoint {project_name: $project_name})
+OPTIONAL MATCH (e)-[:SECURED_BY]->(p:AuthPolicy)
+OPTIONAL MATCH (p)-[:REQUIRES_SCOPE]->(s:AuthScope)
+WITH e, collect(DISTINCT p.name) AS auth_policies, collect(DISTINCT s.name) AS auth_scopes
+RETURN coalesce(e.route_path, e.route, e.name) AS endpoint,
+       coalesce(e.http_method, e.method, 'ANY') AS method,
+       auth_policies,
+       auth_scopes,
+       size(auth_policies) AS policy_count,
+       size(auth_scopes) AS scope_count
+ORDER BY policy_count ASC, endpoint
+LIMIT 120
+"""
+"""Semantic preset query for endpoint auth coverage and scope visibility."""
+
+CYPHER_SEMANTIC_ENDPOINT_DEPENDENCY_VISIBILITY = """
+MATCH (e:Endpoint {project_name: $project_name})
+OPTIONAL MATCH (e)-[:USES_DEPENDENCY]->(d:DependencyProvider)
+WITH e, collect(DISTINCT d.name) AS dependencies
+RETURN coalesce(e.route_path, e.route, e.name) AS endpoint,
+       coalesce(e.http_method, e.method, 'ANY') AS method,
+       dependencies,
+       size(dependencies) AS dependency_count
+ORDER BY dependency_count DESC, endpoint
+LIMIT 120
+"""
+"""Semantic preset query for endpoint dependency-provider visibility."""
+
+CYPHER_SEMANTIC_ENDPOINT_CONTRACT_GAPS = """
+MATCH (e:Endpoint {project_name: $project_name})
+OPTIONAL MATCH (e)-[:ACCEPTS_CONTRACT]->(req:Contract)
+WITH e, collect(DISTINCT req.name) AS request_contracts
+OPTIONAL MATCH (e)-[:RETURNS_CONTRACT]->(resp:Contract)
+WITH e, request_contracts, collect(DISTINCT resp.name) AS response_contracts
+OPTIONAL MATCH (caller)-[:REQUESTS_ENDPOINT]->(e)
+WITH e,
+     request_contracts,
+     response_contracts,
+     count(DISTINCT caller) AS requester_count
+WHERE request_contracts = [] OR response_contracts = []
+RETURN coalesce(e.route_path, e.route, e.name) AS endpoint,
+       coalesce(e.http_method, e.method, 'ANY') AS method,
+       request_contracts,
+       response_contracts,
+       requester_count
+ORDER BY requester_count DESC, endpoint
+LIMIT 120
+"""
+"""Semantic preset query for contract-gap and drift-candidate endpoints."""
+
+CYPHER_SEMANTIC_UNPROTECTED_ENDPOINTS = """
+MATCH (e:Endpoint {project_name: $project_name})
+OPTIONAL MATCH (e)-[:SECURED_BY]->(p:AuthPolicy)
+WITH e, collect(DISTINCT p.name) AS auth_policies
+WHERE auth_policies = []
+RETURN coalesce(e.route_path, e.route, e.name) AS endpoint,
+       coalesce(e.http_method, e.method, 'ANY') AS method,
+       coalesce(e.path, '') AS path
+ORDER BY endpoint
+LIMIT 120
+"""
+"""Semantic preset query for endpoints without explicit auth policy coverage."""
+
+CYPHER_EVENT_OUTBOX_WITHOUT_TRANSACTION = """
+MATCH (producer {project_name: $project_name})-[:WRITES_OUTBOX]->(flow:EventFlow {project_name: $project_name})
+OPTIONAL MATCH (producer)-[:PERFORMS_SIDE_EFFECT]->(effect:SideEffect {project_name: $project_name, effect_kind: 'outbox_write'})-[:WITHIN_TRANSACTION]->(tx:TransactionBoundary {project_name: $project_name})
+WITH producer,
+     flow,
+     collect(DISTINCT effect.qualified_name) AS outbox_effects,
+     collect(DISTINCT tx.qualified_name) AS transaction_boundaries
+WHERE size(transaction_boundaries) = 0
+RETURN producer.qualified_name AS producer,
+       flow.name AS event_flow,
+       coalesce(flow.channel_name, '') AS queue_name,
+       size(outbox_effects) AS outbox_effect_count,
+       size(transaction_boundaries) AS transaction_count
+ORDER BY producer
+LIMIT 120
+"""
+"""Semantic preset query for outbox writes without transaction evidence."""
+
+CYPHER_EVENT_CONSUMER_WITHOUT_DLQ = """
+MATCH (handler {project_name: $project_name})-[:CONSUMES_EVENT]->(flow:EventFlow {project_name: $project_name})
+OPTIONAL MATCH (handler)-[:WRITES_DLQ]->(dlq:Queue {project_name: $project_name})
+WITH handler,
+     flow,
+     collect(DISTINCT dlq.name) AS dlq_queues
+WHERE coalesce(flow.dlq_name, '') = '' AND dlq_queues = []
+RETURN handler.qualified_name AS handler,
+       flow.name AS event_flow,
+       coalesce(flow.channel_name, '') AS queue_name,
+       dlq_queues
+ORDER BY handler
+LIMIT 120
+"""
+"""Semantic preset query for consumers without any DLQ path."""
+
+CYPHER_EVENT_REPLAY_PATHS = """
+MATCH (replayer {project_name: $project_name})-[:REPLAYS_EVENT]->(flow:EventFlow {project_name: $project_name})
+OPTIONAL MATCH (flow)-[:USES_HANDLER]->(handler {project_name: $project_name})
+OPTIONAL MATCH (flow)-[queue_rel:USES_QUEUE]->(queue:Queue {project_name: $project_name})
+RETURN replayer.qualified_name AS replayer,
+       flow.name AS event_flow,
+       coalesce(flow.event_name, '') AS event_name,
+       collect(DISTINCT handler.qualified_name) AS handlers,
+       collect(DISTINCT {
+         queue_name: queue.name,
+         queue_role: coalesce(queue_rel.queue_role, '')
+       }) AS queues
+ORDER BY replayer
+LIMIT 120
+"""
+"""Semantic preset query for replay entrypoints and their downstream handlers/queues."""
+
+CYPHER_TRANSACTION_EXTERNAL_CALL_BEFORE_COMMIT = """
+MATCH (actor {project_name: $project_name})-[:COMMITS_TRANSACTION]->(tx:TransactionBoundary {project_name: $project_name})
+MATCH (actor)-[:PERFORMS_SIDE_EFFECT]->(effect:SideEffect {project_name: $project_name, effect_kind: 'external_http'})-[:WITHIN_TRANSACTION]->(tx)
+RETURN actor.qualified_name AS actor,
+       tx.qualified_name AS transaction_boundary,
+       effect.qualified_name AS side_effect,
+       coalesce(effect.operation_name, effect.name, '') AS operation_name
+ORDER BY actor, side_effect
+LIMIT 120
+"""
+"""Semantic preset query for external HTTP side effects that occur inside committing transactions."""
+
+CYPHER_EVENT_DUPLICATE_PUBLISHERS = """
+MATCH (publisher {project_name: $project_name})-[:PUBLISHES_EVENT]->(flow:EventFlow {project_name: $project_name})
+WITH flow,
+     collect(DISTINCT publisher.qualified_name) AS publishers
+WHERE size(publishers) > 1
+RETURN flow.name AS event_flow,
+       coalesce(flow.event_name, '') AS event_name,
+       coalesce(flow.channel_name, '') AS queue_name,
+       publishers,
+       size(publishers) AS publisher_count
+ORDER BY publisher_count DESC, event_flow
+LIMIT 120
+"""
+"""Semantic preset query for event flows with multiple publishers."""
+
+
+CYPHER_FRONTEND_CLIENT_OPERATIONS = """
+MATCH (op:ClientOperation {project_name: $project_name})-[:REQUESTS_ENDPOINT]->(endpoint:Endpoint {project_name: $project_name})
+RETURN op.name AS operation_name,
+       coalesce(op.operation_id, '') AS operation_id,
+       coalesce(op.governance_kind, '') AS governance_kind,
+       coalesce(op.client_kind, '') AS client_kind,
+       endpoint.http_method AS method,
+       endpoint.route_path AS path,
+       endpoint.qualified_name AS endpoint_qn
+ORDER BY governance_kind DESC, method, path, operation_name
+LIMIT 120
+"""
+"""Semantic preset query for governed and bypass client operations."""
+
+
+CYPHER_FRONTEND_BYPASSES_MANIFEST = """
+MATCH (op:ClientOperation {project_name: $project_name})-[:BYPASSES_MANIFEST]->(endpoint:Endpoint {project_name: $project_name})
+RETURN op.name AS operation_name,
+       coalesce(op.operation_id, '') AS operation_id,
+       coalesce(op.client_kind, '') AS client_kind,
+       endpoint.http_method AS method,
+       endpoint.route_path AS path,
+       endpoint.qualified_name AS endpoint_qn
+ORDER BY method, path, operation_name
+LIMIT 120
+"""
+"""Semantic preset query for raw client operations bypassing the manifest/spec."""
+
+
+CYPHER_TEST_UNTESTED_PUBLIC_ENDPOINTS = """
+MATCH (endpoint:Endpoint {project_name: $project_name})
+OPTIONAL MATCH (endpoint)<-[:TESTS_ENDPOINT]-(direct_case:TestCase {project_name: $project_name})
+OPTIONAL MATCH (endpoint)-[:ACCEPTS_CONTRACT|RETURNS_CONTRACT]->(contract:Contract {project_name: $project_name})<-[:ASSERTS_CONTRACT]-(contract_case:TestCase {project_name: $project_name})
+WITH endpoint,
+     [value IN collect(DISTINCT direct_case.qualified_name) + collect(DISTINCT contract_case.qualified_name) WHERE value IS NOT NULL] AS testcase_qns
+WHERE size(testcase_qns) = 0
+RETURN endpoint.route_path AS endpoint,
+       endpoint.http_method AS method,
+       endpoint.qualified_name AS endpoint_qn
+ORDER BY method, endpoint
+LIMIT 120
+"""
+"""Semantic preset query for public endpoints that have no direct or contract-driven testcase coverage."""
+
+
+CYPHER_TEST_CONTRACT_COVERAGE = """
+MATCH (contract:Contract {project_name: $project_name})
+OPTIONAL MATCH (contract)<-[:ASSERTS_CONTRACT]-(testcase:TestCase {project_name: $project_name})
+RETURN contract.name AS contract_name,
+       contract.qualified_name AS contract_qn,
+       count(DISTINCT testcase) AS testcase_count,
+       collect(DISTINCT testcase.path)[0..10] AS test_files
+ORDER BY testcase_count ASC, contract_name
+LIMIT 120
+"""
+"""Semantic preset query for testcase-to-contract coverage."""
+
+
+CYPHER_CONFIG_UNDEFINED_ENV_READERS = """
+MATCH (reader {project_name: $project_name})-[:READS_ENV]->(env:EnvVar {project_name: $project_name})
+OPTIONAL MATCH (resource:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env)
+WITH reader,
+     env,
+     collect(DISTINCT resource.qualified_name) AS resource_qns
+WHERE coalesce(env.has_definition, false) = false
+RETURN reader.qualified_name AS reader,
+       labels(reader)[0] AS reader_type,
+       env.name AS env_name,
+       env.qualified_name AS env_qn,
+       resource_qns,
+       size(resource_qns) AS resource_count
+ORDER BY env_name, reader
+LIMIT 120
+"""
+"""Semantic preset query for code readers that consume env vars with no known definition."""
+
+
+CYPHER_CONFIG_ORPHAN_SECRET_REFS = """
+MATCH (secret:SecretRef {project_name: $project_name})
+OPTIONAL MATCH (resource:InfraResource {project_name: $project_name})-[:USES_SECRET]->(secret)
+OPTIONAL MATCH (reader {project_name: $project_name})-[:USES_SECRET]->(secret)
+WITH secret,
+     collect(DISTINCT resource.qualified_name) AS resource_qns,
+     collect(DISTINCT reader.qualified_name) AS reader_qns
+WHERE resource_qns = [] OR reader_qns = []
+RETURN secret.name AS secret_name,
+       secret.qualified_name AS secret_qn,
+       resource_qns,
+       reader_qns,
+       CASE
+           WHEN resource_qns = [] AND reader_qns = [] THEN "unbound"
+           WHEN resource_qns = [] THEN "reader_only"
+           ELSE "resource_only"
+       END AS binding_status
+ORDER BY secret_name
+LIMIT 120
+"""
+"""Semantic preset query for secret refs that are only defined or only consumed."""
+
+
+CYPHER_CONFIG_UNBOUND_SECRET_REFS = CYPHER_CONFIG_ORPHAN_SECRET_REFS
+"""Semantic preset alias for unbound or one-sided secret refs."""
+
+
+CYPHER_CONFIG_UNUSED_FEATURE_FLAGS = """
+MATCH (flag:FeatureFlag {project_name: $project_name})
+OPTIONAL MATCH (flag)-[:GATES_CODE_PATH]->(target {project_name: $project_name})
+OPTIONAL MATCH (resource:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env:EnvVar {project_name: $project_name})
+WHERE env.name = flag.name
+WITH flag,
+     collect(DISTINCT target.qualified_name) AS gated_targets,
+     collect(DISTINCT resource.qualified_name) AS resource_qns
+WHERE gated_targets = []
+RETURN flag.name AS flag_name,
+       flag.qualified_name AS flag_qn,
+       resource_qns,
+       coalesce(flag.default_enabled, false) AS default_enabled
+ORDER BY flag_name
+LIMIT 120
+"""
+"""Semantic preset query for feature flags that have definitions but no gated code path."""
+
+
+CYPHER_CONFIG_ORPHAN_FEATURE_FLAGS = """
+MATCH (flag:FeatureFlag {project_name: $project_name})
+OPTIONAL MATCH (flag)-[:GATES_CODE_PATH]->(target {project_name: $project_name})
+OPTIONAL MATCH (resource:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env:EnvVar {project_name: $project_name})
+WHERE env.name = flag.name
+WITH flag,
+     collect(DISTINCT target.qualified_name) AS gated_targets,
+     collect(DISTINCT resource.qualified_name) AS resource_qns
+WHERE resource_qns = [] OR gated_targets = []
+RETURN flag.name AS flag_name,
+       flag.qualified_name AS flag_qn,
+       resource_qns,
+       gated_targets,
+       CASE
+           WHEN resource_qns = [] AND gated_targets = [] THEN "orphan"
+           WHEN resource_qns = [] THEN "reader_only"
+           ELSE "resource_only"
+       END AS drift_kind,
+       coalesce(flag.default_enabled, false) AS default_enabled
+ORDER BY flag_name
+LIMIT 120
+"""
+"""Semantic preset query for feature flags with missing infra binding or missing gated path evidence."""
+
+
+CYPHER_CONFIG_RESOURCE_WITHOUT_READERS = """
+MATCH (resource:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env:EnvVar {project_name: $project_name})
+OPTIONAL MATCH (reader {project_name: $project_name})-[:READS_ENV]->(env)
+WITH resource,
+     env,
+     collect(DISTINCT reader.qualified_name) AS reader_qns
+WHERE reader_qns = []
+RETURN resource.qualified_name AS resource_qn,
+       env.name AS env_name,
+       env.qualified_name AS env_qn,
+       reader_qns
+ORDER BY resource_qn, env_name
+LIMIT 120
+"""
+"""Semantic preset query for infra resources that project env vars with no known readers."""
+
+
+CYPHER_CONFIG_READER_WITHOUT_RESOURCE = """
+MATCH (reader {project_name: $project_name})-[:READS_ENV]->(env:EnvVar {project_name: $project_name})
+OPTIONAL MATCH (resource:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env)
+WITH reader,
+     env,
+     collect(DISTINCT resource.qualified_name) AS resource_qns
+WHERE resource_qns = []
+RETURN reader.qualified_name AS reader,
+       labels(reader)[0] AS reader_type,
+       env.name AS env_name,
+       env.qualified_name AS env_qn,
+       coalesce(env.has_definition, false) AS has_definition,
+       resource_qns
+ORDER BY env_name, reader
+LIMIT 120
+"""
+"""Semantic preset query for env readers that lack any infra-resource projection."""
+
+
+CYPHER_VALIDATION_FASTAPI_AUTH_CONTRACT_MINIMUM = """
+MATCH (endpoint:Endpoint {project_name: $project_name})-[:USES_DEPENDENCY]->(:DependencyProvider {project_name: $project_name})
+MATCH (endpoint)-[:SECURED_BY]->(policy:AuthPolicy {project_name: $project_name})-[:REQUIRES_SCOPE]->(:AuthScope {project_name: $project_name})
+MATCH (endpoint)-[:ACCEPTS_CONTRACT]->(:Contract {project_name: $project_name})
+MATCH (endpoint)-[:RETURNS_CONTRACT]->(:Contract {project_name: $project_name})
+RETURN count(DISTINCT endpoint) AS matched_rows
+LIMIT 1
+"""
+"""Canonical validation query for FastAPI auth/dependency/contract semantics."""
+
+
+CYPHER_VALIDATION_EVENT_FLOW_MINIMUM = """
+MATCH (:Function {project_name: $project_name})-[:WRITES_OUTBOX]->(flow:EventFlow {project_name: $project_name})
+MATCH (:Function {project_name: $project_name})-[:PUBLISHES_EVENT]->(flow)
+MATCH (flow)-[:USES_HANDLER]->(:Method {project_name: $project_name})
+MATCH (:Function {project_name: $project_name})-[:REPLAYS_EVENT]->(flow)
+MATCH (:Method {project_name: $project_name})-[:WRITES_DLQ]->(:Queue {project_name: $project_name})
+RETURN count(DISTINCT flow) AS matched_rows
+LIMIT 1
+"""
+"""Canonical validation query for event/outbox/consumer/replay semantics."""
+
+
+CYPHER_VALIDATION_TRANSACTION_MINIMUM = """
+MATCH (:Function {project_name: $project_name})-[:BEGINS_TRANSACTION]->(boundary:TransactionBoundary {project_name: $project_name})
+MATCH (:Function {project_name: $project_name})-[:COMMITS_TRANSACTION]->(boundary)
+MATCH (:Function {project_name: $project_name})-[:PERFORMS_SIDE_EFFECT]->(effect:SideEffect {project_name: $project_name})-[:WITHIN_TRANSACTION]->(boundary)
+MATCH (effect)-[:BEFORE]->(:SideEffect {project_name: $project_name})
+RETURN count(DISTINCT boundary) AS matched_rows
+LIMIT 1
+"""
+"""Canonical validation query for transaction boundary and side-effect ordering semantics."""
+
+
+CYPHER_VALIDATION_QUERY_FINGERPRINT_MINIMUM = """
+MATCH (:Function {project_name: $project_name})-[:EXECUTES_SQL]->(sql:SqlQuery {project_name: $project_name})-[:HAS_FINGERPRINT]->(:QueryFingerprint {project_name: $project_name})
+MATCH (sql)-[:READS_TABLE]->(:DataStore {project_name: $project_name})
+WITH collect(DISTINCT sql) AS sql_queries
+MATCH (:Function {project_name: $project_name})-[:EXECUTES_CYPHER]->(cypher:CypherQuery {project_name: $project_name})-[:HAS_FINGERPRINT]->(:QueryFingerprint {project_name: $project_name})
+MATCH (cypher)-[:WRITES_LABEL]->(:GraphNodeLabel {project_name: $project_name})
+RETURN size(sql_queries) + count(DISTINCT cypher) AS matched_rows
+LIMIT 1
+"""
+"""Canonical validation query for SQL/Cypher query fingerprint semantics."""
+
+
+CYPHER_VALIDATION_FRONTEND_OPERATION_MINIMUM = """
+MATCH (:Component {project_name: $project_name})-[:USES_OPERATION]->(governed:ClientOperation {project_name: $project_name})-[:REQUESTS_ENDPOINT]->(:Endpoint {project_name: $project_name})
+WITH collect(DISTINCT governed) AS governed_ops
+MATCH (:Function {project_name: $project_name})-[:USES_OPERATION]->(raw:ClientOperation {project_name: $project_name})-[:BYPASSES_MANIFEST]->(:Endpoint {project_name: $project_name})
+RETURN size(governed_ops) + count(DISTINCT raw) AS matched_rows
+LIMIT 1
+"""
+"""Canonical validation query for frontend operation governance semantics."""
+
+
+CYPHER_VALIDATION_TEST_SEMANTICS_MINIMUM = """
+MATCH (:TestSuite {project_name: $project_name})-[:CONTAINS]->(testcase:TestCase {project_name: $project_name})
+MATCH (testcase)-[:TESTS_SYMBOL]->(:Function {project_name: $project_name})
+MATCH (testcase)-[:TESTS_ENDPOINT]->(:Endpoint {project_name: $project_name})
+MATCH (testcase)-[:ASSERTS_CONTRACT]->(:Contract {project_name: $project_name})
+RETURN count(DISTINCT testcase) AS matched_rows
+LIMIT 1
+"""
+"""Canonical validation query for testcase/symbol/endpoint/contract semantics."""
+
+
+CYPHER_VALIDATION_CONFIG_CONTROL_PLANE_MINIMUM = """
+MATCH (:Function {project_name: $project_name})-[:READS_ENV]->(env:EnvVar {project_name: $project_name})
+MATCH (:InfraResource {project_name: $project_name})-[:SETS_ENV]->(env)
+MATCH (:Function {project_name: $project_name})-[:USES_SECRET]->(:SecretRef {project_name: $project_name})
+MATCH (:FeatureFlag {project_name: $project_name})-[:GATES_CODE_PATH]->(:Function {project_name: $project_name})
+RETURN count(DISTINCT env) AS matched_rows
+LIMIT 1
+"""
+"""Canonical validation query for env/flag/secret control-plane semantics."""
+
+
+def build_semantic_auth_contract_query_pack() -> list[dict[str, str]]:
+    """Returns canned semantic auth/contract Cypher presets."""
+
+    return [
+        {
+            "name": "endpoint_auth_coverage",
+            "summary": "List endpoints with auth policy and scope coverage.",
+            "cypher": CYPHER_SEMANTIC_ENDPOINT_AUTH_COVERAGE,
+        },
+        {
+            "name": "endpoint_dependency_visibility",
+            "summary": "List endpoint dependency providers and fan-in count.",
+            "cypher": CYPHER_SEMANTIC_ENDPOINT_DEPENDENCY_VISIBILITY,
+        },
+        {
+            "name": "endpoint_contract_gaps",
+            "summary": "Find endpoints that are missing request or response contracts.",
+            "cypher": CYPHER_SEMANTIC_ENDPOINT_CONTRACT_GAPS,
+        },
+        {
+            "name": "unprotected_endpoints",
+            "summary": "Find endpoints without any explicit auth policy edge.",
+            "cypher": CYPHER_SEMANTIC_UNPROTECTED_ENDPOINTS,
+        },
+    ]
+
+
+def build_event_reliability_query_pack() -> list[dict[str, str]]:
+    """Returns canned event-reliability and transaction-safety Cypher presets."""
+
+    return [
+        {
+            "name": "outbox_without_transaction",
+            "summary": "Find outbox writers without transaction evidence.",
+            "cypher": CYPHER_EVENT_OUTBOX_WITHOUT_TRANSACTION,
+        },
+        {
+            "name": "consumer_without_dlq",
+            "summary": "Find consumers that have no DLQ path.",
+            "cypher": CYPHER_EVENT_CONSUMER_WITHOUT_DLQ,
+        },
+        {
+            "name": "replay_paths",
+            "summary": "List replay entrypoints with handler and queue paths.",
+            "cypher": CYPHER_EVENT_REPLAY_PATHS,
+        },
+        {
+            "name": "external_call_before_commit",
+            "summary": "Find external HTTP calls that occur inside committing transactions.",
+            "cypher": CYPHER_TRANSACTION_EXTERNAL_CALL_BEFORE_COMMIT,
+        },
+        {
+            "name": "duplicate_publishers",
+            "summary": "Find event flows that are published by multiple producers.",
+            "cypher": CYPHER_EVENT_DUPLICATE_PUBLISHERS,
+        },
+    ]
+
+
+def build_frontend_operation_query_pack() -> list[dict[str, str]]:
+    """Returns canned frontend operation governance Cypher presets."""
+
+    return [
+        {
+            "name": "client_operations",
+            "summary": "List governed and bypass frontend client operations.",
+            "cypher": CYPHER_FRONTEND_CLIENT_OPERATIONS,
+        },
+        {
+            "name": "bypasses_manifest",
+            "summary": "Find frontend calls that bypass the generated manifest/spec path.",
+            "cypher": CYPHER_FRONTEND_BYPASSES_MANIFEST,
+        },
+    ]
+
+
+def build_test_semantics_query_pack() -> list[dict[str, str]]:
+    """Returns canned semantic test-coverage Cypher presets."""
+
+    return [
+        {
+            "name": "untested_public_endpoints",
+            "summary": "Find endpoints without testcase coverage through endpoint or contract edges.",
+            "cypher": CYPHER_TEST_UNTESTED_PUBLIC_ENDPOINTS,
+        },
+        {
+            "name": "contract_test_coverage",
+            "summary": "Inspect testcase coverage for each contract node.",
+            "cypher": CYPHER_TEST_CONTRACT_COVERAGE,
+        },
+    ]
+
+
+def build_config_runtime_query_pack() -> list[dict[str, str]]:
+    """Returns canned config/runtime semantic Cypher presets."""
+
+    return [
+        {
+            "name": "undefined_env_readers",
+            "summary": "Find code readers that consume env vars with no known definition or resource projection.",
+            "cypher": CYPHER_CONFIG_UNDEFINED_ENV_READERS,
+        },
+        {
+            "name": "orphan_secret_refs",
+            "summary": "Find secret refs that are only defined by infra or only consumed by code.",
+            "cypher": CYPHER_CONFIG_ORPHAN_SECRET_REFS,
+        },
+        {
+            "name": "unbound_secret_refs",
+            "summary": "Find secret refs that are missing either infra bindings or code readers.",
+            "cypher": CYPHER_CONFIG_UNBOUND_SECRET_REFS,
+        },
+        {
+            "name": "unused_feature_flags",
+            "summary": "Find feature flags that have no gated code path evidence.",
+            "cypher": CYPHER_CONFIG_UNUSED_FEATURE_FLAGS,
+        },
+        {
+            "name": "orphan_feature_flags",
+            "summary": "Find feature flags that have missing infra bindings or missing gated code-path evidence.",
+            "cypher": CYPHER_CONFIG_ORPHAN_FEATURE_FLAGS,
+        },
+        {
+            "name": "resource_without_readers",
+            "summary": "Find infra resources that project env vars with no known code readers.",
+            "cypher": CYPHER_CONFIG_RESOURCE_WITHOUT_READERS,
+        },
+        {
+            "name": "reader_without_resource",
+            "summary": "Find env readers that have no matching infra-resource projection.",
+            "cypher": CYPHER_CONFIG_READER_WITHOUT_RESOURCE,
+        },
+    ]
+
+
+def build_semantic_validation_query_pack() -> list[dict[str, object]]:
+    """Returns canonical semantic validation queries with fixture mappings."""
+
+    return [
+        {
+            "name": "fastapi_auth_contract_minimum",
+            "summary": "Validate minimum FastAPI dependency, auth, scope, and contract coverage.",
+            "fixture_name": "fastapi_semantic_fixture",
+            "minimum_rows": 1,
+            "cypher": CYPHER_VALIDATION_FASTAPI_AUTH_CONTRACT_MINIMUM,
+        },
+        {
+            "name": "event_flow_minimum",
+            "summary": "Validate minimum outbox, publish, handler, replay, and DLQ event coverage.",
+            "fixture_name": "event_flow_semantic_fixture",
+            "minimum_rows": 1,
+            "cypher": CYPHER_VALIDATION_EVENT_FLOW_MINIMUM,
+        },
+        {
+            "name": "transaction_flow_minimum",
+            "summary": "Validate minimum transaction-boundary and side-effect ordering coverage.",
+            "fixture_name": "transaction_flow_semantic_fixture",
+            "minimum_rows": 1,
+            "cypher": CYPHER_VALIDATION_TRANSACTION_MINIMUM,
+        },
+        {
+            "name": "query_fingerprint_minimum",
+            "summary": "Validate minimum SQL/Cypher query, fingerprint, and target coverage.",
+            "fixture_name": "query_fingerprint_semantic_fixture",
+            "minimum_rows": 1,
+            "cypher": CYPHER_VALIDATION_QUERY_FINGERPRINT_MINIMUM,
+        },
+        {
+            "name": "frontend_operation_minimum",
+            "summary": "Validate minimum governed-operation and raw-bypass frontend coverage.",
+            "fixture_name": "frontend_operation_semantic_fixture",
+            "minimum_rows": 1,
+            "cypher": CYPHER_VALIDATION_FRONTEND_OPERATION_MINIMUM,
+        },
+        {
+            "name": "test_semantics_minimum",
+            "summary": "Validate minimum testcase-to-symbol/endpoint/contract coverage.",
+            "fixture_name": "test_semantics_fixture",
+            "minimum_rows": 1,
+            "cypher": CYPHER_VALIDATION_TEST_SEMANTICS_MINIMUM,
+        },
+        {
+            "name": "config_control_plane_minimum",
+            "summary": "Validate minimum env-reader, infra-setter, secret, and feature-flag coverage.",
+            "fixture_name": "env_flag_secret_semantic_fixture",
+            "minimum_rows": 1,
+            "cypher": CYPHER_VALIDATION_CONFIG_CONTROL_PLANE_MINIMUM,
+        },
+    ]
 
 
 CYPHER_EXPORT_NODES = """

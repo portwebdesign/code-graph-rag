@@ -156,12 +156,19 @@ jobs:
         run: |
           uv sync --extra treesitter-full --extra test --extra semantic --group dev
 
+      - name: Run semantic acceptance suite
+        env:
+          MEMGRAPH_HOST: localhost
+          MEMGRAPH_PORT: 7687
+        run: |
+          uv run pytest codebase_rag/tests/integration/semantic_fixtures/test_validation_matrix_queries.py codebase_rag/tests/integration/test_semantic_acceptance_ci_suite.py codebase_rag/tests/integration/test_full_semantic_reparse_smoke.py codebase_rag/tests/integration/test_semantic_query_pack_smoke.py codebase_rag/tests/integration/test_runtime_and_static_semantic_planes_coexist.py -v --tb=short
+
       - name: Run integration tests
         env:
           MEMGRAPH_HOST: localhost
           MEMGRAPH_PORT: 7687
         run: |
-          uv run pytest -m "integration" -v --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
+          uv run pytest -m "integration" --ignore=codebase_rag/tests/integration/semantic_fixtures/test_validation_matrix_queries.py --ignore=codebase_rag/tests/integration/test_semantic_acceptance_ci_suite.py --ignore=codebase_rag/tests/integration/test_full_semantic_reparse_smoke.py --ignore=codebase_rag/tests/integration/test_semantic_query_pack_smoke.py --ignore=codebase_rag/tests/integration/test_runtime_and_static_semantic_planes_coexist.py -v --tb=short --cov=codebase_rag --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         if: always() && secrets.CODECOV_TOKEN != ''
