@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from codebase_rag.core.config import AppConfig
+from codebase_rag.core.config import DEFAULT_ENV_FILE, AppConfig
 
 
 class TestProviderConfiguration:
@@ -210,6 +210,36 @@ class TestProviderConfiguration:
             assert orch_config.provider == "google"
             assert orch_config.model_id == "gemini-2.0-flash-thinking-exp"
             assert orch_config.thinking_budget == 10000
+
+    def test_defaults_use_repo_root_env_file_instead_of_cwd_env(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path
+    ) -> None:
+        """AppConfig should not read an unrelated .env from the current working directory."""
+        foreign_env = tmp_path / ".env"
+        foreign_env.write_text(
+            "ABEY_POSTGRES_PORT=15432\nTARGET_REPO_PATH=./foreign-repo\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        with patch.dict(os.environ, {}, clear=True):
+            config = AppConfig()
+
+        assert AppConfig.model_config.get("env_file") == DEFAULT_ENV_FILE
+        assert config.TARGET_REPO_PATH == "."
+
+    def test_explicit_env_file_ignores_unrelated_keys(self, tmp_path) -> None:
+        """Explicit dotenv files with extra keys should not fail settings construction."""
+        env_file = tmp_path / "custom.env"
+        env_file.write_text(
+            "TARGET_REPO_PATH=./custom-repo\nABEY_POSTGRES_PORT=15432\nUNRELATED_FLAG=true\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            config = AppConfig(_env_file=env_file)  # ty: ignore[unknown-argument]
+
+        assert config.TARGET_REPO_PATH == "./custom-repo"
 
     def test_openai_custom_endpoint(self) -> None:
         """Test OpenAI provider with custom endpoint."""

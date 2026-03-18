@@ -14,7 +14,10 @@ from codebase_rag.core import logs
 from codebase_rag.data_models.types_defs import CgrignorePatterns, ModelConfigKwargs
 from codebase_rag.infrastructure import exceptions as ex
 
-load_dotenv()
+CONFIG_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ENV_FILE = CONFIG_ROOT / ".env"
+
+load_dotenv(dotenv_path=DEFAULT_ENV_FILE)
 
 
 class ApiKeyInfoEntry(TypedDict):
@@ -179,9 +182,10 @@ class AppConfig(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=DEFAULT_ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",
     )
 
     MEMGRAPH_HOST: str = "localhost"
