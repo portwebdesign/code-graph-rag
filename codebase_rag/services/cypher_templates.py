@@ -208,7 +208,8 @@ class CypherTemplateBank:
             name="next_route_component_map",
             query=(
                 "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component)-[:HAS_ENDPOINT]->(e:Endpoint) "
-                "RETURN e.route AS route, coalesce(e.method, 'GET') AS method, "
+                "RETURN coalesce(e.route_path, e.route, e.name) AS route, "
+                "coalesce(e.http_method, e.method, 'ANY') AS method, "
                 "coalesce(e.next_kind, '') AS next_kind, "
                 "c.name AS component, c.qualified_name AS qualified_name, "
                 "coalesce(c.path, m.path, '') AS path "

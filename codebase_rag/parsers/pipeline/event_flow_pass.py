@@ -188,6 +188,7 @@ class EventFlowPass:
             cs.KEY_NAME: display_name,
             cs.KEY_FRAMEWORK: "python",
             "canonical_key": canonical_key,
+            "event_type": observation.event_type or observation.event_name or "event",
             "event_name": observation.event_name or display_name,
             "channel_name": observation.channel_name,
             "dlq_name": observation.dlq_name,
@@ -276,6 +277,7 @@ class EventFlowPass:
     ) -> dict[str, object]:
         payload = {
             "canonical_key": self._canonical_key(observation),
+            "event_type": observation.event_type or observation.event_name or "event",
             "event_name": observation.event_name,
             "channel_name": observation.channel_name,
             "dlq_name": observation.dlq_name,

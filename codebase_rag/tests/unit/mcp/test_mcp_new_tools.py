@@ -322,6 +322,30 @@ class TestMCPNewTools:
         error = mcp_registry.get_preflight_gate_error("run_cypher")
         assert error is None
 
+    def test_preflight_gate_requires_only_project_selection_when_enabled(
+        self,
+        mcp_registry: MCPToolsRegistry,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings, "MCP_REQUIRE_SESSION_PREFLIGHT", True)
+        mcp_registry._session_state["preflight_project_selected"] = True
+        mcp_registry._session_state["preflight_schema_summary_loaded"] = False
+
+        assert mcp_registry.get_preflight_gate_error("query_code_graph") is None
+
+    def test_preflight_gate_blocks_when_project_not_selected_when_enabled(
+        self,
+        mcp_registry: MCPToolsRegistry,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(settings, "MCP_REQUIRE_SESSION_PREFLIGHT", True)
+        mcp_registry._session_state["preflight_project_selected"] = False
+        mcp_registry._session_state["preflight_schema_summary_loaded"] = False
+
+        error = mcp_registry.get_preflight_gate_error("query_code_graph")
+        assert error is not None
+        assert "select_active_project" in error
+
     def test_phase_gate_blocks_mutation_during_retrieval(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:

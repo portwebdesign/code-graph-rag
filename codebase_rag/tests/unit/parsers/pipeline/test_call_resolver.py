@@ -268,6 +268,39 @@ class TestTryResolveViaTrie:
         assert result is not None
         assert result[1] == "proj.module.Class.method"
 
+    def test_skips_non_callable_candidates(self, call_resolver: CallResolver) -> None:
+        call_resolver.function_registry["proj.db.users"] = NodeType.CLASS
+
+        result = call_resolver._try_resolve_via_trie("users", "proj.api")
+        assert result is None
+
+    def test_prefers_prod_candidate_over_test_candidate(
+        self, call_resolver: CallResolver
+    ) -> None:
+        call_resolver.function_registry["proj.tests.helpers.helper"] = NodeType.FUNCTION
+        call_resolver.function_registry["proj.app.helpers.helper"] = NodeType.FUNCTION
+        call_resolver.module_qn_to_file_path = {
+            "proj.tests.helpers": Path("tests/helpers.py"),
+            "proj.app.helpers": Path("src/helpers.py"),
+            "proj.app.api": Path("src/api.py"),
+        }
+
+        result = call_resolver._try_resolve_via_trie("helper", "proj.app.api")
+        assert result is not None
+        assert result[1] == "proj.app.helpers.helper"
+
+    def test_returns_none_for_prod_when_only_test_candidate_exists(
+        self, call_resolver: CallResolver
+    ) -> None:
+        call_resolver.function_registry["proj.tests.helpers.helper"] = NodeType.FUNCTION
+        call_resolver.module_qn_to_file_path = {
+            "proj.tests.helpers": Path("tests/helpers.py"),
+            "proj.app.api": Path("src/api.py"),
+        }
+
+        result = call_resolver._try_resolve_via_trie("helper", "proj.app.api")
+        assert result is None
+
 
 class TestTryResolveWildcardImports:
     def test_resolves_wildcard_import(self, call_resolver: CallResolver) -> None:

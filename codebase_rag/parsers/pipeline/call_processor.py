@@ -25,6 +25,7 @@ from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
+    NodeType,
     PropertyDict,
 )
 from codebase_rag.infrastructure.language_spec import LanguageSpec
@@ -36,6 +37,7 @@ from codebase_rag.parsers.core.utils import (
 )
 from codebase_rag.parsers.type_inference import TypeInferenceEngine
 from codebase_rag.services.protocols import IngestorProtocol
+from codebase_rag.utils.path_utils import is_test_path
 
 from ..languages.cpp import utils as cpp_utils
 from .call_resolver import CallResolver
@@ -69,6 +71,7 @@ class CallProcessor:
         import_processor: ImportProcessor,
         class_inheritance: dict[str, list[str]],
         type_inference: TypeInferenceEngine | None = None,
+        module_qn_to_file_path: dict[str, Path] | None = None,
     ) -> None:
         """
         Initializes the CallProcessor.
@@ -85,12 +88,14 @@ class CallProcessor:
         self.ingestor = ingestor
         self.repo_path = repo_path
         self.project_name = project_name
+        self._module_qn_to_file_path = module_qn_to_file_path or {}
 
         self._resolver = CallResolver(
             function_registry=function_registry,
             import_processor=import_processor,
             class_inheritance=class_inheritance,
             type_inference=type_inference,
+            module_qn_to_file_path=self._module_qn_to_file_path,
         )
         self._dynamic_resolver = DynamicCallResolver(function_registry)
         env_heuristic = os.getenv("CODEGRAPH_HEURISTIC_CALLS", "").lower()
@@ -805,6 +810,18 @@ class CallProcessor:
             else:
                 continue
 
+            if self._should_skip_call_relationship(
+                caller_module_qn=module_qn,
+                callee_type=callee_type,
+                callee_qn=callee_qn,
+            ):
+                logger.debug(
+                    "Skipping CALLS edge from {} to {} due to callable/test guardrail",
+                    caller_qn,
+                    callee_qn,
+                )
+                continue
+
             if callee_qn.startswith(f"{cs.BUILTIN_PREFIX}{cs.SEPARATOR_DOT}"):
                 self._ensure_external_callee(callee_type, callee_qn)
             logger.debug(
@@ -828,6 +845,102 @@ class CallProcessor:
                     relation_type="call",
                 ),
             )
+
+    def _should_skip_call_relationship(
+        self,
+        *,
+        caller_module_qn: str,
+        callee_type: str,
+        callee_qn: str,
+    ) -> bool:
+        if not self._is_callable_type(callee_type):
+            return True
+
+        if self._is_sql_migration_symbol(callee_qn):
+            return True
+
+        caller_is_test = self._is_test_module_qn(caller_module_qn)
+        if not caller_is_test and self._is_test_symbol_qn(callee_qn):
+            return True
+        return False
+
+    @staticmethod
+    def _is_callable_type(node_type: str | NodeType) -> bool:
+        raw = node_type.value if isinstance(node_type, NodeType) else str(node_type)
+        return raw in {NodeType.FUNCTION.value, NodeType.METHOD.value}
+
+    def _is_test_symbol_qn(self, qualified_name: str) -> bool:
+        lowered = qualified_name.lower()
+        if any(
+            marker in lowered
+            for marker in (
+                ".tests.",
+                ".test.",
+                ".spec.",
+                ".mocks.",
+                ".mock.",
+                ".stubs.",
+                ".stub.",
+            )
+        ):
+            return True
+
+        module_qn = self._module_qn_for_symbol(qualified_name)
+        if module_qn is not None and self._is_test_module_qn(module_qn):
+            return True
+
+        symbol_name = qualified_name.split(cs.SEPARATOR_DOT)[-1].lower()
+        return symbol_name.startswith(("test_", "spec_", "mock_", "stub_"))
+
+    def _module_qn_for_symbol(self, qualified_name: str) -> str | None:
+        parts = qualified_name.split(cs.SEPARATOR_DOT)
+        for i in range(len(parts), 0, -1):
+            candidate = cs.SEPARATOR_DOT.join(parts[:i])
+            if candidate in self._module_qn_to_file_path:
+                return candidate
+        return None
+
+    def _is_test_module_qn(self, module_qn: str) -> bool:
+        lowered = module_qn.lower()
+        if any(
+            token in lowered
+            for token in (
+                ".tests",
+                ".test",
+                ".spec",
+                ".mocks",
+                ".mock",
+                ".stubs",
+                ".stub",
+            )
+        ):
+            return True
+
+        module_path = self._module_qn_to_file_path.get(module_qn)
+        if module_path is None:
+            return False
+        return is_test_path(module_path)
+
+    def _is_sql_migration_symbol(self, qualified_name: str) -> bool:
+        module_qn = self._module_qn_for_symbol(qualified_name)
+        if module_qn is None:
+            return False
+        module_path = self._module_qn_to_file_path.get(module_qn)
+        if module_path is None:
+            return False
+
+        if module_path.suffix.lower() != cs.EXT_SQL:
+            return False
+
+        lowered_parts = {part.lower() for part in module_path.parts}
+        migration_markers = {
+            "migration",
+            "migrations",
+            "alembic",
+            "flyway",
+            "liquibase",
+        }
+        return not lowered_parts.isdisjoint(migration_markers)
 
     def _build_nested_qualified_name(
         self,

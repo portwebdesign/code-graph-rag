@@ -482,6 +482,8 @@ class FrameworkLinker:
             cs.KEY_FRAMEWORK: endpoint.framework,
             cs.KEY_HTTP_METHOD: endpoint.method,
             cs.KEY_ROUTE_PATH: endpoint_path,
+            "method": endpoint.method,
+            "route": endpoint_path,
         }
         if normalized_path and normalized_path != endpoint.path:
             props[cs.KEY_NORMALIZED_PATH] = normalized_path
@@ -555,6 +557,8 @@ class FrameworkLinker:
                 cs.KEY_RELATION_TYPE: endpoint.framework,
                 "http_method": endpoint.method,
                 "route_path": endpoint.path,
+                "method": endpoint.method,
+                "route": endpoint.path,
                 "auth_required": False,
                 "framework": endpoint.framework,
                 "source_parser": "framework_linker",
@@ -1465,6 +1469,8 @@ class FrameworkLinker:
             cs.KEY_RELATION_TYPE: "fastapi",
             "http_method": endpoint.method,
             "route_path": final_path,
+            "method": endpoint.method,
+            "route": final_path,
             "local_route_path": endpoint.path,
             "framework": "fastapi",
             cs.KEY_SOURCE_PARSER: "framework_linker",
@@ -2138,6 +2144,8 @@ class FrameworkLinker:
                 cs.KEY_RELATION_TYPE: relation_type,
                 "http_method": endpoint.method,
                 "route_path": endpoint.path,
+                "method": endpoint.method,
+                "route": endpoint.path,
                 "auth_required": False,
                 "framework": "next",
                 "source_parser": "framework_linker",

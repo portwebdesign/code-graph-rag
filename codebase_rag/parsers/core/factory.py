@@ -158,5 +158,6 @@ class ProcessorFactory:
                 import_processor=self.import_processor,
                 class_inheritance=self.definition_processor.class_inheritance,
                 type_inference=self.type_inference,
+                module_qn_to_file_path=self.module_qn_to_file_path,
             )
         return self._call_processor

@@ -24,10 +24,12 @@ from codebase_rag.core import constants as cs
 from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     LanguageQueries,
+    NodeType,
 )
 from codebase_rag.infrastructure.language_spec import LanguageSpec
 from codebase_rag.parsers.core.utils import normalize_query_captures
 from codebase_rag.services import IngestorProtocol
+from codebase_rag.utils.path_utils import is_test_path
 
 
 class ReparseRegistryResolver:
@@ -102,7 +104,7 @@ class ReparseRegistryResolver:
                 continue
             self._resolve_calls_for_file(file_path, root_node, language, registry)
 
-    def _build_registry(self) -> dict[str, list[dict[str, str]]]:
+    def _build_registry(self) -> dict[str, list[dict[str, str | bool]]]:
         """
         Builds a simplified registry mapping simple names to full definition details.
 
@@ -113,7 +115,7 @@ class ReparseRegistryResolver:
         Returns:
             A dictionary mapping simple names to a list of potential definition matches.
         """
-        registry: dict[str, list[dict[str, str]]] = {}
+        registry: dict[str, list[dict[str, str | bool]]] = {}
         for qn, node_type in self.function_registry.items():
             simple_name = qn.split(cs.SEPARATOR_DOT)[-1]
             file_path = self._find_file_path_for_qn(qn)
@@ -121,6 +123,9 @@ class ReparseRegistryResolver:
                 "qn": qn,
                 "type": node_type.value,
                 "file_path": file_path or "",
+                "is_test": self._is_test_candidate(qn, file_path),
+                "is_callable": self._is_callable_type(node_type),
+                "is_sql_migration": self._is_sql_migration_candidate(file_path),
             }
             registry.setdefault(simple_name, []).append(entry)
         return registry
@@ -130,7 +135,7 @@ class ReparseRegistryResolver:
         file_path: Path,
         root_node: Node,
         language: cs.SupportedLanguage,
-        registry: dict[str, list[dict[str, str]]],
+        registry: dict[str, list[dict[str, str | bool]]],
     ) -> None:
         """
         Resolves all function calls within a single file using the provided registry.
@@ -240,7 +245,10 @@ class ReparseRegistryResolver:
         return f"{module_qn}{cs.SEPARATOR_DOT}{function_name}"
 
     def _resolve_from_registry(
-        self, call_name: str, registry: dict[str, list[dict[str, str]]], file_path: str
+        self,
+        call_name: str,
+        registry: dict[str, list[dict[str, str | bool]]],
+        file_path: str,
     ) -> tuple[str | None, str | None]:
         """
         Resolves a call name to a qualified name using the simplified registry.
@@ -260,14 +268,77 @@ class ReparseRegistryResolver:
         if not candidates:
             return None, None
 
-        same_file = [c for c in candidates if c.get("file_path") == file_path]
-        if len(same_file) == 1:
-            return same_file[0]["qn"], same_file[0]["type"]
+        caller_is_test = is_test_path(Path(file_path))
+        callable_candidates = [
+            candidate
+            for candidate in candidates
+            if candidate.get("is_callable") and not candidate.get("is_sql_migration")
+        ]
+        if not callable_candidates:
+            return None, None
 
-        if len(candidates) == 1:
-            return candidates[0]["qn"], candidates[0]["type"]
+        same_env_candidates = [
+            candidate
+            for candidate in callable_candidates
+            if bool(candidate.get("is_test")) == caller_is_test
+        ]
+        preferred = same_env_candidates or callable_candidates
+
+        same_file = [c for c in preferred if c.get("file_path") == file_path]
+        if len(same_file) == 1:
+            return str(same_file[0]["qn"]), str(same_file[0]["type"])
+
+        if len(preferred) == 1:
+            return str(preferred[0]["qn"]), str(preferred[0]["type"])
+
+        if len(callable_candidates) == 1:
+            return str(callable_candidates[0]["qn"]), str(
+                callable_candidates[0]["type"]
+            )
 
         return None, None
+
+    @staticmethod
+    def _is_callable_type(node_type: NodeType | str) -> bool:
+        raw = node_type.value if isinstance(node_type, NodeType) else str(node_type)
+        return raw in {NodeType.FUNCTION.value, NodeType.METHOD.value}
+
+    @staticmethod
+    def _is_test_candidate(qualified_name: str, file_path: str | None) -> bool:
+        lowered = qualified_name.lower()
+        if any(
+            marker in lowered
+            for marker in (
+                ".tests.",
+                ".test.",
+                ".spec.",
+                ".mocks.",
+                ".mock.",
+                ".stubs.",
+                ".stub.",
+            )
+        ):
+            return True
+        if file_path:
+            return is_test_path(Path(file_path))
+        return False
+
+    @staticmethod
+    def _is_sql_migration_candidate(file_path: str | None) -> bool:
+        if not file_path:
+            return False
+        path_obj = Path(file_path)
+        if path_obj.suffix.lower() != cs.EXT_SQL:
+            return False
+        lowered_parts = {part.lower() for part in path_obj.parts}
+        migration_markers = {
+            "migration",
+            "migrations",
+            "alembic",
+            "flyway",
+            "liquibase",
+        }
+        return not lowered_parts.isdisjoint(migration_markers)
 
     def _get_call_target_name(self, call_node: Node) -> str | None:
         """

@@ -11,6 +11,7 @@ accurate call graph.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -21,6 +22,7 @@ from codebase_rag.core import logs as ls
 from codebase_rag.data_models.types_defs import FunctionRegistryTrieProtocol, NodeType
 from codebase_rag.parsers.core.utils import safe_decode_text
 from codebase_rag.parsers.languages.py import resolve_class_name
+from codebase_rag.utils.path_utils import is_test_path
 
 from .import_processor import ImportProcessor
 
@@ -54,6 +56,7 @@ class CallResolver:
         import_processor: ImportProcessor,
         class_inheritance: dict[str, list[str]],
         type_inference: TypeInferenceEngine | None = None,
+        module_qn_to_file_path: dict[str, Path] | None = None,
     ) -> None:
         """
         Initialize the CallResolver.
@@ -68,6 +71,7 @@ class CallResolver:
         self.import_processor = import_processor
         self.class_inheritance = class_inheritance
         self.type_inference = type_inference
+        self.module_qn_to_file_path = module_qn_to_file_path or {}
 
     def _resolve_class_qn_from_type(
         self, var_type: str, import_map: dict[str, str], module_qn: str
@@ -427,6 +431,11 @@ class CallResolver:
             return None
 
         possible_matches = self.function_registry.find_ending_with(search_name)
+        possible_matches = [
+            qn
+            for qn in possible_matches
+            if self._is_trie_candidate_allowed(qn, caller_module_qn=module_qn)
+        ]
         if not possible_matches:
             logger.debug(ls.CALL_UNRESOLVED.format(call_name=call_name))
             return None
@@ -439,6 +448,99 @@ class CallResolver:
             ls.CALL_TRIE_FALLBACK.format(call_name=call_name, qn=best_candidate_qn)
         )
         return self.function_registry[best_candidate_qn], best_candidate_qn
+
+    def _is_trie_candidate_allowed(
+        self, candidate_qn: str, caller_module_qn: str
+    ) -> bool:
+        node_type = self.function_registry.get(candidate_qn)
+        if node_type is None or not self._is_callable_node_type(node_type):
+            return False
+
+        if self._is_sql_migration_symbol(candidate_qn):
+            return False
+
+        caller_is_test = self._is_test_module_qn(caller_module_qn)
+        if not caller_is_test and self._is_test_symbol_qn(candidate_qn):
+            return False
+        return True
+
+    @staticmethod
+    def _is_callable_node_type(node_type: NodeType | str) -> bool:
+        raw = node_type.value if isinstance(node_type, NodeType) else str(node_type)
+        return raw in {NodeType.FUNCTION.value, NodeType.METHOD.value}
+
+    def _is_test_symbol_qn(self, qualified_name: str) -> bool:
+        lowered = qualified_name.lower()
+        if any(
+            marker in lowered
+            for marker in (
+                ".tests.",
+                ".test.",
+                ".spec.",
+                ".mocks.",
+                ".mock.",
+                ".stubs.",
+                ".stub.",
+            )
+        ):
+            return True
+
+        module_qn = self._module_qn_for_symbol(qualified_name)
+        if module_qn is not None and self._is_test_module_qn(module_qn):
+            return True
+
+        symbol_name = qualified_name.split(cs.SEPARATOR_DOT)[-1].lower()
+        return symbol_name.startswith(("test_", "spec_", "mock_", "stub_"))
+
+    def _module_qn_for_symbol(self, qualified_name: str) -> str | None:
+        parts = qualified_name.split(cs.SEPARATOR_DOT)
+        for i in range(len(parts), 0, -1):
+            candidate = cs.SEPARATOR_DOT.join(parts[:i])
+            if candidate in self.module_qn_to_file_path:
+                return candidate
+        return None
+
+    def _is_test_module_qn(self, module_qn: str) -> bool:
+        lowered = module_qn.lower()
+        if any(
+            token in lowered
+            for token in (
+                ".tests",
+                ".test",
+                ".spec",
+                ".mocks",
+                ".mock",
+                ".stubs",
+                ".stub",
+            )
+        ):
+            return True
+
+        module_path = self.module_qn_to_file_path.get(module_qn)
+        if module_path is None:
+            return False
+        return is_test_path(module_path)
+
+    def _is_sql_migration_symbol(self, qualified_name: str) -> bool:
+        module_qn = self._module_qn_for_symbol(qualified_name)
+        if module_qn is None:
+            return False
+        module_path = self.module_qn_to_file_path.get(module_qn)
+        if module_path is None:
+            return False
+
+        if module_path.suffix.lower() != cs.EXT_SQL:
+            return False
+
+        lowered_parts = {part.lower() for part in module_path.parts}
+        migration_markers = {
+            "migration",
+            "migrations",
+            "alembic",
+            "flyway",
+            "liquibase",
+        }
+        return not lowered_parts.isdisjoint(migration_markers)
 
     def _is_likely_builtin_method(self, call_name: str, method_name: str) -> bool:
         """

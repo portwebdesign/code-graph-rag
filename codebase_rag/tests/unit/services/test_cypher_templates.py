@@ -59,3 +59,5 @@ class TestCypherTemplateBank:
         assert match.query is not None
         assert "HAS_ENDPOINT" in match.query
         assert "next_kind" in match.query
+        assert "coalesce(e.route_path, e.route, e.name)" in match.query
+        assert "coalesce(e.http_method, e.method, 'ANY')" in match.query

@@ -2321,9 +2321,6 @@ class MCPToolsRegistry:
         project_selected = bool(
             self._session_state.get("preflight_project_selected", False)
         )
-        schema_loaded = bool(
-            self._session_state.get("preflight_schema_summary_loaded", False)
-        )
 
         if not project_selected:
             exact_next_calls = [
@@ -2345,19 +2342,6 @@ class MCPToolsRegistry:
                     ),
                     "why": "reinitialize_session_scope_and_preflight",
                 },
-            ]
-        elif not schema_loaded:
-            exact_next_calls = [
-                {
-                    "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
-                    "args": {"project_name": project_name},
-                    "priority": 1,
-                    "when": "project scope exists but schema bootstrap state is missing",
-                    "copy_paste": (
-                        f'select_active_project(project_name="{_esc(project_name)}")'
-                    ),
-                    "why": "rebuild_schema_preflight_context",
-                }
             ]
 
         if not exact_next_calls and tool_name in {
@@ -2931,16 +2915,7 @@ class MCPToolsRegistry:
         if not project_selected:
             return (
                 "session_preflight_required: call select_active_project first. "
-                "Project scope and schema preflight must be initialized before analysis tools."
-            )
-
-        schema_loaded = bool(
-            self._session_state.get("preflight_schema_summary_loaded", False)
-        )
-        if not schema_loaded:
-            return (
-                "session_preflight_required: schema summary preflight is missing. "
-                "Re-run select_active_project to initialize project-scoped schema context."
+                "Project scope must be initialized before analysis tools."
             )
         return None
 
@@ -2962,9 +2937,6 @@ class MCPToolsRegistry:
             project_selected = bool(
                 self._session_state.get("preflight_project_selected", False)
             )
-            schema_loaded = bool(
-                self._session_state.get("preflight_schema_summary_loaded", False)
-            )
 
             if not project_selected:
                 exact_next_calls = [
@@ -2982,19 +2954,8 @@ class MCPToolsRegistry:
                         "priority": 2,
                         "when": "after list_projects confirms target",
                         "copy_paste": f'select_active_project(project_name="{_esc(project_name)}")',
-                        "why": "initialize_project_scope_and_schema_preflight",
+                        "why": "initialize_project_scope",
                     },
-                ]
-            elif not schema_loaded:
-                exact_next_calls = [
-                    {
-                        "tool": cs.MCPToolName.SELECT_ACTIVE_PROJECT,
-                        "args": {"project_name": project_name},
-                        "priority": 1,
-                        "when": "project selected but schema preflight missing",
-                        "copy_paste": f'select_active_project(project_name="{_esc(project_name)}")',
-                        "why": "rebuild_schema_preflight_context",
-                    }
                 ]
             else:
                 exact_next_calls = [
@@ -3481,7 +3442,8 @@ class MCPToolsRegistry:
                 ],
                 "query": (
                     "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component)-[:HAS_ENDPOINT]->(e:Endpoint) "
-                    "RETURN e.route AS route, coalesce(e.method, 'GET') AS method, "
+                    "RETURN coalesce(e.route_path, e.route, e.name) AS route, "
+                    "coalesce(e.http_method, e.method, 'ANY') AS method, "
                     "coalesce(e.next_kind, '') AS next_kind, "
                     "c.name AS component, c.qualified_name AS qualified_name, "
                     "coalesce(c.path, m.path, '') AS path "
@@ -8723,7 +8685,9 @@ class MCPToolsRegistry:
             )
             templates.append(
                 "MATCH (m:Module {project_name: $project_name})-[:DEFINES]->(c:Component)-[:HAS_ENDPOINT]->(e:Endpoint) "
-                "RETURN e.route AS route, coalesce(e.next_kind, '') AS next_kind, c.name AS component, c.path AS path "
+                "RETURN coalesce(e.route_path, e.route, e.name) AS route, "
+                "coalesce(e.http_method, e.method, 'ANY') AS method, "
+                "coalesce(e.next_kind, '') AS next_kind, c.name AS component, c.path AS path "
                 "LIMIT 120"
             )
 

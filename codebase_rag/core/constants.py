@@ -3465,12 +3465,13 @@ SPEC_DOCKERFILE_IMPORT_TYPES: tuple[str, ...] = ()
 
 # (H) LANGUAGE_SPECS node type tuples for SQL
 SPEC_SQL_FUNCTION_TYPES: tuple[str, ...] = (
-    "create_view",
     "create_function",
+    "create_procedure",
     "create_trigger",
 )
 SPEC_SQL_CLASS_TYPES: tuple[str, ...] = (
     "create_table",
+    "create_view",
     "create_type",
     "create_sequence",
     "create_index",

@@ -10,6 +10,7 @@ class EventFlowObservation:
     symbol_name: str
     symbol_kind: str
     stage: str
+    event_type: str | None = None
     event_name: str | None = None
     channel_name: str | None = None
     dlq_name: str | None = None
@@ -31,7 +32,16 @@ def extract_python_event_flows(source: str) -> list[EventFlowObservation]:
     collector.visit(tree)
 
     unique: dict[
-        tuple[str, str, str, str | None, str | None, str | None, str | None],
+        tuple[
+            str,
+            str,
+            str,
+            str | None,
+            str | None,
+            str | None,
+            str | None,
+            str | None,
+        ],
         EventFlowObservation,
     ] = {}
     for observation in collector.observations:
@@ -39,6 +49,7 @@ def extract_python_event_flows(source: str) -> list[EventFlowObservation]:
             observation.symbol_name,
             observation.symbol_kind,
             observation.stage,
+            observation.event_type,
             observation.event_name,
             observation.channel_name,
             observation.dlq_name,
@@ -147,15 +158,24 @@ def _observation_from_decorator(
 
     call = decorator if isinstance(decorator, ast.Call) else None
     event_name = _extract_event_name(call)
+    event_type = _extract_event_type(call)
     channel_name = _extract_channel_name(call)
     dlq_name = _extract_dlq_name(call)
     if not any((event_name, channel_name, dlq_name)):
         return None
+    event_type = event_type or _fallback_event_type(
+        stage="consume",
+        mechanism=decorator_name,
+        event_name=event_name,
+        channel_name=channel_name,
+        dlq_name=dlq_name,
+    )
 
     return EventFlowObservation(
         symbol_name=symbol_name,
         symbol_kind=symbol_kind,
         stage="consume",
+        event_type=event_type,
         event_name=event_name,
         channel_name=channel_name,
         dlq_name=dlq_name,
@@ -179,15 +199,24 @@ def _observation_from_call(
         return None
 
     event_name = _extract_event_name(call)
+    event_type = _extract_event_type(call)
     channel_name = _extract_channel_name(call)
     dlq_name = _extract_dlq_name(call)
     if not any((event_name, channel_name, dlq_name)):
         return None
+    event_type = event_type or _fallback_event_type(
+        stage=stage,
+        mechanism=mechanism,
+        event_name=event_name,
+        channel_name=channel_name,
+        dlq_name=dlq_name,
+    )
 
     return EventFlowObservation(
         symbol_name=symbol_name,
         symbol_kind=symbol_kind,
         stage=stage,
+        event_type=event_type,
         event_name=event_name,
         channel_name=channel_name,
         dlq_name=dlq_name,
@@ -275,6 +304,65 @@ def _extract_event_name(call: ast.Call | None) -> str | None:
         if "dlq" not in first.lower() and "dead-letter" not in first.lower():
             return first
     return None
+
+
+def _extract_event_type(call: ast.Call | None) -> str | None:
+    if call is None:
+        return None
+    for keyword in call.keywords:
+        if keyword.arg in {
+            "event_type",
+            "message_type",
+            "event",
+            "event_name",
+            "subject",
+            "routing_key",
+            "kind",
+            "name",
+        }:
+            literal = _extract_string_literal(keyword.value)
+            if literal:
+                return literal
+    positional = list(_iter_string_literals(call))
+    if positional:
+        first = positional[0]
+        if "dlq" not in first.lower() and "dead-letter" not in first.lower():
+            return first
+    return None
+
+
+def _fallback_event_type(
+    *,
+    stage: str,
+    mechanism: str | None,
+    event_name: str | None,
+    channel_name: str | None,
+    dlq_name: str | None,
+) -> str:
+    if event_name:
+        return event_name
+
+    lowered_mechanism = (mechanism or "").lower()
+    if dlq_name or "dlq" in lowered_mechanism or "dead-letter" in lowered_mechanism:
+        return "dead_letter"
+
+    if stage == "replay":
+        return "replay_event"
+    if stage == "consume":
+        return "consumed_event"
+    if stage == "publish":
+        return "published_event"
+    if stage == "outbox":
+        return "outbox_event"
+
+    if channel_name:
+        return "channel_event"
+    if any(
+        token in lowered_mechanism
+        for token in ("queue", "topic", "stream", "kafka", "rabbit", "redis")
+    ):
+        return "message"
+    return "event"
 
 
 def _extract_channel_name(call: ast.Call | None) -> str | None:
