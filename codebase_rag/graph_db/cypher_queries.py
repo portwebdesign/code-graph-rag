@@ -332,6 +332,8 @@ MATCH (e:Endpoint {project_name: $project_name})
 OPTIONAL MATCH (e)-[:SECURED_BY]->(p:AuthPolicy)
 WITH e, collect(DISTINCT p.name) AS auth_policies
 WHERE auth_policies = []
+  AND coalesce(e.source_parser, '') <> 'frontend_operation_pass'
+  AND coalesce(e.framework, '') <> 'http'
 RETURN coalesce(e.route_path, e.route, e.name) AS endpoint,
        coalesce(e.http_method, e.method, 'ANY') AS method,
        coalesce(e.path, '') AS path

@@ -171,6 +171,101 @@ async def health(actor: str = Security(resolve_actor, scopes=["health:read"])) -
     )
 
 
+def test_auth_like_depends_infers_secured_by_edges(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "fastapi_depends_auth_inference"
+    project.mkdir()
+
+    _write(
+        project / "main.py",
+        """from fastapi import APIRouter, Depends
+
+router = APIRouter()
+
+
+def require_system_actor() -> str:
+    return "system"
+
+
+@router.get("/system/status", dependencies=[Depends(require_system_actor)])
+async def system_status() -> dict[str, str]:
+    return {"status": "ok"}
+""",
+    )
+
+    run_updater(project, mock_ingestor)
+
+    endpoint_qn = "fastapi_depends_auth_inference.endpoint.fastapi.GET:/system/status"
+    secured_by = [
+        call.args
+        for call in get_relationships(mock_ingestor, cs.RelationshipType.SECURED_BY)
+    ]
+    assert any(
+        rel[0] == (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn)
+        and rel[2][0] == cs.NodeLabel.AUTH_POLICY
+        and cast(dict[str, object], rel[3]).get("policy_name") == "require_system_actor"
+        and cast(dict[str, object], rel[3]).get("inferred_from_dependency") is True
+        for rel in secured_by
+    )
+
+
+def test_materializes_fastapi_websocket_endpoint_and_handler_edges(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "fastapi_websocket_semantics"
+    project.mkdir()
+
+    _write(
+        project / "main.py",
+        """from fastapi import APIRouter, WebSocket
+
+router = APIRouter()
+
+
+@router.websocket("/ws/events")
+async def stream_events(websocket: WebSocket) -> None:
+    await websocket.accept()
+    await websocket.send_text("ok")
+""",
+    )
+
+    run_updater(project, mock_ingestor)
+
+    endpoint_qn = "fastapi_websocket_semantics.endpoint.fastapi.WEBSOCKET:/ws/events"
+    endpoint_nodes = _node_props(mock_ingestor, cs.NodeLabel.ENDPOINT)
+    assert any(
+        props.get(cs.KEY_QUALIFIED_NAME) == endpoint_qn
+        and props.get(cs.KEY_HTTP_METHOD) == "WEBSOCKET"
+        and props.get(cs.KEY_ROUTE_PATH) == "/ws/events"
+        for props in endpoint_nodes
+    )
+
+    has_endpoint = [
+        call.args
+        for call in get_relationships(mock_ingestor, cs.RelationshipType.HAS_ENDPOINT)
+    ]
+    assert any(
+        rel[2] == (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn)
+        and str(rel[0][2]).endswith(".stream_events")
+        for rel in has_endpoint
+    )
+
+    routes_to_action = [
+        call.args
+        for call in get_relationships(
+            mock_ingestor, cs.RelationshipType.ROUTES_TO_ACTION
+        )
+    ]
+    assert any(
+        rel[0] == (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn)
+        and str(rel[2][2]).endswith(".stream_events")
+        for rel in routes_to_action
+    )
+
+
 def test_contract_semantics_pass_emits_request_edges_and_field_graph(
     temp_repo: Path,
     mock_ingestor: MagicMock,

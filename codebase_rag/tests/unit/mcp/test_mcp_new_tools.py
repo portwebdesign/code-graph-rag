@@ -954,6 +954,35 @@ class TestMCPNewTools:
         query_used = str(result.get("query_used", ""))
         assert "CONTAINS '/codebase_rag/parsers'" in query_used
 
+    async def test_query_code_graph_requires_graph_grounding_for_ticket_log_queries(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        called = {"generate": 0}
+
+        async def fake_generate(_: str) -> str:
+            called["generate"] += 1
+            return "MATCH (m:Module {project_name: $project_name}) RETURN m LIMIT 5"
+
+        _registry_any(mcp_registry).cypher_gen.generate = fake_generate
+
+        result = await mcp_registry.query_code_graph(
+            natural_language_query=(
+                "EPIC-128 BL notes say update auth flow, acceptance criteria and logs attached."
+            ),
+            output_format="json",
+        )
+
+        assert isinstance(result, dict)
+        assert result.get("error") == "query_requires_graph_grounding"
+        assert result.get("clarification_required") is True
+        assert result.get("results") == []
+        assert called["generate"] == 0
+        exact_next_calls = cast(
+            list[dict[str, object]], result.get("exact_next_calls", [])
+        )
+        assert exact_next_calls
+        assert exact_next_calls[0].get("tool") == "query_code_graph"
+
     async def test_query_code_graph_standardized_fallback_uses_run_cypher(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:

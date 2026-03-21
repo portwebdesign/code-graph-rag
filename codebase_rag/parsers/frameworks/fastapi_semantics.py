@@ -20,7 +20,7 @@ class FastAPIRouteSemantics:
 
 
 _FASTAPI_ROUTE_RE = re.compile(
-    r"@(?P<router>[A-Za-z_][A-Za-z0-9_]*)\.(?P<method>get|post|put|delete|patch|api_route)\(",
+    r"@(?P<router>[A-Za-z_][A-Za-z0-9_]*)\.(?P<method>get|post|put|delete|patch|api_route|websocket|websocket_route)\(",
     re.IGNORECASE,
 )
 _DEF_RE = re.compile(
@@ -56,6 +56,8 @@ def extract_fastapi_route_semantics(source: str) -> list[FastAPIRouteSemantics]:
         method = match.group("method").upper()
         if method == "API_ROUTE":
             method = _extract_api_route_method(args)
+        elif method == "WEBSOCKET_ROUTE":
+            method = "WEBSOCKET"
 
         line_start = _line_number_for_index(source, match.start())
         line_end = _line_number_for_index(source, handler_end)

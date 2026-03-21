@@ -16,6 +16,11 @@ Current emitted edges:
 - `GENERATED_FROM_SPEC`
 - `BYPASSES_MANIFEST`
 
+`REQUESTS_ENDPOINT` is emitted on two surfaces:
+
+- `ClientOperation -> Endpoint` (canonical governance path)
+- source symbol (`Component` / `Function` / `Method`) -> `Endpoint` as a shortcut edge when available
+
 ## Current Heuristics
 
 Supported source families:

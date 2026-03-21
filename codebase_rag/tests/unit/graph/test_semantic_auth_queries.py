@@ -25,3 +25,13 @@ def test_semantic_auth_query_family_uses_expected_relationships() -> None:
     assert "RETURNS_CONTRACT" in CYPHER_SEMANTIC_ENDPOINT_CONTRACT_GAPS
     assert "REQUESTS_ENDPOINT" in CYPHER_SEMANTIC_ENDPOINT_CONTRACT_GAPS
     assert "SECURED_BY" in CYPHER_SEMANTIC_UNPROTECTED_ENDPOINTS
+
+
+def test_unprotected_endpoint_query_excludes_frontend_placeholders() -> None:
+    assert "frontend_operation_pass" in CYPHER_SEMANTIC_UNPROTECTED_ENDPOINTS
+    assert "coalesce(e.source_parser, '') <> 'frontend_operation_pass'" in (
+        CYPHER_SEMANTIC_UNPROTECTED_ENDPOINTS
+    )
+    assert (
+        "coalesce(e.framework, '') <> 'http'" in CYPHER_SEMANTIC_UNPROTECTED_ENDPOINTS
+    )

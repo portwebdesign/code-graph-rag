@@ -84,3 +84,12 @@ def test_client_operation_fixture_snapshot_is_deterministic(
         rel["relationship_type"] == str(cs.RelationshipType.BYPASSES_MANIFEST)
         for rel in first_snapshot["relationships"]
     )
+    assert any(
+        rel["relationship_type"] == str(cs.RelationshipType.REQUESTS_ENDPOINT)
+        and rel["from"]["value"]
+        == "frontend_operation_semantic_fixture.src.lib.generated.client.listCustomers"
+        and rel["to"]["value"]
+        == "frontend_operation_semantic_fixture.endpoint.http.GET:/api/customers"
+        and rel["props"].get("evidence_kind") == "source_symbol_request_shortcut"
+        for rel in first_snapshot["relationships"]
+    )

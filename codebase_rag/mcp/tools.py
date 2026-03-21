@@ -1759,6 +1759,69 @@ class MCPToolsRegistry:
     _EXPLORATION_MAX_EPSILON = 0.35
     _EXPLORATION_ALLOWED_FAILURE_TYPES = {"no_data", "low_confidence", "unknown"}
     _EXPLORATION_POLICY_UCB_BONUS = 0.2
+    _QUERY_TICKET_REF_RE = re.compile(
+        r"\b(?:epic|task|story|bug|issue|ticket)[\s_-]?\d+\b",
+        re.IGNORECASE,
+    )
+    _QUERY_FILE_PATH_HINT_RE = re.compile(
+        r"\b(?:[A-Za-z]:[\\/])?[A-Za-z0-9_.\-/\\]+\.(?:py|ts|tsx|js|jsx|go|java|kt|rs|rb|php|cs|cpp|c|h|hpp|json|yml|yaml|toml|ini|md)\b",
+        re.IGNORECASE,
+    )
+    _QUERY_QUALIFIED_NAME_HINT_RE = re.compile(
+        r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}\b"
+    )
+    _QUERY_ENDPOINT_PATH_HINT_RE = re.compile(r"\B/(?:[A-Za-z0-9_\-{}:]+/?){1,}")
+    _QUERY_EXTERNAL_CONTEXT_HINTS = (
+        "agent log",
+        "agent logs",
+        "llm log",
+        "llm logs",
+        "jira",
+        "acceptance criteria",
+        "backlog",
+        "sprint",
+        "user story",
+    )
+    _QUERY_GRAPH_INTENT_HINTS = (
+        "function",
+        "functions",
+        "class",
+        "classes",
+        "module",
+        "modules",
+        "endpoint",
+        "endpoints",
+        "route",
+        "routes",
+        "qualified_name",
+        "qualified name",
+        "symbol",
+        "symbols",
+        "caller",
+        "callers",
+        "callee",
+        "callees",
+        "dependency",
+        "dependencies",
+        "import",
+        "imports",
+        "method",
+        "methods",
+        "controller",
+        "controllers",
+        "service",
+        "services",
+    )
+    _CYPHER_MULTI_HOP_STAR_PATTERN = re.compile(r"\*\s*\d+\s*\.\.\s*\d+")
+    _CYPHER_MULTI_HOP_DEPTH_PATTERN = re.compile(r"\*\s*\d+\s*\.\.\s*(\d+)")
+    _CYPHER_QUALIFIED_NAME_LITERAL_RE = re.compile(
+        r"\bqualified_name\b\s*(?:=|:|CONTAINS|ENDS\s+WITH)\s*['\"](?P<value>[^'\"]+)['\"]",
+        re.IGNORECASE,
+    )
+    _CYPHER_FILE_PATH_LITERAL_RE = re.compile(
+        r"\b(?:file_path|path)\b\s*(?:=|:|CONTAINS|ENDS\s+WITH)\s*['\"](?P<value>[^'\"]+)['\"]",
+        re.IGNORECASE,
+    )
     _TOOL_TIER_MAP = {
         cs.MCPToolName.LIST_PROJECTS: "tier1",
         cs.MCPToolName.GET_SCHEMA_OVERVIEW: "tier1",
@@ -4527,6 +4590,87 @@ class MCPToolsRegistry:
         ).strip()
         return bool(digest_id)
 
+    @classmethod
+    def _is_multi_hop_cypher_query(cls, cypher_query: str) -> bool:
+        normalized = " ".join(str(cypher_query or "").split()).lower()
+        if not normalized:
+            return False
+        if cls._CYPHER_MULTI_HOP_STAR_PATTERN.search(normalized):
+            return True
+        return (
+            "match p=" in normalized
+            and "->" in normalized
+            and (
+                "nodes(p)" in normalized
+                or "relationships(p)" in normalized
+                or "length(p)" in normalized
+            )
+        )
+
+    @classmethod
+    def _extract_multi_hop_depth_from_cypher(cls, cypher_query: str) -> int:
+        depth = 3
+        match = cls._CYPHER_MULTI_HOP_DEPTH_PATTERN.search(str(cypher_query or ""))
+        if match is not None:
+            try:
+                depth = int(str(match.group(1) or "3"))
+            except ValueError:
+                depth = 3
+        return min(max(1, depth), 6)
+
+    @classmethod
+    def _extract_multi_hop_target_from_query(
+        cls, cypher_query: str, parsed_params: dict[str, object]
+    ) -> tuple[str, str] | None:
+        qualified_name = str(
+            parsed_params.get("qualified_name") or parsed_params.get("symbol") or ""
+        ).strip()
+        if qualified_name:
+            return ("qualified_name", qualified_name)
+
+        file_path = str(
+            parsed_params.get("file_path") or parsed_params.get("path") or ""
+        ).strip()
+        if file_path:
+            return ("file_path", file_path)
+
+        qn_match = cls._CYPHER_QUALIFIED_NAME_LITERAL_RE.search(str(cypher_query or ""))
+        if qn_match is not None:
+            literal_qn = str(qn_match.group("value") or "").strip()
+            if literal_qn:
+                return ("qualified_name", literal_qn)
+
+        path_match = cls._CYPHER_FILE_PATH_LITERAL_RE.search(str(cypher_query or ""))
+        if path_match is not None:
+            literal_path = str(path_match.group("value") or "").strip()
+            if literal_path:
+                return ("file_path", literal_path)
+        return None
+
+    def _build_multi_hop_exact_call_from_cypher(
+        self, cypher_query: str, parsed_params: dict[str, object]
+    ) -> dict[str, object] | None:
+        if not self._is_multi_hop_cypher_query(cypher_query):
+            return None
+        target = self._extract_multi_hop_target_from_query(cypher_query, parsed_params)
+        if target is None:
+            return None
+        target_key, target_value = target
+        depth = self._extract_multi_hop_depth_from_cypher(cypher_query)
+        escaped = target_value.replace("\\", "\\\\").replace('"', '\\"')
+        if target_key == "qualified_name":
+            copy_paste = (
+                f'multi_hop_analysis(qualified_name="{escaped}", depth={depth})'
+            )
+        else:
+            copy_paste = f'multi_hop_analysis(file_path="{escaped}", depth={depth})'
+        return {
+            "tool": cs.MCPToolName.MULTI_HOP_ANALYSIS,
+            "args": {target_key: target_value, "depth": depth},
+            "copy_paste": copy_paste,
+            "why": "multi_hop_traversal_detected",
+        }
+
     @staticmethod
     def _build_exact_next_query_graph_call(cypher_query: str) -> dict[str, object]:
         query_excerpt = " ".join(cypher_query.strip().split())[:300]
@@ -4559,6 +4703,9 @@ class MCPToolsRegistry:
     ) -> dict[str, object]:
         project_name = self._active_project_name()
         error_text = str(policy_error or "")
+        multi_hop_exact_call = self._build_multi_hop_exact_call_from_cypher(
+            cypher_query, parsed_params
+        )
 
         def _esc(value: str) -> str:
             return value.replace("\\", "\\\\").replace('"', '\\"')
@@ -4619,6 +4766,12 @@ class MCPToolsRegistry:
                 ),
                 "why": "write_policy_violation",
             }
+
+        if (
+            "run_cypher_advanced_mode_required" in error_text
+            and multi_hop_exact_call is not None
+        ):
+            return multi_hop_exact_call
 
         if not advanced_mode:
             return self._build_exact_next_query_graph_call(cypher_query)
@@ -6776,6 +6929,156 @@ class MCPToolsRegistry:
             raise ValueError(cs.MCP_QUERY_SCOPE_ERROR.format(project_name=project_name))
         return generated_query
 
+    @classmethod
+    def _query_grounding_diagnostics(
+        cls,
+        natural_language_query: str,
+    ) -> dict[str, object]:
+        query_raw = str(natural_language_query or "")
+        query_normalized = " ".join(query_raw.split())
+        lowered = query_normalized.lower()
+
+        ticket_refs = cls._QUERY_TICKET_REF_RE.findall(query_normalized)
+        external_hits = [
+            hint for hint in cls._QUERY_EXTERNAL_CONTEXT_HINTS if hint in lowered
+        ]
+        file_hints = cls._QUERY_FILE_PATH_HINT_RE.findall(query_normalized)
+        qualified_hints = cls._QUERY_QUALIFIED_NAME_HINT_RE.findall(query_normalized)
+        endpoint_hints = cls._QUERY_ENDPOINT_PATH_HINT_RE.findall(query_normalized)
+
+        has_anchor = bool(file_hints or qualified_hints or endpoint_hints)
+        has_graph_intent = any(
+            hint in lowered for hint in cls._QUERY_GRAPH_INTENT_HINTS
+        )
+        looks_like_context_blob = len(query_raw) >= 220 or query_raw.count("\n") >= 2
+        requires_grounding = False
+
+        if (ticket_refs or external_hits) and not has_anchor and not has_graph_intent:
+            requires_grounding = True
+        if (
+            (ticket_refs or external_hits)
+            and looks_like_context_blob
+            and not has_anchor
+        ):
+            requires_grounding = True
+
+        return {
+            "requires_grounding": requires_grounding,
+            "ticket_refs": ticket_refs,
+            "external_hits": external_hits,
+            "has_anchor": has_anchor,
+            "has_graph_intent": has_graph_intent,
+            "file_hints": file_hints[:6],
+            "qualified_hints": qualified_hints[:6],
+            "endpoint_hints": endpoint_hints[:6],
+        }
+
+    @classmethod
+    def _derive_query_focus_hint(cls, natural_language_query: str) -> str:
+        query_normalized = " ".join(str(natural_language_query or "").split()).lower()
+        query_normalized = cls._QUERY_TICKET_REF_RE.sub(" ", query_normalized)
+        cleaned = re.sub(r"[^a-z0-9_./-]+", " ", query_normalized)
+        stopwords = {
+            "the",
+            "and",
+            "for",
+            "with",
+            "that",
+            "from",
+            "into",
+            "about",
+            "this",
+            "those",
+            "these",
+            "show",
+            "list",
+            "query",
+            "run",
+            "logs",
+            "log",
+            "agent",
+            "llm",
+            "epic",
+            "task",
+            "story",
+            "bug",
+            "issue",
+            "ticket",
+        }
+        tokens = [
+            token
+            for token in cleaned.split()
+            if len(token) >= 4 and token not in stopwords
+        ]
+        if not tokens:
+            return "target feature"
+        return " ".join(tokens[:6])
+
+    def _build_query_grounding_required_payload(
+        self,
+        natural_language_query: str,
+        diagnostics: dict[str, object],
+    ) -> dict[str, object]:
+        project_name = self._active_project_name()
+        focus_hint = self._derive_query_focus_hint(natural_language_query)
+        suggested_query = (
+            f"In project {project_name}, list concrete file paths, qualified names, "
+            f"and endpoints related to {focus_hint}."
+        )
+        escaped_query = suggested_query.replace("\\", "\\\\").replace('"', '\\"')
+        exact_next_calls = [
+            {
+                "tool": cs.MCPToolName.QUERY_CODE_GRAPH,
+                "args": {
+                    "natural_language_query": suggested_query,
+                    "output_format": "json",
+                },
+                "priority": 1,
+                "when": "query text references external planning context without graph anchors",
+                "copy_paste": (
+                    "query_code_graph("
+                    f'natural_language_query="{escaped_query}", '
+                    'output_format="json")'
+                ),
+                "why": "ground_query_with_concrete_graph_anchors",
+            }
+        ]
+        next_best_action = self._project_next_best_action_from_exact_calls(
+            exact_next_calls
+        )
+        summary = (
+            "Query appears to reference external planning/log context instead of graph-grounded anchors. "
+            "Provide concrete file paths, qualified symbols, or endpoint routes."
+        )
+        return {
+            "status": "needs_clarification",
+            "error": "query_requires_graph_grounding",
+            "query_used": cs.QUERY_NOT_AVAILABLE,
+            "results": [],
+            "summary": summary,
+            "ui_summary": summary,
+            "clarification_required": True,
+            "project_name": project_name,
+            "focus_hint": focus_hint,
+            "grounding_examples": [
+                (
+                    "Use file paths: "
+                    'query_code_graph(natural_language_query="Analyze auth coverage for src/api/system.py", output_format="json")'
+                ),
+                (
+                    "Use qualified names: "
+                    'query_code_graph(natural_language_query="Show callers of app.services.AuthService.issue_token", output_format="json")'
+                ),
+                (
+                    "Use endpoint paths: "
+                    'query_code_graph(natural_language_query="Find auth policies for GET /system/status", output_format="json")'
+                ),
+            ],
+            "exact_next_calls": exact_next_calls,
+            "next_best_action": next_best_action,
+            "diagnostics": diagnostics | {"focus_hint": focus_hint},
+        }
+
     @staticmethod
     def _is_parser_focused_query(natural_language_query: str) -> bool:
         lowered = natural_language_query.lower()
@@ -7700,6 +8003,22 @@ class MCPToolsRegistry:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))
         try:
             self._set_execution_phase("retrieval", "query_code_graph")
+            grounding_diagnostics = self._query_grounding_diagnostics(
+                natural_language_query
+            )
+            if bool(grounding_diagnostics.get("requires_grounding", False)):
+                self._record_tool_usefulness(
+                    cs.MCPToolName.QUERY_CODE_GRAPH,
+                    success=False,
+                    usefulness_score=0.25,
+                )
+                return cast(
+                    QueryResultDict,
+                    self._build_query_grounding_required_payload(
+                        natural_language_query=natural_language_query,
+                        diagnostics=grounding_diagnostics,
+                    ),
+                )
             await self._auto_plan_if_needed(natural_language_query)
             self._session_bump("graph_query_attempt_count")
             project_name = self._active_project_name()
@@ -8421,12 +8740,18 @@ class MCPToolsRegistry:
             await self._auto_plan_if_needed("run_cypher read-only query")
         parsed_params: dict[str, object] = {}
         if params:
-            try:
-                payload = json.loads(params)
-                if isinstance(payload, dict):
-                    parsed_params = payload
-            except json.JSONDecodeError:
-                parsed_params = {}
+            if isinstance(params, dict):
+                parsed_params = {
+                    str(key): value
+                    for key, value in cast(dict[str, object], params).items()
+                }
+            elif isinstance(params, str):
+                try:
+                    payload = json.loads(params)
+                    if isinstance(payload, dict):
+                        parsed_params = payload
+                except (json.JSONDecodeError, TypeError):
+                    parsed_params = {}
 
         normalized_cypher, normalized_params, normalization_notes = (
             self._normalize_run_cypher_scope(cypher, parsed_params)
@@ -8493,16 +8818,33 @@ class MCPToolsRegistry:
             and str(reason or "").strip() not in bypass_reasons
             and not self._has_graph_query_digest()
         ):
+            multi_hop_recommendation = self._build_multi_hop_exact_call_from_cypher(
+                normalized_cypher,
+                normalized_params,
+            )
+            default_recommended_flow = [
+                "select_active_project",
+                "query_code_graph",
+                "run_cypher",
+            ]
+            flow_message = "query_code_graph is the default first step for discovery; use advanced_mode only when expert traversal control is explicitly intended."
+            if multi_hop_recommendation is not None:
+                flow_message = "Detected a multi-hop traversal intent. Prefer multi_hop_analysis for graph-native hop traversal, then use run_cypher only for expert overrides."
             flow_advisory = {
-                "message": (
-                    "query_code_graph is the default first step for discovery; use advanced_mode only when expert traversal control is explicitly intended."
+                "message": flow_message,
+                "recommended_flow": (
+                    [
+                        "select_active_project",
+                        "multi_hop_analysis",
+                        "query_code_graph",
+                        "run_cypher",
+                    ]
+                    if multi_hop_recommendation is not None
+                    else default_recommended_flow
                 ),
-                "recommended_flow": [
-                    "select_active_project",
-                    "query_code_graph",
-                    "run_cypher",
-                ],
             }
+            if multi_hop_recommendation is not None:
+                flow_advisory["recommended_tool"] = multi_hop_recommendation
             policy_error = "run_cypher_advanced_mode_required"
             self._record_tool_usefulness(
                 cs.MCPToolName.RUN_CYPHER,

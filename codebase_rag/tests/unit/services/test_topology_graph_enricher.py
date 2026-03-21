@@ -12,6 +12,7 @@ class _FakeIngestor:
     ) -> None:
         self._endpoints = endpoints
         self._requesters = requesters
+        self.queries: list[str] = []
         self.relationships: list[
             tuple[
                 tuple[str, str, str],
@@ -42,6 +43,7 @@ class _FakeIngestor:
         parameters: dict[str, object] | None = None,
     ) -> list[object]:
         del parameters
+        self.queries.append(query)
         if "MATCH (source)-[:REQUESTS_ENDPOINT]" in query:
             return list(self._requesters)
         if "MATCH (e:Endpoint" in query:
@@ -128,4 +130,16 @@ def test_bridges_frontend_requesters_to_backend_services_by_route_path(
         and (rel[3] or {}).get("endpoint_qn")
         == "demo.endpoint.fastapi.POST:/api/customers"
         for rel in calls_service
+    )
+
+
+def test_endpoint_fetch_query_includes_http_method_projection(tmp_path: Path) -> None:
+    ingestor = _FakeIngestor(endpoints=[], requesters=[])
+    enricher = _StaticTopologyGraphEnricher(tmp_path, "demo", ingestor)
+
+    enricher._fetch_endpoints()
+
+    assert any(
+        "coalesce(e.http_method, e.method, '') AS http_method" in q
+        for q in ingestor.queries
     )

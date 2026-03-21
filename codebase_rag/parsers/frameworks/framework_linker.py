@@ -565,20 +565,28 @@ class FrameworkLinker:
             }
 
             handler_qn = None
+            handler_type = None
             if endpoint.handler_name:
                 handler_qn = self._find_best_handler_qn(
                     endpoint.handler_name, endpoint.controller_name
                 )
+                if handler_qn:
+                    handler_type = self.function_registry.get(handler_qn)
 
-            if handler_qn:
-                handler_type = self.function_registry.get(handler_qn)
-                if handler_type:
-                    self.ingestor.ensure_relationship_batch(
-                        (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
-                        cs.RelationshipType.HAS_ENDPOINT,
-                        (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                        endpoint_props,
-                    )
+            if handler_qn and handler_type:
+                self.ingestor.ensure_relationship_batch(
+                    (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
+                    cs.RelationshipType.HAS_ENDPOINT,
+                    (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                    endpoint_props,
+                )
+                # Non-controller frameworks still need endpoint -> handler reachability.
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                    cs.RelationshipType.ROUTES_TO_ACTION,
+                    (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
+                    endpoint_props,
+                )
 
             if endpoint.controller_name:
                 controller_qn = self._find_best_controller_qn(endpoint.controller_name)
@@ -589,13 +597,6 @@ class FrameworkLinker:
                         (cs.NodeLabel.CLASS, cs.KEY_QUALIFIED_NAME, controller_qn),
                         endpoint_props,
                     )
-                    if handler_qn and handler_type:
-                        self.ingestor.ensure_relationship_batch(
-                            (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
-                            cs.RelationshipType.ROUTES_TO_ACTION,
-                            (handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn),
-                            endpoint_props,
-                        )
 
     def _find_best_handler_qn(
         self, handler_name: str, controller_name: str | None
@@ -810,6 +811,7 @@ class FrameworkLinker:
         if handler_qn and handler_type:
             source_specs.append((handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn))
 
+        inferred_security_candidates: list[str] = []
         for dependency_name in endpoint.dependencies or []:
             provider_qn = self._ensure_dependency_provider_node(
                 dependency_name,
@@ -828,8 +830,34 @@ class FrameworkLinker:
                     ),
                     semantic_props | {"dependency_name": dependency_name},
                 )
+            if self._looks_like_auth_dependency(dependency_name):
+                inferred_security_candidates.append(dependency_name)
 
         policy_qns: list[str] = []
+        explicit_policy_names = set(endpoint.security_dependencies or [])
+
+        for inferred_policy_name in dict.fromkeys(inferred_security_candidates):
+            if inferred_policy_name in explicit_policy_names:
+                continue
+            policy_qn = self._ensure_auth_policy_node(
+                inferred_policy_name,
+                relative_path=relative_path,
+                line_start=endpoint.line_start,
+                line_end=endpoint.line_end,
+            )
+            policy_qns.append(policy_qn)
+            for source_spec in source_specs:
+                self.ingestor.ensure_relationship_batch(
+                    source_spec,
+                    cs.RelationshipType.SECURED_BY,
+                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
+                    semantic_props
+                    | {
+                        "policy_name": inferred_policy_name,
+                        "inferred_from_dependency": True,
+                    },
+                )
+
         for policy_name in endpoint.security_dependencies or []:
             policy_qn = self._ensure_auth_policy_node(
                 policy_name,
@@ -875,6 +903,32 @@ class FrameworkLinker:
                     (cs.NodeLabel.CONTRACT, cs.KEY_QUALIFIED_NAME, contract_qn),
                     semantic_props | {"contract_name": endpoint.response_model},
                 )
+
+    @staticmethod
+    def _looks_like_auth_dependency(dependency_name: str) -> bool:
+        simple_name = dependency_name.split(cs.SEPARATOR_DOT)[-1].replace("-", "_")
+        lowered = simple_name.lower()
+        auth_tokens = (
+            "auth",
+            "security",
+            "token",
+            "jwt",
+            "oauth",
+            "oidc",
+            "apikey",
+            "api_key",
+            "permission",
+            "scope",
+            "principal",
+            "actor",
+            "user",
+            "guard",
+            "credential",
+            "session",
+            "rbac",
+            "acl",
+        )
+        return any(token in lowered for token in auth_tokens)
 
     def _collect_fastapi_module(self, file_path: Path, source: str) -> None:
         """Collect FastAPI router/app composition metadata for later graph materialization."""

@@ -115,6 +115,22 @@ class FrontendOperationPass:
                         evidence_kind="uses_operation",
                     ),
                 )
+                if source_spec[0] in {
+                    cs.NodeLabel.COMPONENT,
+                    cs.NodeLabel.FUNCTION,
+                    cs.NodeLabel.METHOD,
+                }:
+                    self.ingestor.ensure_relationship_batch(
+                        source_spec,
+                        cs.RelationshipType.REQUESTS_ENDPOINT,
+                        (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn),
+                        self._metadata(
+                            observation=observation,
+                            relative_path=relative_path,
+                            evidence_kind="source_symbol_request_shortcut",
+                        ),
+                    )
+                    edge_count += 1
                 self.ingestor.ensure_relationship_batch(
                     (
                         cs.NodeLabel.CLIENT_OPERATION,

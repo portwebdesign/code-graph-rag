@@ -129,6 +129,61 @@ class TestMCPStatsAndMermaidTools:
         assert next_best_action.get("tool") == exact_next_calls[0].get("tool")
         assert next_best_action.get("priority") == exact_next_calls[0].get("priority")
 
+    async def test_run_cypher_accepts_params_as_dict(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        ingestor = cast(MagicMock, mcp_registry.ingestor)
+        ingestor.fetch_all.return_value = [{"name": "module_a"}]
+        project_name = Path(mcp_registry.project_root).resolve().name
+        scoped_read = (
+            "MATCH (m:Module {project_name: $project_name}) "
+            "RETURN m.name AS name LIMIT 10"
+        )
+
+        result = await mcp_registry.run_cypher(
+            scoped_read,
+            {"project_name": project_name},
+            False,
+            advanced_mode=True,
+        )
+
+        assert "error" not in result
+        rows = cast(list[dict[str, object]], result.get("results", []))
+        assert len(rows) == 1
+        assert rows[0].get("name") == "module_a"
+
+    async def test_run_cypher_multi_hop_intent_suggests_multi_hop_analysis(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        project_name = Path(mcp_registry.project_root).resolve().name
+        mcp_registry._session_state["last_graph_query_digest_id"] = ""
+        mcp_registry._session_state["graph_evidence_count"] = 0
+        multi_hop_query = (
+            "MATCH p=(start:Function {project_name: $project_name, "
+            "qualified_name: 'pkg.Service.run'})-[:CALLS*1..4]->"
+            "(target:Function {project_name: $project_name}) "
+            "WHERE all(node IN nodes(p) WHERE coalesce(node.project_name, $project_name) = $project_name) "
+            "RETURN p LIMIT 20"
+        )
+
+        result = await mcp_registry.run_cypher(
+            multi_hop_query,
+            {"project_name": project_name},
+            False,
+        )
+
+        assert "run_cypher_advanced_mode_required" in str(result.get("error", ""))
+        exact_next_call = cast(dict[str, object], result.get("exact_next_call", {}))
+        assert exact_next_call.get("tool") == "multi_hop_analysis"
+        exact_args = cast(dict[str, object], exact_next_call.get("args", {}))
+        assert exact_args.get("qualified_name") == "pkg.Service.run"
+        assert exact_args.get("depth") == 4
+        exact_next_calls = cast(
+            list[dict[str, object]], result.get("exact_next_calls", [])
+        )
+        assert exact_next_calls
+        assert exact_next_calls[0].get("tool") == "multi_hop_analysis"
+
     async def test_run_cypher_allows_advanced_mode_without_prior_digest(
         self, mcp_registry: MCPToolsRegistry
     ) -> None:

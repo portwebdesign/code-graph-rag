@@ -8,10 +8,12 @@ The current implementation adds first-class graph entities for:
 
 - FastAPI dependency providers discovered from `Depends(...)`
 - FastAPI auth policies discovered from `Security(...)`
+- inferred FastAPI auth policies from auth-like `Depends(...)` dependency names
 - FastAPI auth scopes discovered from `Security(..., scopes=[...])`
 - FastAPI response contracts discovered from `response_model=...`
 - Python contract definitions discovered from Pydantic `BaseModel`, `@dataclass`, and `TypedDict`
 - FastAPI request contracts discovered from handler parameter annotations
+- FastAPI websocket route decorators (`@router.websocket(...)`, `@router.websocket_route(...)`)
 
 ## Nodes
 

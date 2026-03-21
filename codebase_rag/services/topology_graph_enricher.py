@@ -624,7 +624,8 @@ class TopologyGraphEnricher(ConfigParserMixin):
               coalesce(e.qualified_name, '') AS qualified_name,
               coalesce(e.path, '') AS file_path,
               coalesce(e.route_path, '') AS route_path,
-              coalesce(e.framework, '') AS framework
+              coalesce(e.framework, '') AS framework,
+              coalesce(e.http_method, e.method, '') AS http_method
             """,
             {cs.KEY_PROJECT_NAME: self.project_name},
         )
