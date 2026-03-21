@@ -54,6 +54,7 @@
 - Updated OpenAPI extraction to retain `operationId` for downstream client-operation binding.
 - Updated semantic pass ordering, env gating, and deterministic validation to include `test_semantics`.
 - Updated `impact_graph`, `multi_hop_analysis`, `test_bundle`, and `test_generate` to consume semantic testcase graph edges before filesystem fallback.
+- Updated `test_generate` to default to `output_mode="plan_json"`, add compact output safety caps, and return a structured fallback plan when filesystem access is blocked by project-root guards.
 - Updated semantic pass ordering, env gating, cleanup queries, and schema overview presets to include `config_semantics`.
 - Updated topology enrichment to project infra-resource env/secret payloads into canonical semantic config edges with provenance metadata.
 - Updated `secret_scan_report.json` and `security_report.json` serialization to emit masked secret metadata instead of raw matches.

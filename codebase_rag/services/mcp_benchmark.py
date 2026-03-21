@@ -31,12 +31,12 @@ class CypherBenchmarkCase:
 
 
 _CLIENT_PROFILE_CASES = (
-    ClientProfileBenchmarkCase("balanced", 8, "code"),
-    ClientProfileBenchmarkCase("vscode", 8, "code"),
-    ClientProfileBenchmarkCase("cline", 9, "code"),
-    ClientProfileBenchmarkCase("copilot", 7, "code"),
+    ClientProfileBenchmarkCase("balanced", 8, "plan_json"),
+    ClientProfileBenchmarkCase("vscode", 8, "plan_json"),
+    ClientProfileBenchmarkCase("cline", 9, "plan_json"),
+    ClientProfileBenchmarkCase("copilot", 7, "plan_json"),
     ClientProfileBenchmarkCase("ollama", 5, "plan_json"),
-    ClientProfileBenchmarkCase("http", 8, "code"),
+    ClientProfileBenchmarkCase("http", 8, "plan_json"),
 )
 
 _CYPHER_CASES = (

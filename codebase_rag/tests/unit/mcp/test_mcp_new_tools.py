@@ -1680,8 +1680,8 @@ class TestMCPNewTools:
 
         result = await mcp_registry.test_generate("add tests")
 
-        assert result.get("format") == "code"
-        assert "assert True" in str(result.get("code", ""))
+        assert result.get("format") == "json"
+        assert '"code": "def test_example()' in str(result.get("content", ""))
 
     async def test_test_generate_supports_plan_json_mode(
         self, mcp_registry: MCPToolsRegistry
@@ -1716,6 +1716,44 @@ class TestMCPNewTools:
 
         assert result.get("format") == "code"
         assert "plan_json" in result
+
+    async def test_test_generate_falls_back_on_project_root_access_denied(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        async def fake_run(task: str) -> object:
+            _ = task
+            raise PermissionError(
+                "Access denied: Cannot access files outside the project root."
+            )
+
+        _registry_any(mcp_registry)._test_agent.run = fake_run
+
+        result = await mcp_registry.test_generate("add tests", output_mode="both")
+
+        assert result.get("status") == "ok"
+        assert result.get("format") == "json"
+        assert "plan_json" in result
+        assert "fallback" in str(result.get("ui_summary", "")).lower()
+
+    async def test_test_generate_caps_oversized_outputs(
+        self, mcp_registry: MCPToolsRegistry
+    ) -> None:
+        long_code = "\n".join(
+            [f"def test_case_{idx}():\n    assert True" for idx in range(450)]
+        )
+
+        async def fake_run(task: str) -> object:
+            _ = task
+            return SimpleNamespace(status="ok", content=f"```python\n{long_code}\n```")
+
+        _registry_any(mcp_registry)._test_agent.run = fake_run
+
+        result = await mcp_registry.test_generate("add tests", output_mode="code")
+
+        assert result.get("format") == "code"
+        assert "truncated by MCP test_generate output safety limits" in str(
+            result.get("content", "")
+        )
 
     async def test_memory_add_and_list(self, mcp_registry: MCPToolsRegistry) -> None:
         result_add = await mcp_registry.memory_add("decision", tags="alpha,beta")

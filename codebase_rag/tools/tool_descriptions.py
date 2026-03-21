@@ -348,7 +348,7 @@ MCP_PLAN_TASK = (
 
 MCP_TEST_GENERATE = (
     "Ask a specialized test-generation agent to create test cases for a specific function or class. "
-    "Supports output_mode='code' (default), 'plan_json', or 'both'. "
+    "Supports output_mode='plan_json' (default), 'code', or 'both'. "
     "Return code-first, runnable test output when possible; keep assumptions explicit and minimal."
 )
 
@@ -406,7 +406,7 @@ MCP_PARAM_CHUNKS = (
 MCP_PARAM_GOAL = "The objective or goal for the agent to achieve"
 MCP_PARAM_CONTEXT = "Optional additional context or instructions"
 MCP_PARAM_OUTPUT_MODE = (
-    "Output mode for test generation: 'code' (default), 'plan_json', or 'both'"
+    "Output mode for test generation: 'plan_json' (default), 'code', or 'both'"
 )
 MCP_PARAM_ENTRY = "The memory text to save"
 MCP_PARAM_TAGS = "Comma-separated list of tags for the memory entry (optional)"

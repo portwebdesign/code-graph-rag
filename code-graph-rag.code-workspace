@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../abey"
+		}
+	],
+    "settings": {
+        "powershell.cwd": "code-graph-rag"
+    }
+}
