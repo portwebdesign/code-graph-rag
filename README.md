@@ -362,7 +362,7 @@ python realtime_updater.py ~/my-project
 cgr start --repo-path ~/my-project
 ```
 
-**Performance note:** The updater currently recalculates all CALLS relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. **Note:** Optimization of this behavior is a work in progress.
+**Performance note:** The updater currently recalculates CALLS and DISPATCHES_TO relationships on every file change to ensure consistency. This prevents "island" problems where changes in one file aren't reflected in relationships from other files, but may impact performance on very large codebases with frequent changes. **Note:** Optimization of this behavior is a work in progress.
 
 **CLI Arguments:**
 - `repo_path` (required): Path to repository to watch
@@ -688,6 +688,11 @@ After `select_active_project`, the exposed core HTTP tools stay callable without
 
 For detailed setup, see [Claude Code Setup Guide](docs/claude-code-setup.md).
 
+Analysis artifact note:
+
+- `duplicate_code_report.json` now emits structured output with `summary`, actionable `duplicate_groups`, and `ignored_groups` so same-file overlaps, anonymous callbacks, and low-value CLI/tool helpers do not dominate refactor decisions.
+- `fan_report.json` now keeps raw `top_fan_in` / `top_fan_out` for backwards compatibility and adds `top_fan_in_production`, `top_fan_out_production`, `top_semantic_fan_in`, and `top_semantic_fan_out` for more actionable hotspot review.
+
 ### VS Code + GitHub Copilot / Cline Usage
 
 `code-graph-rag` can be used directly as an MCP server in VS Code chat clients (GitHub Copilot, Cline, and other MCP-capable clients).
@@ -820,6 +825,7 @@ The knowledge graph uses the following node types and relationships:
 | Project | DEPENDS_ON_EXTERNAL | ExternalPackage |
 | Module, Class, Function, Method | REQUIRES_LIBRARY | ExternalPackage |
 | Module, Class, Function, Method | DEPENDS_ON | Module, Class, Function, Method |
+| Module, Function, Method, Component | DISPATCHES_TO | Function, Method |
 | Library | HAS_DOC | DocChunk |
 | DocChunk | DESCRIBES | Concept |
 | DocChunk | USED_IN | Project |
@@ -848,6 +854,8 @@ The knowledge graph uses the following node types and relationships:
 | TestSuite | CONTAINS | TestCase |
 | Endpoint, Function, Method | USES_DEPENDENCY | DependencyProvider |
 | Endpoint, Function, Method | SECURED_BY | AuthPolicy |
+| DependencyProvider, AuthPolicy | RESOLVES_TO | Function, Method |
+| Module, Endpoint, Function, Method | REGISTERS_CALLBACK | Function, Method |
 | AuthPolicy | REQUIRES_SCOPE | AuthScope |
 | Endpoint, Function, Method | ACCEPTS_CONTRACT | Contract |
 | Endpoint, Function, Method | RETURNS_CONTRACT | Contract |

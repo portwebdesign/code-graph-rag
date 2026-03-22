@@ -165,6 +165,25 @@ class CallResolver:
 
         return self._try_resolve_via_trie(call_name, module_qn)
 
+    def resolve_callable_reference(
+        self,
+        reference_name: str,
+        module_qn: str,
+        class_context: str | None = None,
+    ) -> tuple[str, str] | None:
+        resolved = self.resolve_function_call(
+            reference_name,
+            module_qn,
+            local_var_types=None,
+            class_context=class_context,
+        )
+        if resolved is None:
+            return None
+        node_type, qualified_name = resolved
+        if node_type not in {NodeType.FUNCTION, NodeType.METHOD}:
+            return None
+        return node_type, qualified_name
+
     def _try_resolve_iife(
         self, call_name: str, module_qn: str
     ) -> tuple[str, str] | None:

@@ -29,6 +29,14 @@ def test_dead_code_queries_use_optional_match_counts_for_memgraph() -> None:
         in CYPHER_ANALYSIS_DEAD_CODE
     )
     assert "count(DISTINCT caller) AS call_in_degree" in CYPHER_ANALYSIS_DEAD_CODE
+    assert (
+        "count(DISTINCT dispatch_src) AS dispatch_in_degree"
+        in CYPHER_ANALYSIS_DEAD_CODE
+    )
+    assert (
+        "call_in_degree + dispatch_in_degree AS combined_in_degree"
+        in CYPHER_ANALYSIS_DEAD_CODE
+    )
     assert "count(DISTINCT callee) AS out_call_count" in CYPHER_ANALYSIS_DEAD_CODE
     assert (
         "count(DISTINCT decorator_src) AS decorator_links"
@@ -36,5 +44,13 @@ def test_dead_code_queries_use_optional_match_counts_for_memgraph() -> None:
     )
     assert (
         "count(DISTINCT registration_src) AS registration_links"
+        in CYPHER_ANALYSIS_DEAD_CODE_FILTERED
+    )
+    assert (
+        "count(DISTINCT dispatch_src) AS dispatch_in_degree"
+        in CYPHER_ANALYSIS_DEAD_CODE_FILTERED
+    )
+    assert (
+        "call_in_degree + dispatch_in_degree AS combined_in_degree"
         in CYPHER_ANALYSIS_DEAD_CODE_FILTERED
     )

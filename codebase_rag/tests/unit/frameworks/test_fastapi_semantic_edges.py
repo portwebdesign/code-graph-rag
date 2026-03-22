@@ -133,6 +133,77 @@ async def list_invoices(
         for rel in returns_contract
     )
 
+    resolves_to = [
+        call.args
+        for call in get_relationships(mock_ingestor, cs.RelationshipType.RESOLVES_TO)
+    ]
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.DEPENDENCY_PROVIDER,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_semantics.semantic.dependency_provider.fastapi_semantics.main.get_tenant",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_semantics.main.get_tenant",
+        )
+        for rel in resolves_to
+    )
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.AUTH_POLICY,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_semantics.semantic.auth_policy.fastapi_semantics.main.get_current_user",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_semantics.main.get_current_user",
+        )
+        for rel in resolves_to
+    )
+
+    callback_registrations = [
+        call.args
+        for call in get_relationships(
+            mock_ingestor, cs.RelationshipType.REGISTERS_CALLBACK
+        )
+    ]
+    assert any(
+        rel[0] == (cs.NodeLabel.ENDPOINT, cs.KEY_QUALIFIED_NAME, endpoint_qn)
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_semantics.main.get_tenant",
+        )
+        and cast(dict[str, object], rel[3]).get("registration_kind")
+        == "fastapi_dependency"
+        for rel in callback_registrations
+    )
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_semantics.main.list_invoices",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_semantics.main.get_current_user",
+        )
+        and cast(dict[str, object], rel[3]).get("registration_kind")
+        == "fastapi_auth_policy"
+        for rel in callback_registrations
+    )
+
 
 def test_unresolved_fastapi_dependencies_become_typed_placeholders(
     temp_repo: Path,
@@ -208,6 +279,165 @@ async def system_status() -> dict[str, str]:
         and cast(dict[str, object], rel[3]).get("policy_name") == "require_system_actor"
         and cast(dict[str, object], rel[3]).get("inferred_from_dependency") is True
         for rel in secured_by
+    )
+
+
+def test_nested_fastapi_dependency_bindings_register_real_functions(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "fastapi_nested_dependencies"
+    project.mkdir()
+
+    _write(
+        project / "main.py",
+        """from fastapi import APIRouter, Depends
+
+router = APIRouter()
+
+
+def get_current_principal() -> str:
+    return "principal"
+
+
+def require_authenticated_principal(
+    principal: str = Depends(get_current_principal),
+) -> str:
+    return principal
+
+
+@router.get("/secure", dependencies=[Depends(require_authenticated_principal)])
+async def secure_status() -> dict[str, str]:
+    return {"status": "ok"}
+""",
+    )
+
+    run_updater(project, mock_ingestor)
+
+    callback_registrations = [
+        call.args
+        for call in get_relationships(
+            mock_ingestor, cs.RelationshipType.REGISTERS_CALLBACK
+        )
+    ]
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_nested_dependencies.main.require_authenticated_principal",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_nested_dependencies.main.get_current_principal",
+        )
+        and cast(dict[str, object], rel[3]).get("registration_kind")
+        == "fastapi_dependency"
+        for rel in callback_registrations
+    )
+
+    resolves_to = [
+        call.args
+        for call in get_relationships(mock_ingestor, cs.RelationshipType.RESOLVES_TO)
+    ]
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.DEPENDENCY_PROVIDER,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_nested_dependencies.semantic.dependency_provider.fastapi_nested_dependencies.main.get_current_principal",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_nested_dependencies.main.get_current_principal",
+        )
+        for rel in resolves_to
+    )
+
+
+def test_fastapi_app_callbacks_and_module_local_dependency_resolution_prefer_same_module(
+    temp_repo: Path,
+    mock_ingestor: MagicMock,
+) -> None:
+    project = temp_repo / "fastapi_callback_resolution"
+    project.mkdir()
+
+    _write(
+        project / "helpers.py",
+        """def build_operation_id() -> str:
+    return "external"
+
+
+def get_ai_graph_service() -> str:
+    return "external"
+""",
+    )
+    _write(
+        project / "main.py",
+        """from fastapi import FastAPI, APIRouter, Depends
+
+from .helpers import build_operation_id, get_ai_graph_service as imported_ai_graph_service
+
+app = FastAPI(generate_unique_id_function=build_operation_id)
+router = APIRouter()
+
+
+def build_operation_id(route=None) -> str:
+    return "local"
+
+
+def get_ai_graph_service() -> str:
+    return "local"
+
+
+@router.get("/ai")
+async def ai_status(service: str = Depends(get_ai_graph_service)) -> dict[str, str]:
+    return {"service": service, "shadow": imported_ai_graph_service()}
+
+
+app.include_router(router)
+""",
+    )
+
+    run_updater(project, mock_ingestor)
+
+    callback_registrations = [
+        call.args
+        for call in get_relationships(
+            mock_ingestor, cs.RelationshipType.REGISTERS_CALLBACK
+        )
+    ]
+    assert any(
+        rel[0]
+        == (
+            cs.NodeLabel.MODULE,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_callback_resolution.main",
+        )
+        and rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_callback_resolution.main.build_operation_id",
+        )
+        and cast(dict[str, object], rel[3]).get("registration_kind")
+        == "fastapi_app_callback"
+        for rel in callback_registrations
+    )
+    assert any(
+        rel[2]
+        == (
+            cs.NodeLabel.FUNCTION,
+            cs.KEY_QUALIFIED_NAME,
+            "fastapi_callback_resolution.main.get_ai_graph_service",
+        )
+        and cast(dict[str, object], rel[3]).get("dependency_name")
+        == "get_ai_graph_service"
+        for rel in callback_registrations
     )
 
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added actionable duplicate-code and fan-report views with structured categories, production filtering, and semantic fan-in/out summaries.
+- Added FastAPI function-truthfulness bridging so dependency providers and auth policies now resolve to concrete function symbols and callback registrations can keep dead-code analysis honest.
 - Added first-wave FastAPI semantic graph support for dependency providers, auth policies, auth scopes, and response contracts.
 - Added shared FastAPI semantic extraction logic to avoid duplicated, fragile route parsing between detector and linker.
 - Added semantic metadata helpers for provenance, confidence, and placeholder handling.
@@ -37,6 +39,9 @@
 
 ### Changed
 
+- Updated `duplicate_code_report.json` to separate actionable cross-file duplicates from ignored same-file, synthetic, and low-value utility noise.
+- Updated `fan_report.json` to keep raw `CALLS` hotspots while adding production-only and semantic hotspot views.
+- Updated dead-code liveness heuristics to treat FastAPI dependency/auth registrations and app callback registrations as framework registration evidence.
 - Extended graph schema with `Contract`, `ContractField`, `DependencyProvider`, `AuthPolicy`, and `AuthScope`.
 - Extended relationship schema with `USES_DEPENDENCY`, `SECURED_BY`, `REQUIRES_SCOPE`, `ACCEPTS_CONTRACT`, `RETURNS_CONTRACT`, and `DECLARES_FIELD`.
 - Updated graph update orchestration so contract semantics run as a dedicated post-parse pass.

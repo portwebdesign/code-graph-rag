@@ -43,6 +43,7 @@ from ..languages.cpp import utils as cpp_utils
 from .call_resolver import CallResolver
 from .dynamic_call_resolver import DynamicCallResolver
 from .import_processor import ImportProcessor
+from .python_map_dispatch import DispatchTarget, PythonMapDispatchAnalyzer
 
 
 class CallProcessor:
@@ -98,6 +99,9 @@ class CallProcessor:
             module_qn_to_file_path=self._module_qn_to_file_path,
         )
         self._dynamic_resolver = DynamicCallResolver(function_registry)
+        self._python_dispatch_analyzer = PythonMapDispatchAnalyzer(
+            self._resolver.resolve_callable_reference
+        )
         env_heuristic = os.getenv("CODEGRAPH_HEURISTIC_CALLS", "").lower()
         self._heuristic_calls_enabled = env_heuristic not in {"0", "false", "no"}
         framework_meta_enabled = os.getenv(
@@ -774,6 +778,24 @@ class CallProcessor:
             if not isinstance(call_node, Node):
                 continue
 
+            dispatch_targets = self._resolve_python_dispatch_targets(
+                caller_node,
+                call_node,
+                module_qn,
+                language,
+                class_context=class_context,
+            )
+            if dispatch_targets:
+                self._ingest_dispatch_relationships(
+                    caller_qn,
+                    caller_type,
+                    module_qn,
+                    language,
+                    call_node,
+                    dispatch_targets,
+                )
+                continue
+
             call_name = self._get_call_target_name(call_node)
             if not call_name:
                 continue
@@ -843,6 +865,60 @@ class CallProcessor:
                     is_dynamic=is_dynamic,
                     confidence=confidence,
                     relation_type="call",
+                ),
+            )
+
+    def _resolve_python_dispatch_targets(
+        self,
+        caller_node: Node,
+        call_node: Node,
+        module_qn: str,
+        language: cs.SupportedLanguage,
+        *,
+        class_context: str | None,
+    ) -> list[DispatchTarget]:
+        if language != cs.SupportedLanguage.PYTHON:
+            return []
+        return self._python_dispatch_analyzer.resolve_dispatch_targets(
+            caller_node,
+            call_node,
+            module_qn,
+            class_context=class_context,
+        )
+
+    def _ingest_dispatch_relationships(
+        self,
+        caller_qn: str,
+        caller_type: str,
+        caller_module_qn: str,
+        language: cs.SupportedLanguage,
+        call_node: Node,
+        dispatch_targets: list[DispatchTarget],
+    ) -> None:
+        for target in dispatch_targets:
+            if self._should_skip_call_relationship(
+                caller_module_qn=caller_module_qn,
+                callee_type=target.callee_type,
+                callee_qn=target.callee_qn,
+            ):
+                continue
+
+            self.ingestor.ensure_relationship_batch(
+                (caller_type, cs.KEY_QUALIFIED_NAME, caller_qn),
+                cs.RelationshipType.DISPATCHES_TO,
+                (target.callee_type, cs.KEY_QUALIFIED_NAME, target.callee_qn),
+                self._build_call_relationship_props(
+                    language,
+                    call_node,
+                    is_dynamic=target.dispatch_key_kind != "literal",
+                    confidence=target.confidence,
+                    relation_type="dispatch",
+                    extra={
+                        cs.KEY_DISPATCH_REGISTRY: target.registry_name,
+                        cs.KEY_DISPATCH_KEY: target.dispatch_key,
+                        cs.KEY_DISPATCH_KEY_KIND: target.dispatch_key_kind,
+                        cs.KEY_EVIDENCE_KIND: "python_map_dispatch",
+                    },
                 ),
             )
 

@@ -5,11 +5,13 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from codebase_rag.core import constants as cs
 from codebase_rag.data_models.types_defs import (
     FunctionRegistryTrieProtocol,
     NodeType,
+    PropertyDict,
     PropertyValue,
     SimpleNameLookup,
 )
@@ -81,7 +83,28 @@ class FastAPIModuleManifest:
     app_vars: set[str]
     import_aliases: dict[str, tuple[str, str]]
     local_endpoints: list[FastAPILocalEndpoint]
+    function_dependency_bindings: list[FastAPIFunctionDependencyBinding]
+    callback_registrations: list[FastAPICallbackRegistration]
     include_edges: list[FastAPIInclude]
+
+
+@dataclass
+class FastAPIFunctionDependencyBinding:
+    consumer_name: str
+    dependencies: list[str]
+    security_dependencies: list[str]
+    security_scopes: list[str]
+    line_start: int | None = None
+    line_end: int | None = None
+
+
+@dataclass
+class FastAPICallbackRegistration:
+    source_var_name: str
+    callback_name: str
+    callback_keyword: str
+    line_start: int | None = None
+    line_end: int | None = None
 
 
 class FrameworkLinker:
@@ -620,6 +643,27 @@ class FrameworkLinker:
         candidates = self.function_registry.find_ending_with(name)
         return candidates[0] if candidates else None
 
+    def _find_best_qn_by_simple_name_prefer_module(
+        self,
+        name: str,
+        *,
+        preferred_module_qn: str | None = None,
+    ) -> str | None:
+        if name in self.function_registry:
+            return name
+
+        candidates = self.function_registry.find_ending_with(name)
+        if not candidates:
+            return None
+
+        if preferred_module_qn:
+            preferred_prefix = f"{preferred_module_qn}{cs.SEPARATOR_DOT}"
+            for qn in candidates:
+                if qn.startswith(preferred_prefix):
+                    return qn
+
+        return candidates[0]
+
     def _find_best_controller_qn(self, controller_name: str) -> str | None:
         """Resolves the qualified name of a controller class."""
         candidates = self.function_registry.find_ending_with(controller_name)
@@ -704,10 +748,14 @@ class FrameworkLinker:
         provider_name: str,
         *,
         relative_path: str,
+        preferred_module_qn: str | None,
         line_start: int | None,
         line_end: int | None,
-    ) -> str:
-        resolved_qn = self._find_best_qn_by_simple_name(provider_name)
+    ) -> tuple[str, str | None]:
+        resolved_qn = self._find_best_qn_by_simple_name_prefer_module(
+            provider_name,
+            preferred_module_qn=preferred_module_qn,
+        )
         provider_qn = self._semantic_qn(
             "dependency_provider", resolved_qn or provider_name
         )
@@ -729,17 +777,31 @@ class FrameworkLinker:
         if resolved_qn is None:
             props.update(build_placeholder_flag(placeholder_name=provider_name))
         self.ingestor.ensure_node_batch(cs.NodeLabel.DEPENDENCY_PROVIDER, props)
-        return provider_qn
+        self._link_semantic_symbol_to_function(
+            semantic_label=cs.NodeLabel.DEPENDENCY_PROVIDER,
+            semantic_qn=provider_qn,
+            resolved_qn=resolved_qn,
+            relative_path=relative_path,
+            evidence_kind="depends_resolution",
+            line_start=line_start,
+            line_end=line_end,
+            extra={"dependency_name": provider_name},
+        )
+        return provider_qn, resolved_qn
 
     def _ensure_auth_policy_node(
         self,
         policy_name: str,
         *,
         relative_path: str,
+        preferred_module_qn: str | None,
         line_start: int | None,
         line_end: int | None,
-    ) -> str:
-        resolved_qn = self._find_best_qn_by_simple_name(policy_name)
+    ) -> tuple[str, str | None]:
+        resolved_qn = self._find_best_qn_by_simple_name_prefer_module(
+            policy_name,
+            preferred_module_qn=preferred_module_qn,
+        )
         policy_qn = self._semantic_qn("auth_policy", resolved_qn or policy_name)
         props = {
             cs.KEY_QUALIFIED_NAME: policy_qn,
@@ -759,7 +821,199 @@ class FrameworkLinker:
         if resolved_qn is None:
             props.update(build_placeholder_flag(placeholder_name=policy_name))
         self.ingestor.ensure_node_batch(cs.NodeLabel.AUTH_POLICY, props)
-        return policy_qn
+        self._link_semantic_symbol_to_function(
+            semantic_label=cs.NodeLabel.AUTH_POLICY,
+            semantic_qn=policy_qn,
+            resolved_qn=resolved_qn,
+            relative_path=relative_path,
+            evidence_kind="security_resolution",
+            line_start=line_start,
+            line_end=line_end,
+            extra={"policy_name": policy_name},
+        )
+        return policy_qn, resolved_qn
+
+    def _function_target_spec(
+        self, resolved_qn: str | None
+    ) -> tuple[str, str, str] | None:
+        if not resolved_qn:
+            return None
+        node_type = self.function_registry.get(resolved_qn)
+        if node_type not in {NodeType.FUNCTION, NodeType.METHOD}:
+            return None
+        return (node_type.value, cs.KEY_QUALIFIED_NAME, resolved_qn)
+
+    def _link_semantic_symbol_to_function(
+        self,
+        *,
+        semantic_label: str,
+        semantic_qn: str,
+        resolved_qn: str | None,
+        relative_path: str,
+        evidence_kind: str,
+        line_start: int | None,
+        line_end: int | None,
+        extra: PropertyDict | None = None,
+    ) -> None:
+        target_spec = self._function_target_spec(resolved_qn)
+        if not target_spec:
+            return
+        metadata = cast(
+            PropertyDict,
+            self._semantic_metadata(
+                relative_path=relative_path,
+                evidence_kind=evidence_kind,
+                line_start=line_start,
+                line_end=line_end,
+                confidence=0.92,
+                extra=cast(dict[str, object] | None, extra),
+            ),
+        )
+        self.ingestor.ensure_relationship_batch(
+            (semantic_label, cs.KEY_QUALIFIED_NAME, semantic_qn),
+            cs.RelationshipType.RESOLVES_TO,
+            target_spec,
+            metadata,
+        )
+
+    def _register_function_liveness(
+        self,
+        *,
+        source_spec: tuple[str, str, str],
+        target_qn: str | None,
+        relative_path: str,
+        registration_kind: str,
+        line_start: int | None,
+        line_end: int | None,
+        extra: PropertyDict | None = None,
+    ) -> None:
+        target_spec = self._function_target_spec(target_qn)
+        if not target_spec:
+            return
+        metadata = cast(
+            PropertyDict,
+            self._semantic_metadata(
+                relative_path=relative_path,
+                evidence_kind=registration_kind,
+                line_start=line_start,
+                line_end=line_end,
+                confidence=0.9,
+                extra=cast(
+                    dict[str, object],
+                    {"registration_kind": registration_kind, **(extra or {})},
+                ),
+            ),
+        )
+        self.ingestor.ensure_relationship_batch(
+            source_spec,
+            cs.RelationshipType.REGISTERS_CALLBACK,
+            target_spec,
+            metadata,
+        )
+
+    def _emit_fastapi_dependency_edges(
+        self,
+        *,
+        source_specs: list[tuple[str, str, str]],
+        dependency_names: list[str],
+        security_dependency_names: list[str],
+        security_scopes: list[str],
+        relative_path: str,
+        preferred_module_qn: str | None,
+        line_start: int | None,
+        line_end: int | None,
+    ) -> None:
+        semantic_props = self._semantic_metadata(
+            relative_path=relative_path,
+            evidence_kind="fastapi_route_semantics",
+            line_start=line_start,
+            line_end=line_end,
+        )
+        inferred_security_candidates: list[str] = []
+        for dependency_name in dependency_names:
+            provider_qn, provider_target_qn = self._ensure_dependency_provider_node(
+                dependency_name,
+                relative_path=relative_path,
+                preferred_module_qn=preferred_module_qn,
+                line_start=line_start,
+                line_end=line_end,
+            )
+            for source_spec in source_specs:
+                self.ingestor.ensure_relationship_batch(
+                    source_spec,
+                    cs.RelationshipType.USES_DEPENDENCY,
+                    (
+                        cs.NodeLabel.DEPENDENCY_PROVIDER,
+                        cs.KEY_QUALIFIED_NAME,
+                        provider_qn,
+                    ),
+                    semantic_props | {"dependency_name": dependency_name},
+                )
+                self._register_function_liveness(
+                    source_spec=source_spec,
+                    target_qn=provider_target_qn,
+                    relative_path=relative_path,
+                    registration_kind="fastapi_dependency",
+                    line_start=line_start,
+                    line_end=line_end,
+                    extra={"dependency_name": dependency_name},
+                )
+            if self._looks_like_auth_dependency(dependency_name):
+                inferred_security_candidates.append(dependency_name)
+
+        explicit_policy_names = set(security_dependency_names)
+        policy_names = list(dict.fromkeys(inferred_security_candidates))
+        for inferred_policy_name in explicit_policy_names:
+            if inferred_policy_name not in policy_names:
+                policy_names.append(inferred_policy_name)
+
+        policy_qns: list[str] = []
+        for policy_name in policy_names:
+            policy_qn, policy_target_qn = self._ensure_auth_policy_node(
+                policy_name,
+                relative_path=relative_path,
+                preferred_module_qn=preferred_module_qn,
+                line_start=line_start,
+                line_end=line_end,
+            )
+            policy_qns.append(policy_qn)
+            payload = {"policy_name": policy_name}
+            if (
+                policy_name in inferred_security_candidates
+                and policy_name not in explicit_policy_names
+            ):
+                payload["inferred_from_dependency"] = True
+            for source_spec in source_specs:
+                self.ingestor.ensure_relationship_batch(
+                    source_spec,
+                    cs.RelationshipType.SECURED_BY,
+                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
+                    semantic_props | payload,
+                )
+                self._register_function_liveness(
+                    source_spec=source_spec,
+                    target_qn=policy_target_qn,
+                    relative_path=relative_path,
+                    registration_kind="fastapi_auth_policy",
+                    line_start=line_start,
+                    line_end=line_end,
+                    extra=payload,
+                )
+
+        for policy_qn in policy_qns:
+            for scope_name in security_scopes:
+                scope_qn = self._ensure_auth_scope_node(
+                    scope_name,
+                    relative_path=relative_path,
+                    line_start=line_start,
+                    line_end=line_end,
+                )
+                self.ingestor.ensure_relationship_batch(
+                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
+                    cs.RelationshipType.REQUIRES_SCOPE,
+                    (cs.NodeLabel.AUTH_SCOPE, cs.KEY_QUALIFIED_NAME, scope_qn),
+                    semantic_props | {"scope_name": scope_name},
+                )
 
     def _ensure_auth_scope_node(
         self,
@@ -795,6 +1049,7 @@ class FrameworkLinker:
         handler_qn: str | None,
         handler_type: NodeType | None,
         relative_path: str,
+        preferred_module_qn: str | None,
     ) -> None:
         if not self._fastapi_semantics_enabled:
             return
@@ -811,83 +1066,16 @@ class FrameworkLinker:
         if handler_qn and handler_type:
             source_specs.append((handler_type.value, cs.KEY_QUALIFIED_NAME, handler_qn))
 
-        inferred_security_candidates: list[str] = []
-        for dependency_name in endpoint.dependencies or []:
-            provider_qn = self._ensure_dependency_provider_node(
-                dependency_name,
-                relative_path=relative_path,
-                line_start=endpoint.line_start,
-                line_end=endpoint.line_end,
-            )
-            for source_spec in source_specs:
-                self.ingestor.ensure_relationship_batch(
-                    source_spec,
-                    cs.RelationshipType.USES_DEPENDENCY,
-                    (
-                        cs.NodeLabel.DEPENDENCY_PROVIDER,
-                        cs.KEY_QUALIFIED_NAME,
-                        provider_qn,
-                    ),
-                    semantic_props | {"dependency_name": dependency_name},
-                )
-            if self._looks_like_auth_dependency(dependency_name):
-                inferred_security_candidates.append(dependency_name)
-
-        policy_qns: list[str] = []
-        explicit_policy_names = set(endpoint.security_dependencies or [])
-
-        for inferred_policy_name in dict.fromkeys(inferred_security_candidates):
-            if inferred_policy_name in explicit_policy_names:
-                continue
-            policy_qn = self._ensure_auth_policy_node(
-                inferred_policy_name,
-                relative_path=relative_path,
-                line_start=endpoint.line_start,
-                line_end=endpoint.line_end,
-            )
-            policy_qns.append(policy_qn)
-            for source_spec in source_specs:
-                self.ingestor.ensure_relationship_batch(
-                    source_spec,
-                    cs.RelationshipType.SECURED_BY,
-                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
-                    semantic_props
-                    | {
-                        "policy_name": inferred_policy_name,
-                        "inferred_from_dependency": True,
-                    },
-                )
-
-        for policy_name in endpoint.security_dependencies or []:
-            policy_qn = self._ensure_auth_policy_node(
-                policy_name,
-                relative_path=relative_path,
-                line_start=endpoint.line_start,
-                line_end=endpoint.line_end,
-            )
-            policy_qns.append(policy_qn)
-            for source_spec in source_specs:
-                self.ingestor.ensure_relationship_batch(
-                    source_spec,
-                    cs.RelationshipType.SECURED_BY,
-                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
-                    semantic_props | {"policy_name": policy_name},
-                )
-
-        for policy_qn in policy_qns:
-            for scope_name in endpoint.security_scopes or []:
-                scope_qn = self._ensure_auth_scope_node(
-                    scope_name,
-                    relative_path=relative_path,
-                    line_start=endpoint.line_start,
-                    line_end=endpoint.line_end,
-                )
-                self.ingestor.ensure_relationship_batch(
-                    (cs.NodeLabel.AUTH_POLICY, cs.KEY_QUALIFIED_NAME, policy_qn),
-                    cs.RelationshipType.REQUIRES_SCOPE,
-                    (cs.NodeLabel.AUTH_SCOPE, cs.KEY_QUALIFIED_NAME, scope_qn),
-                    semantic_props | {"scope_name": scope_name},
-                )
+        self._emit_fastapi_dependency_edges(
+            source_specs=source_specs,
+            dependency_names=endpoint.dependencies or [],
+            security_dependency_names=endpoint.security_dependencies or [],
+            security_scopes=endpoint.security_scopes or [],
+            relative_path=relative_path,
+            preferred_module_qn=preferred_module_qn,
+            line_start=endpoint.line_start,
+            line_end=endpoint.line_end,
+        )
 
         if endpoint.response_model:
             contract_qn = self._ensure_contract_node(
@@ -951,6 +1139,17 @@ class FrameworkLinker:
         )
         loop_bindings = self._extract_fastapi_loop_bindings(source)
         local_endpoints = self._extract_fastapi_local_endpoints(source)
+        route_handler_names = {endpoint.handler_name for endpoint in local_endpoints}
+        function_dependency_bindings = (
+            self._extract_fastapi_function_dependency_bindings(
+                source,
+                skip_function_names=route_handler_names,
+            )
+        )
+        callback_registrations = self._extract_fastapi_callback_registrations(
+            source,
+            app_vars=app_vars,
+        )
         include_edges = self._extract_fastapi_include_edges(
             source,
             router_vars=router_vars,
@@ -966,6 +1165,8 @@ class FrameworkLinker:
             not router_vars
             and not app_vars
             and not local_endpoints
+            and not function_dependency_bindings
+            and not callback_registrations
             and not include_edges
         ):
             return
@@ -977,8 +1178,113 @@ class FrameworkLinker:
             app_vars=app_vars,
             import_aliases=import_aliases,
             local_endpoints=local_endpoints,
+            function_dependency_bindings=function_dependency_bindings,
+            callback_registrations=callback_registrations,
             include_edges=include_edges,
         )
+
+    @staticmethod
+    def _line_number_for_index(source: str, index: int) -> int:
+        return source.count("\n", 0, max(0, index)) + 1
+
+    def _extract_fastapi_function_dependency_bindings(
+        self,
+        source: str,
+        *,
+        skip_function_names: set[str],
+    ) -> list[FastAPIFunctionDependencyBinding]:
+        bindings: list[FastAPIFunctionDependencyBinding] = []
+        def_pattern = re.compile(
+            r"(?:^|\n)\s*(?:async\s+def|def)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            re.MULTILINE,
+        )
+        depends_pattern = re.compile(r"Depends\(\s*([A-Za-z_][\w\.]*)?\s*\)")
+        security_pattern = re.compile(r"Security\(\s*([A-Za-z_][\w\.]*)?\s*")
+        security_scopes_pattern = re.compile(
+            r"Security\([^)]*?\bscopes\s*=\s*\[([^\]]*)\]",
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        for match in def_pattern.finditer(source):
+            consumer_name = match.group("name")
+            if consumer_name in skip_function_names:
+                continue
+            open_index = source.find("(", match.end() - 1)
+            if open_index < 0:
+                continue
+            close_index = self._find_matching_paren(source, open_index)
+            if close_index == -1:
+                continue
+            params = source[open_index + 1 : close_index]
+            dependencies = [
+                dep.group(1) for dep in depends_pattern.finditer(params) if dep.group(1)
+            ]
+            security_dependencies = [
+                dep.group(1)
+                for dep in security_pattern.finditer(params)
+                if dep.group(1)
+            ]
+            security_scopes: list[str] = []
+            for scope_match in security_scopes_pattern.finditer(params):
+                for token in scope_match.group(1).split(","):
+                    cleaned = token.strip().strip("'\"")
+                    if cleaned:
+                        security_scopes.append(cleaned)
+            if not dependencies and not security_dependencies:
+                continue
+            bindings.append(
+                FastAPIFunctionDependencyBinding(
+                    consumer_name=consumer_name,
+                    dependencies=list(dict.fromkeys(dependencies)),
+                    security_dependencies=list(dict.fromkeys(security_dependencies)),
+                    security_scopes=list(dict.fromkeys(security_scopes)),
+                    line_start=self._line_number_for_index(source, match.start()),
+                    line_end=self._line_number_for_index(source, close_index),
+                )
+            )
+        return bindings
+
+    def _extract_fastapi_callback_registrations(
+        self,
+        source: str,
+        *,
+        app_vars: set[str],
+    ) -> list[FastAPICallbackRegistration]:
+        registrations: list[FastAPICallbackRegistration] = []
+        callback_patterns = {
+            "generate_unique_id_function": re.compile(
+                r"generate_unique_id_function\s*=\s*([A-Za-z_][\w\.]*)"
+            )
+        }
+        assign_pattern = re.compile(
+            r"^\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*FastAPI\s*\(",
+            re.MULTILINE,
+        )
+        for match in assign_pattern.finditer(source):
+            source_var_name = match.group("name")
+            if source_var_name not in app_vars:
+                continue
+            open_index = source.find("(", match.end() - 1)
+            if open_index < 0:
+                continue
+            close_index = self._find_matching_paren(source, open_index)
+            if close_index == -1:
+                continue
+            args = source[open_index + 1 : close_index]
+            for callback_keyword, pattern in callback_patterns.items():
+                callback_match = pattern.search(args)
+                if not callback_match:
+                    continue
+                registrations.append(
+                    FastAPICallbackRegistration(
+                        source_var_name=source_var_name,
+                        callback_name=callback_match.group(1),
+                        callback_keyword=callback_keyword,
+                        line_start=self._line_number_for_index(source, match.start()),
+                        line_end=self._line_number_for_index(source, close_index),
+                    )
+                )
+        return registrations
 
     @staticmethod
     def _extract_fastapi_router_vars(source: str) -> tuple[set[str], set[str]]:
@@ -1383,6 +1689,10 @@ class FrameworkLinker:
         if not self._fastapi_manifests:
             return
 
+        for manifest in self._fastapi_manifests.values():
+            self._materialize_fastapi_function_dependency_bindings(manifest)
+            self._materialize_fastapi_callback_registrations(manifest)
+
         inbound_modules: dict[str, int] = {}
         for manifest in self._fastapi_manifests.values():
             for edge in manifest.include_edges:
@@ -1550,6 +1860,7 @@ class FrameworkLinker:
             handler_qn=handler_qn,
             handler_type=handler_type,
             relative_path=module_path,
+            preferred_module_qn=module_qn,
         )
 
         for exposed_module_qn, exposed_module_path in module_chain:
@@ -1577,6 +1888,61 @@ class FrameworkLinker:
                     "local_route_path": endpoint.path,
                     "source_module_path": prefix_module_path,
                     "source_parser": "framework_linker",
+                },
+            )
+
+    def _materialize_fastapi_function_dependency_bindings(
+        self, manifest: FastAPIModuleManifest
+    ) -> None:
+        for binding in manifest.function_dependency_bindings:
+            consumer_qn = self._find_handler_qn_in_module(
+                manifest.module_qn,
+                binding.consumer_name,
+            )
+            consumer_type = (
+                self.function_registry.get(consumer_qn) if consumer_qn else None
+            )
+            if not consumer_qn or consumer_type not in {
+                NodeType.FUNCTION,
+                NodeType.METHOD,
+            }:
+                continue
+            self._emit_fastapi_dependency_edges(
+                source_specs=[
+                    (consumer_type.value, cs.KEY_QUALIFIED_NAME, consumer_qn)
+                ],
+                dependency_names=binding.dependencies,
+                security_dependency_names=binding.security_dependencies,
+                security_scopes=binding.security_scopes,
+                relative_path=manifest.relative_path,
+                preferred_module_qn=manifest.module_qn,
+                line_start=binding.line_start,
+                line_end=binding.line_end,
+            )
+
+    def _materialize_fastapi_callback_registrations(
+        self, manifest: FastAPIModuleManifest
+    ) -> None:
+        for registration in manifest.callback_registrations:
+            callback_qn = self._find_best_qn_by_simple_name_prefer_module(
+                registration.callback_name,
+                preferred_module_qn=manifest.module_qn,
+            )
+            self._register_function_liveness(
+                source_spec=(
+                    cs.NodeLabel.MODULE,
+                    cs.KEY_QUALIFIED_NAME,
+                    manifest.module_qn,
+                ),
+                target_qn=callback_qn,
+                relative_path=manifest.relative_path,
+                registration_kind="fastapi_app_callback",
+                line_start=registration.line_start,
+                line_end=registration.line_end,
+                extra={
+                    "callback_name": registration.callback_name,
+                    "callback_keyword": registration.callback_keyword,
+                    "source_var_name": registration.source_var_name,
                 },
             )
 

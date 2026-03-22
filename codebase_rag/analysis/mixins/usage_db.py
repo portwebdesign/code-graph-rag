@@ -151,6 +151,12 @@ class UsageDbMixin:
                 "start_line": row.get(cs.KEY_START_LINE),
                 "label": row.get("label") or cs.NodeLabel.FUNCTION,
                 "call_in_degree": int(cast(Any, row.get("call_in_degree")) or 0),
+                "dispatch_in_degree": int(
+                    cast(Any, row.get("dispatch_in_degree")) or 0
+                ),
+                "combined_in_degree": int(
+                    cast(Any, row.get("combined_in_degree")) or 0
+                ),
                 "out_call_count": int(cast(Any, row.get("out_call_count")) or 0),
                 "is_entrypoint_name": bool(cast(Any, row.get("is_entrypoint_name"))),
                 "has_entry_decorator": bool(cast(Any, row.get("has_entry_decorator"))),

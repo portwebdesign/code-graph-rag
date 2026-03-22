@@ -148,6 +148,8 @@ def test_dead_code_except_test_report_contains_graph_confidence_and_risk(
                 "path": "codebase_rag/core/service.py",
                 "start_line": 10,
                 "call_in_degree": 0,
+                "dispatch_in_degree": 1,
+                "combined_in_degree": 1,
                 "decorator_links": 0,
                 "registration_links": 0,
                 "imported_by_cli_links": 0,
@@ -162,6 +164,38 @@ def test_dead_code_except_test_report_contains_graph_confidence_and_risk(
     assert "risk_score" in symbol
     assert "graph_confidence" in symbol
     assert symbol["graph_confidence"]["call_in_degree"] == 0
+    assert symbol["graph_confidence"]["dispatch_in_degree"] == 1
+    assert symbol["graph_confidence"]["combined_in_degree"] == 1
+    assert symbol["reachability_source"] == "dispatch_reference"
+
+
+def test_dead_code_report_payload_retains_combined_liveness_metadata(
+    tmp_path: Path,
+) -> None:
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
+
+    report, filtered_dead_functions, _ = runner._build_dead_code_report_payload(
+        total_functions=2,
+        dead_functions=[
+            {
+                "qualified_name": "proj.dispatch.handlers._handle_status",
+                "name": "_handle_status",
+                "path": "src/handlers.py",
+                "start_line": 10,
+                "call_in_degree": 0,
+                "dispatch_in_degree": 1,
+                "combined_in_degree": 1,
+                "decorator_links": 0,
+                "registration_links": 0,
+                "imported_by_cli_links": 0,
+                "config_reference_links": 0,
+            }
+        ],
+    )
+
+    assert report["summary"]["reported_dead_functions"] == 1
+    assert filtered_dead_functions[0]["dispatch_in_degree"] == 1
+    assert filtered_dead_functions[0]["combined_in_degree"] == 1
 
 
 def test_dead_code_report_payload_suppresses_noise_and_adds_guidance(
@@ -288,10 +322,143 @@ def test_dead_code_report_db_query_excludes_decorated_entry_points(
 
     assert "coalesce(f.is_entry_point, false) = false" in ingestor.captured_query
     assert "[:DECORATES|ANNOTATES]" in ingestor.captured_query
+    assert "[:DISPATCHES_TO]" in ingestor.captured_query
+    assert "combined_in_degree" in ingestor.captured_query
     assert (
-        "HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE"
+        "HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|REGISTERS_CALLBACK|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE"
         in ingestor.captured_query
     )
+
+
+def test_dead_code_report_payload_suppresses_iife_build_config_and_python_reexports(
+    tmp_path: Path,
+) -> None:
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
+
+    shell_frame = (
+        tmp_path / "frontend" / "src" / "features" / "shell" / "ShellLayoutFrame.tsx"
+    )
+    shell_frame.parent.mkdir(parents=True, exist_ok=True)
+    shell_frame.write_text(
+        """export function ShellLayoutFrame() {
+  void (async () => {
+    await Promise.resolve();
+  })();
+  return null;
+}
+""",
+        encoding="utf-8",
+    )
+
+    vite_config = tmp_path / "frontend" / "vite.config.ts"
+    vite_config.parent.mkdir(parents=True, exist_ok=True)
+    vite_config.write_text(
+        """export default {
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          return id.includes("node_modules") ? "vendor" : undefined;
+        },
+      },
+    },
+  },
+};
+""",
+        encoding="utf-8",
+    )
+
+    cli_handlers = (
+        tmp_path / "src" / "workers" / "schema_sync" / "governance" / "cli_handlers.py"
+    )
+    cli_handlers.parent.mkdir(parents=True, exist_ok=True)
+    cli_handlers.write_text(
+        """def build_parser():
+    return object()
+
+
+async def run_cli(args, *, services):
+    return 0
+""",
+        encoding="utf-8",
+    )
+
+    package_init = cli_handlers.with_name("__init__.py")
+    package_init.write_text(
+        """from .cli_handlers import build_parser as build_governance_parser, run_cli as run_governance_cli
+
+__all__ = ["build_parser", "run_cli"]
+
+
+def build_parser():
+    return build_governance_parser()
+
+
+async def run_cli(args):
+    return await run_governance_cli(args, services=None)
+""",
+        encoding="utf-8",
+    )
+
+    candidate_file = tmp_path / "src" / "domain" / "payment.py"
+    candidate_file.parent.mkdir(parents=True, exist_ok=True)
+    candidate_file.write_text(
+        """def reconcile():
+    return 42
+""",
+        encoding="utf-8",
+    )
+
+    report, filtered_dead_functions, suppression_reason_counts = (
+        runner._build_dead_code_report_payload(
+            total_functions=6,
+            dead_functions=[
+                {
+                    "qualified_name": "abey.frontend.src.features.shell.ShellLayoutFrame.ShellLayoutFrame.iife_arrow_1_7",
+                    "name": "iife_arrow_1_7",
+                    "path": "frontend/src/features/shell/ShellLayoutFrame.tsx",
+                    "start_line": 2,
+                },
+                {
+                    "qualified_name": "abey.frontend.src.features.shell.ShellLayoutFrame.ShellLayoutFrame.iife_func_1_7",
+                    "name": "iife_func_1_7",
+                    "path": "frontend/src/features/shell/ShellLayoutFrame.tsx",
+                    "start_line": 2,
+                },
+                {
+                    "qualified_name": "abey.frontend.vite.config.manualChunks",
+                    "name": "manualChunks",
+                    "path": "frontend/vite.config.ts",
+                    "start_line": 5,
+                },
+                {
+                    "qualified_name": "abey.src.workers.schema_sync.governance.cli_handlers.build_parser",
+                    "name": "build_parser",
+                    "path": "src/workers/schema_sync/governance/cli_handlers.py",
+                    "start_line": 1,
+                },
+                {
+                    "qualified_name": "abey.src.workers.schema_sync.governance.cli_handlers.run_cli",
+                    "name": "run_cli",
+                    "path": "src/workers/schema_sync/governance/cli_handlers.py",
+                    "start_line": 5,
+                },
+                {
+                    "qualified_name": "abey.src.domain.payment.reconcile",
+                    "name": "reconcile",
+                    "path": "src/domain/payment.py",
+                    "start_line": 1,
+                },
+            ],
+        )
+    )
+
+    assert [item["qualified_name"] for item in filtered_dead_functions] == [
+        "abey.src.domain.payment.reconcile"
+    ]
+    assert suppression_reason_counts["anonymous_callback"] >= 2
+    assert suppression_reason_counts["non_runtime_source"] >= 1
+    assert suppression_reason_counts["python_package_reexport"] >= 2
 
 
 def test_dead_code_except_test_report_includes_guidance_summary(tmp_path: Path) -> None:

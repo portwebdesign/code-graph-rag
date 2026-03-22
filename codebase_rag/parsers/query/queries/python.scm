@@ -214,6 +214,15 @@
   arguments: (argument_list)? @call_args) @chained_call_edge
 
 
+@query: subscript_call_edge
+(call
+  function:
+    (subscript
+      value: (_) @dispatch_registry
+      subscript: (_) @dispatch_key)
+  arguments: (argument_list)? @call_args) @call
+
+
 
 ; =========================================================
 ; ATTRIBUTE USAGE

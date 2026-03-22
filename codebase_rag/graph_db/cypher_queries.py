@@ -114,6 +114,8 @@ CYPHER_BACKFILL_DEAD_CODE_NODE_CACHE_DEFAULTS = """
 MATCH (f)
 WHERE f:Function OR f:Method
 SET f.in_call_count = coalesce(f.in_call_count, 0),
+    f.in_dispatch_count = coalesce(f.in_dispatch_count, 0),
+    f.combined_in_count = coalesce(f.combined_in_count, coalesce(f.in_call_count, 0) + coalesce(f.in_dispatch_count, 0)),
     f.out_call_count = coalesce(f.out_call_count, 0),
     f.is_reachable = coalesce(f.is_reachable, true),
     f.reachability_source = coalesce(f.reachability_source, 'legacy_unknown'),
@@ -181,7 +183,7 @@ OPTIONAL MATCH (m)-[:DEFINES|DEFINES_METHOD*0..5]->(defined)
 OPTIONAL MATCH (defined)-[:HAS_ENDPOINT]->(endpoint)
 WITH collect(DISTINCT m) + collect(DISTINCT defined) + collect(DISTINCT endpoint) AS nodes
 UNWIND nodes AS node
-MATCH (node)-[r:CALLS|IMPORTS|EXPORTS|EXPORTS_MODULE|IMPLEMENTS_MODULE|INHERITS|IMPLEMENTS|OVERRIDES|RETURNS_TYPE|PARAMETER_TYPE|CAUGHT_BY|THROWS|DECORATES|ANNOTATES|REQUIRES_LIBRARY|DEPENDS_ON|DEPENDS_ON_EXTERNAL|HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|RENDERS_VIEW|USES_MIDDLEWARE|REGISTERS_SERVICE|ELOQUENT_RELATION|HOOKS|REGISTERS_BLOCK|USES_ASSET|USES_UTILITY|RESOLVES_IMPORT|USES_COMPONENT|HANDLES_ERROR|MUTATES_STATE|HAS_PARAMETER|HAS_TYPE_PARAMETER|EMBEDS|REQUESTS_ENDPOINT|USES_OPERATION|USES_DEPENDENCY|SECURED_BY|REQUIRES_SCOPE|ACCEPTS_CONTRACT|RETURNS_CONTRACT|DECLARES_FIELD|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE|WRITES_OUTBOX|PUBLISHES_EVENT|CONSUMES_EVENT|WRITES_DLQ|REPLAYS_EVENT|BEGINS_TRANSACTION|COMMITS_TRANSACTION|ROLLBACKS_TRANSACTION|PERFORMS_SIDE_EFFECT|WITHIN_TRANSACTION|BEFORE|AFTER|EXECUTES_SQL|EXECUTES_CYPHER|HAS_FINGERPRINT|READS_TABLE|WRITES_TABLE|READS_LABEL|WRITES_LABEL|JOINS_TABLE|GENERATED_FROM_SPEC|BYPASSES_MANIFEST|TESTS_SYMBOL|TESTS_ENDPOINT|ASSERTS_CONTRACT|READS_ENV|SETS_ENV|USES_SECRET|GATES_CODE_PATH]-()
+MATCH (node)-[r:CALLS|DISPATCHES_TO|IMPORTS|EXPORTS|EXPORTS_MODULE|IMPLEMENTS_MODULE|INHERITS|IMPLEMENTS|OVERRIDES|RETURNS_TYPE|PARAMETER_TYPE|CAUGHT_BY|THROWS|DECORATES|ANNOTATES|REQUIRES_LIBRARY|DEPENDS_ON|DEPENDS_ON_EXTERNAL|HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|RENDERS_VIEW|USES_MIDDLEWARE|REGISTERS_SERVICE|ELOQUENT_RELATION|HOOKS|REGISTERS_BLOCK|USES_ASSET|USES_UTILITY|RESOLVES_IMPORT|USES_COMPONENT|HANDLES_ERROR|MUTATES_STATE|HAS_PARAMETER|HAS_TYPE_PARAMETER|EMBEDS|REQUESTS_ENDPOINT|USES_OPERATION|USES_DEPENDENCY|SECURED_BY|REQUIRES_SCOPE|ACCEPTS_CONTRACT|RETURNS_CONTRACT|DECLARES_FIELD|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE|WRITES_OUTBOX|PUBLISHES_EVENT|CONSUMES_EVENT|WRITES_DLQ|REPLAYS_EVENT|BEGINS_TRANSACTION|COMMITS_TRANSACTION|ROLLBACKS_TRANSACTION|PERFORMS_SIDE_EFFECT|WITHIN_TRANSACTION|BEFORE|AFTER|EXECUTES_SQL|EXECUTES_CYPHER|HAS_FINGERPRINT|READS_TABLE|WRITES_TABLE|READS_LABEL|WRITES_LABEL|JOINS_TABLE|GENERATED_FROM_SPEC|BYPASSES_MANIFEST|TESTS_SYMBOL|TESTS_ENDPOINT|ASSERTS_CONTRACT|READS_ENV|SETS_ENV|USES_SECRET|GATES_CODE_PATH]-()
 DELETE r
 WITH $path AS path
 MATCH ()-[r:USES_DEPENDENCY|SECURED_BY|REQUIRES_SCOPE|ACCEPTS_CONTRACT|RETURNS_CONTRACT|DECLARES_FIELD|WRITES_OUTBOX|PUBLISHES_EVENT|CONSUMES_EVENT|WRITES_DLQ|REPLAYS_EVENT|USES_QUEUE|USES_HANDLER|BEGINS_TRANSACTION|COMMITS_TRANSACTION|ROLLBACKS_TRANSACTION|PERFORMS_SIDE_EFFECT|WITHIN_TRANSACTION|BEFORE|AFTER|EXECUTES_SQL|EXECUTES_CYPHER|HAS_FINGERPRINT|READS_TABLE|WRITES_TABLE|READS_LABEL|WRITES_LABEL|JOINS_TABLE|USES_OPERATION|GENERATED_FROM_SPEC|BYPASSES_MANIFEST|TESTS_SYMBOL|TESTS_ENDPOINT|ASSERTS_CONTRACT|READS_ENV|SETS_ENV|USES_SECRET|GATES_CODE_PATH|CONTAINS]->()
@@ -961,7 +963,7 @@ LIMIT 1
 CYPHER_ANALYSIS_USAGE = """
 MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(node)
 WITH DISTINCT node
-OPTIONAL MATCH ()-[r:CALLS|USES_COMPONENT|REQUESTS_ENDPOINT|RESOLVES_IMPORT|USES_ASSET|HANDLES_ERROR|MUTATES_STATE]->(node)
+OPTIONAL MATCH ()-[r:CALLS|DISPATCHES_TO|USES_COMPONENT|REQUESTS_ENDPOINT|RESOLVES_IMPORT|USES_ASSET|HANDLES_ERROR|MUTATES_STATE]->(node)
 RETURN node.qualified_name AS qualified_name,
              labels(node)[0] AS label,
              count(r) AS usage_count
@@ -971,7 +973,7 @@ CYPHER_ANALYSIS_USAGE_FILTERED = """
 MATCH (m:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(node)
 WHERE $module_paths IS NULL OR m.path IN $module_paths
 WITH DISTINCT node
-OPTIONAL MATCH ()-[r:CALLS|USES_COMPONENT|REQUESTS_ENDPOINT|RESOLVES_IMPORT|USES_ASSET|HANDLES_ERROR|MUTATES_STATE]->(node)
+OPTIONAL MATCH ()-[r:CALLS|DISPATCHES_TO|USES_COMPONENT|REQUESTS_ENDPOINT|RESOLVES_IMPORT|USES_ASSET|HANDLES_ERROR|MUTATES_STATE]->(node)
 RETURN node.qualified_name AS qualified_name,
              labels(node)[0] AS label,
              count(r) AS usage_count
@@ -986,20 +988,29 @@ WITH f, min(m.path) AS path
 OPTIONAL MATCH (decorator_src)-[:DECORATES|ANNOTATES]->(f)
 WITH f, path, count(DISTINCT decorator_src) AS decorator_links
 WHERE decorator_links = 0
-OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
+OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|REGISTERS_CALLBACK|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
 WITH f, path, decorator_links, count(DISTINCT registration_src) AS registration_links
 WHERE registration_links = 0
 OPTIONAL MATCH (caller)-[:CALLS]->(f)
 WITH f, path, decorator_links, registration_links, count(DISTINCT caller) AS call_in_degree
-WHERE call_in_degree = 0
+OPTIONAL MATCH (dispatch_src)-[:DISPATCHES_TO]->(f)
+WITH f, path, decorator_links, registration_links, call_in_degree,
+     count(DISTINCT dispatch_src) AS dispatch_in_degree
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     call_in_degree + dispatch_in_degree AS combined_in_degree
+WHERE combined_in_degree = 0
 OPTIONAL MATCH (f)-[:CALLS]->(callee)
-WITH f, path, decorator_links, registration_links, call_in_degree, count(DISTINCT callee) AS out_call_count
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     combined_in_degree, count(DISTINCT callee) AS out_call_count
 OPTIONAL MATCH (import_src)-[:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     combined_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
 OPTIONAL MATCH (config_src)-[:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count,
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     combined_in_degree, out_call_count,
      imported_by_cli_links, count(DISTINCT config_src) AS config_reference_links
-WITH f, path, call_in_degree, out_call_count, decorator_links, registration_links,
+WITH f, path, call_in_degree, dispatch_in_degree, combined_in_degree, out_call_count,
+     decorator_links, registration_links,
      imported_by_cli_links, config_reference_links,
      CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
      CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
@@ -1009,6 +1020,8 @@ RETURN DISTINCT f.qualified_name AS qualified_name,
                 f.start_line AS start_line,
                 labels(f)[0] AS label,
                 call_in_degree,
+                dispatch_in_degree,
+                combined_in_degree,
                 out_call_count,
                 is_entrypoint_name,
                 has_entry_decorator,
@@ -1032,20 +1045,29 @@ WITH f, min(m.path) AS path
 OPTIONAL MATCH (decorator_src)-[:DECORATES|ANNOTATES]->(f)
 WITH f, path, count(DISTINCT decorator_src) AS decorator_links
 WHERE decorator_links = 0
-OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
+OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|REGISTERS_CALLBACK|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
 WITH f, path, decorator_links, count(DISTINCT registration_src) AS registration_links
 WHERE registration_links = 0
 OPTIONAL MATCH (caller)-[:CALLS]->(f)
 WITH f, path, decorator_links, registration_links, count(DISTINCT caller) AS call_in_degree
-WHERE call_in_degree = 0
+OPTIONAL MATCH (dispatch_src)-[:DISPATCHES_TO]->(f)
+WITH f, path, decorator_links, registration_links, call_in_degree,
+     count(DISTINCT dispatch_src) AS dispatch_in_degree
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     call_in_degree + dispatch_in_degree AS combined_in_degree
+WHERE combined_in_degree = 0
 OPTIONAL MATCH (f)-[:CALLS]->(callee)
-WITH f, path, decorator_links, registration_links, call_in_degree, count(DISTINCT callee) AS out_call_count
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     combined_in_degree, count(DISTINCT callee) AS out_call_count
 OPTIONAL MATCH (import_src)-[:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     combined_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
 OPTIONAL MATCH (config_src)-[:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, out_call_count,
+WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+     combined_in_degree, out_call_count,
      imported_by_cli_links, count(DISTINCT config_src) AS config_reference_links
-WITH f, path, call_in_degree, out_call_count, decorator_links, registration_links,
+WITH f, path, call_in_degree, dispatch_in_degree, combined_in_degree, out_call_count,
+     decorator_links, registration_links,
      imported_by_cli_links, config_reference_links,
      CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
      CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
@@ -1055,6 +1077,8 @@ RETURN DISTINCT f.qualified_name AS qualified_name,
                 f.start_line AS start_line,
                 labels(f)[0] AS label,
                 call_in_degree,
+                dispatch_in_degree,
+                combined_in_degree,
                 out_call_count,
                 is_entrypoint_name,
                 has_entry_decorator,

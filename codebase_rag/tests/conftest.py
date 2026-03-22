@@ -235,6 +235,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         "tests/unit/parsers/passes/test_query_fingerprint_dedup_prevents_explosion.py",
         "tests/unit/parsers/pipeline/test_testcase_symbol_edges.py",
         "tests/unit/parsers/pipeline/test_testcase_endpoint_edges.py",
+        "tests/unit/parsers/pipeline/test_python_map_dispatch_semantics.py",
         "tests/integration/parsers/test_semantic_pass_order_is_deterministic.py",
     )
 

@@ -829,6 +829,11 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.MODULE, NodeLabel.CLASS, NodeLabel.FUNCTION, NodeLabel.METHOD),
     ),
     RelationshipSchema(
+        (NodeLabel.MODULE, NodeLabel.FUNCTION, NodeLabel.METHOD, NodeLabel.COMPONENT),
+        RelationshipType.DISPATCHES_TO,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
         (NodeLabel.LIBRARY,),
         RelationshipType.HAS_DOC,
         (NodeLabel.DOC_CHUNK,),
@@ -972,6 +977,21 @@ RELATIONSHIP_SCHEMAS: tuple[RelationshipSchema, ...] = (
         (NodeLabel.ENDPOINT, NodeLabel.FUNCTION, NodeLabel.METHOD),
         RelationshipType.SECURED_BY,
         (NodeLabel.AUTH_POLICY,),
+    ),
+    RelationshipSchema(
+        (NodeLabel.DEPENDENCY_PROVIDER, NodeLabel.AUTH_POLICY),
+        RelationshipType.RESOLVES_TO,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
+    ),
+    RelationshipSchema(
+        (
+            NodeLabel.MODULE,
+            NodeLabel.ENDPOINT,
+            NodeLabel.FUNCTION,
+            NodeLabel.METHOD,
+        ),
+        RelationshipType.REGISTERS_CALLBACK,
+        (NodeLabel.FUNCTION, NodeLabel.METHOD),
     ),
     RelationshipSchema(
         (NodeLabel.AUTH_POLICY,),

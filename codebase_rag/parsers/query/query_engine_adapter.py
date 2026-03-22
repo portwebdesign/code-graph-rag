@@ -17,7 +17,12 @@ _QUERY_NAME_MAP: dict[cs.SupportedLanguage, dict[str, str | list[str]]] = {
             "method_definition",
         ],
         "classes": "class_definition",
-        "calls": ["call_edge", "method_call_edge", "chained_call_edge"],
+        "calls": [
+            "call_edge",
+            "method_call_edge",
+            "chained_call_edge",
+            "subscript_call_edge",
+        ],
         "imports": "import_edge",
     },
     cs.SupportedLanguage.JS: {
@@ -344,6 +349,7 @@ _CAPTURE_ALIAS_MAP: dict[str, tuple[str, ...]] = {
         "call_edge",
         "method_call_edge",
         "constructor_call_edge",
+        "subscript_call_edge",
         "call_expression",
         "method_call",
         "constructor_call",

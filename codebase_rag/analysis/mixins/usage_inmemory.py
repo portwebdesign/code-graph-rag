@@ -151,6 +151,7 @@ class UsageInMemoryMixin:
                 cs.RelationshipType.ROUTES_TO_ACTION,
                 cs.RelationshipType.REQUESTS_ENDPOINT,
                 cs.RelationshipType.REGISTERS_SERVICE,
+                cs.RelationshipType.REGISTERS_CALLBACK,
                 cs.RelationshipType.HOOKS,
                 cs.RelationshipType.REGISTERS_BLOCK,
             }:

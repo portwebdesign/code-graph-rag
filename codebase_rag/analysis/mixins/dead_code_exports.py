@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from ...core import constants as cs
 from ..protocols import AnalysisRunnerProtocol
 
 
@@ -43,6 +44,53 @@ class DeadCodeExportsMixin:
         "cli_or_entrypoint": 1,
         "framework_registered": 0,
         "dynamic_or_magic": 0,
+    }
+
+    NON_RUNTIME_BUILD_CONFIG_FILENAMES: set[str] = {
+        "babel.config.js",
+        "babel.config.cjs",
+        "babel.config.mjs",
+        "babel.config.ts",
+        "esbuild.config.js",
+        "esbuild.config.cjs",
+        "esbuild.config.mjs",
+        "esbuild.config.ts",
+        "postcss.config.js",
+        "postcss.config.cjs",
+        "postcss.config.mjs",
+        "postcss.config.ts",
+        "rollup.config.js",
+        "rollup.config.cjs",
+        "rollup.config.mjs",
+        "rollup.config.ts",
+        "rspack.config.js",
+        "rspack.config.cjs",
+        "rspack.config.mjs",
+        "rspack.config.ts",
+        "tailwind.config.js",
+        "tailwind.config.cjs",
+        "tailwind.config.mjs",
+        "tailwind.config.ts",
+        "tsup.config.js",
+        "tsup.config.cjs",
+        "tsup.config.mjs",
+        "tsup.config.ts",
+        "vite.config.js",
+        "vite.config.cjs",
+        "vite.config.mjs",
+        "vite.config.ts",
+        "vite.config.cts",
+        "vite.config.mts",
+        "vitest.config.js",
+        "vitest.config.cjs",
+        "vitest.config.mjs",
+        "vitest.config.ts",
+        "vitest.config.cts",
+        "vitest.config.mts",
+        "webpack.config.js",
+        "webpack.config.cjs",
+        "webpack.config.mjs",
+        "webpack.config.ts",
     }
 
     @staticmethod
@@ -111,8 +159,48 @@ class DeadCodeExportsMixin:
         }
         if filename in config_filenames:
             return False
+        if filename in cls.NON_RUNTIME_BUILD_CONFIG_FILENAMES:
+            return False
 
         return True
+
+    @staticmethod
+    def _is_anonymous_callback_symbol(name: str) -> bool:
+        return (
+            name.startswith("anonymous_")
+            or name.startswith(cs.IIFE_ARROW_PREFIX)
+            or name.startswith(cs.IIFE_FUNC_PREFIX)
+        )
+
+    def _is_python_package_reexport(
+        self: AnalysisRunnerProtocol, path: str, name: str
+    ) -> bool:
+        normalized = self._normalize_dead_code_path(path)
+        module_path = Path(normalized)
+        if module_path.suffix.lower() != ".py":
+            return False
+        if module_path.name in {"__init__.py", "__main__.py"}:
+            return False
+
+        package_init_path = module_path.with_name("__init__.py")
+        init_source = self._read_dead_code_source_text(
+            str(package_init_path).replace("\\", "/")
+        )
+        if not init_source:
+            return False
+
+        import_pattern = re.compile(
+            rf"^\s*from\s+\.{re.escape(module_path.stem)}\s+import\s+.*\b{re.escape(name)}\b",
+            re.MULTILINE,
+        )
+        if import_pattern.search(init_source):
+            return True
+
+        all_pattern = re.compile(
+            rf"__all__\s*=\s*\[[^\]]*['\"]{re.escape(name)}['\"]",
+            re.MULTILINE | re.DOTALL,
+        )
+        return bool(all_pattern.search(init_source))
 
     @staticmethod
     def _safe_int(value: Any) -> int:
@@ -129,8 +217,15 @@ class DeadCodeExportsMixin:
         return [str(dec).lower() for dec in raw if str(dec).strip()]
 
     def _graph_confidence(self, item: dict[str, Any]) -> dict[str, int]:
+        call_in_degree = self._safe_int(item.get("call_in_degree") or 0)
+        dispatch_in_degree = self._safe_int(item.get("dispatch_in_degree") or 0)
+        combined_in_degree = self._safe_int(
+            item.get("combined_in_degree") or (call_in_degree + dispatch_in_degree)
+        )
         return {
-            "call_in_degree": self._safe_int(item.get("call_in_degree") or 0),
+            "call_in_degree": call_in_degree,
+            "dispatch_in_degree": dispatch_in_degree,
+            "combined_in_degree": combined_in_degree,
             "import_in_degree": self._safe_int(item.get("config_reference_links") or 0),
             "decorator_links": self._safe_int(item.get("decorator_links") or 0),
             "registration_links": self._safe_int(item.get("registration_links") or 0),
@@ -212,6 +307,10 @@ class DeadCodeExportsMixin:
         item: dict[str, Any],
         graph_confidence: dict[str, int],
     ) -> tuple[bool, str]:
+        if graph_confidence["combined_in_degree"] > 0:
+            if graph_confidence["dispatch_in_degree"] > 0:
+                return True, "dispatch_reference"
+            return True, "call_reference"
         if self._truthy(item.get("is_entrypoint_name")):
             return True, "entrypoint"
         if self._truthy(item.get("has_entry_decorator")):
@@ -235,8 +334,10 @@ class DeadCodeExportsMixin:
         is_reachable: bool,
     ) -> int:
         score = 0
-        if graph_confidence["call_in_degree"] == 0:
+        if graph_confidence["combined_in_degree"] == 0:
             score += 50
+        else:
+            score -= min(70, graph_confidence["combined_in_degree"] * 35)
         if not self._truthy(item.get("is_exported")):
             score += 20
         if not self._truthy(item.get("is_entrypoint_name")):
@@ -278,6 +379,8 @@ class DeadCodeExportsMixin:
                 {
                     "qualified_name": qn,
                     "in_call_count": graph_confidence["call_in_degree"],
+                    "in_dispatch_count": graph_confidence["dispatch_in_degree"],
+                    "combined_in_count": graph_confidence["combined_in_degree"],
                     "out_call_count": self._safe_int(item.get("out_call_count") or 0),
                     "is_reachable": is_reachable,
                     "reachability_source": reachability_source,
@@ -502,8 +605,10 @@ class DeadCodeExportsMixin:
             reasons.append("generated_or_noise_path")
         if not self._is_runtime_source_path(path):
             reasons.append("non_runtime_source")
-        if name.startswith("anonymous_"):
+        if DeadCodeExportsMixin._is_anonymous_callback_symbol(name):
             reasons.append("anonymous_callback")
+        if DeadCodeExportsMixin._is_python_package_reexport(self, path, name):
+            reasons.append("python_package_reexport")
 
         source_text = self._read_dead_code_source_text(path)
         if source_text:

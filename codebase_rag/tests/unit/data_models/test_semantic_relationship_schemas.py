@@ -38,6 +38,17 @@ def test_fastapi_semantic_relationship_schemas_are_registered() -> None:
     }
 
     assert (
+        (
+            cs.NodeLabel.MODULE,
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
+            cs.NodeLabel.COMPONENT,
+        ),
+        cs.RelationshipType.DISPATCHES_TO,
+        (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD),
+    ) in schemas
+
+    assert (
         (cs.NodeLabel.ENDPOINT, cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD),
         cs.RelationshipType.USES_DEPENDENCY,
         (cs.NodeLabel.DEPENDENCY_PROVIDER,),
@@ -46,6 +57,21 @@ def test_fastapi_semantic_relationship_schemas_are_registered() -> None:
         (cs.NodeLabel.ENDPOINT, cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD),
         cs.RelationshipType.SECURED_BY,
         (cs.NodeLabel.AUTH_POLICY,),
+    ) in schemas
+    assert (
+        (cs.NodeLabel.DEPENDENCY_PROVIDER, cs.NodeLabel.AUTH_POLICY),
+        cs.RelationshipType.RESOLVES_TO,
+        (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD),
+    ) in schemas
+    assert (
+        (
+            cs.NodeLabel.MODULE,
+            cs.NodeLabel.ENDPOINT,
+            cs.NodeLabel.FUNCTION,
+            cs.NodeLabel.METHOD,
+        ),
+        cs.RelationshipType.REGISTERS_CALLBACK,
+        (cs.NodeLabel.FUNCTION, cs.NodeLabel.METHOD),
     ) in schemas
     assert (
         (cs.NodeLabel.AUTH_POLICY,),
