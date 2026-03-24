@@ -299,9 +299,9 @@ class RuntimeEvidenceIngestor:
                 if event_name_match or channel_match:
                     event = {
                         "kind": "event_runtime",
-                        "event_name": event_name_match.group(1)
-                        if event_name_match
-                        else "",
+                        "event_name": (
+                            event_name_match.group(1) if event_name_match else ""
+                        ),
                         "queue_name": channel_match.group(1) if channel_match else "",
                         "dlq_name": dlq_match.group(1) if dlq_match else "",
                         "handler_name": handler_match.group(1) if handler_match else "",
