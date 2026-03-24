@@ -195,7 +195,7 @@ class QualityMixin:
                 or cs.NodeLabel.METHOD.value in node.labels
             )
             and self._is_runtime_source_path(
-                str(node.properties.get(cs.KEY_PATH) or "")
+                self._canonical_relative_path(node.properties)
             )
             and bool(node.properties.get(cs.KEY_IS_ENTRY_POINT))
         ]
@@ -212,7 +212,7 @@ class QualityMixin:
             {
                 "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
                 "name": node.properties.get(cs.KEY_NAME),
-                "path": node.properties.get(cs.KEY_PATH),
+                "path": self._canonical_relative_path(node.properties),
                 "labels": node.labels,
             }
             for node in public_nodes
@@ -373,7 +373,7 @@ class QualityMixin:
     ) -> dict[str, int]:
         file_nodes = [node for node in nodes if cs.NodeLabel.FILE.value in node.labels]
         file_paths = [
-            str(node.properties.get(cs.KEY_PATH) or "") for node in file_nodes
+            self._canonical_relative_path(node.properties) for node in file_nodes
         ]
         test_files = [
             path

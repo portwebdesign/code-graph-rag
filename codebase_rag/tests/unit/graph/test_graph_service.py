@@ -45,6 +45,21 @@ class TestMemgraphIngestorInit:
 
         assert ingestor.conn is None
 
+    def test_init_requires_complete_auth_pair(self) -> None:
+        with pytest.raises(ValueError, match="Both username and password"):
+            MemgraphIngestor(host="localhost", port=7687, username="neo4j")
+
+    def test_init_normalizes_blank_auth_fields_to_none(self) -> None:
+        ingestor = MemgraphIngestor(
+            host="localhost",
+            port=7687,
+            username="   ",
+            password="\t",
+        )
+
+        assert ingestor._username is None
+        assert ingestor._password is None
+
 
 class TestContextManager:
     def test_enter_connects_to_memgraph(self) -> None:

@@ -27,11 +27,15 @@ class QueryGraphData(BaseModel):
         query_used (str): The Cypher query that was executed.
         results (list[ResultRow]): The list of result rows from the database.
         summary (str): A natural language summary of the results.
+        total_results (int): The total number of rows produced before truncation.
+        truncated (bool): Whether the returned payload was truncated for safety.
     """
 
     query_used: str
     results: list[ResultRow]
     summary: str
+    total_results: int = 0
+    truncated: bool = False
 
     @field_validator("results", mode="before")
     @classmethod

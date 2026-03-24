@@ -164,6 +164,13 @@ TS_FQN_SPEC = FQNSpec(
     file_to_module_parts=_js_file_to_module,
 )
 
+C_FQN_SPEC = FQNSpec(
+    scope_node_types=frozenset(cs.FQN_C_SCOPE_TYPES),
+    function_node_types=frozenset(cs.FQN_C_FUNCTION_TYPES),
+    get_name=_cpp_get_name,
+    file_to_module_parts=_generic_file_to_module,
+)
+
 RUST_FQN_SPEC = FQNSpec(
     scope_node_types=frozenset(cs.FQN_RS_SCOPE_TYPES),
     function_node_types=frozenset(cs.FQN_RS_FUNCTION_TYPES),
@@ -315,6 +322,7 @@ LANGUAGE_FQN_SPECS: dict[cs.SupportedLanguage, FQNSpec] = {
     cs.SupportedLanguage.PYTHON: PYTHON_FQN_SPEC,
     cs.SupportedLanguage.JS: JS_FQN_SPEC,
     cs.SupportedLanguage.TS: TS_FQN_SPEC,
+    cs.SupportedLanguage.C: C_FQN_SPEC,
     cs.SupportedLanguage.RUST: RUST_FQN_SPEC,
     cs.SupportedLanguage.JAVA: JAVA_FQN_SPEC,
     cs.SupportedLanguage.CPP: CPP_FQN_SPEC,
@@ -378,6 +386,33 @@ LANGUAGE_SPECS: dict[cs.SupportedLanguage, LanguageSpec] = {
         call_node_types=cs.SPEC_JS_CALL_TYPES,
         import_node_types=cs.JS_TS_IMPORT_NODES,
         import_from_node_types=cs.JS_TS_IMPORT_NODES,
+    ),
+    cs.SupportedLanguage.C: LanguageSpec(
+        language=cs.SupportedLanguage.C,
+        file_extensions=cs.C_EXTENSIONS,
+        function_node_types=cs.SPEC_C_FUNCTION_TYPES,
+        class_node_types=cs.SPEC_C_CLASS_TYPES,
+        module_node_types=cs.SPEC_C_MODULE_TYPES,
+        call_node_types=cs.SPEC_C_CALL_TYPES,
+        import_node_types=cs.SPEC_C_IMPORT_TYPES,
+        import_from_node_types=cs.SPEC_C_IMPORT_TYPES,
+        function_query="""
+        (function_definition) @function
+        (declaration
+            declarator: (function_declarator
+                declarator: (identifier) @name)) @function
+        """,
+        class_query="""
+        (struct_specifier
+            name: (type_identifier) @name) @class
+        (union_specifier
+            name: (type_identifier) @name) @class
+        (enum_specifier
+            name: (type_identifier)? @name) @class
+        """,
+        call_query="""
+        (call_expression) @call
+        """,
     ),
     cs.SupportedLanguage.RUST: LanguageSpec(
         language=cs.SupportedLanguage.RUST,

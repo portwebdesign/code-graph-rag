@@ -45,6 +45,7 @@ from codebase_rag.services import (
     ResolverPassService,
     SemanticEmbeddingService,
 )
+from codebase_rag.services.graph_pruning_service import GraphPruningService
 from codebase_rag.state.registry_cache import BoundedASTCache, FunctionRegistryTrie
 from codebase_rag.utils.file_utils import is_dependency_file
 
@@ -153,6 +154,27 @@ class GraphUpdater:
             simple_name_lookup=self.simple_name_lookup,
         )
 
+        self.parse_preparation_service = ParsePreparationService(
+            repo_path=self.repo_path,
+            project_name=self.project_name,
+            ingestor=self.ingestor,
+            factory=self.factory,
+            queries=self.queries,
+            incremental_cache_enabled=self.incremental_cache_enabled,
+            incremental_cache=self.incremental_cache,
+            remove_file_from_state=self.state_service.remove_file_from_state,
+        )
+        self.pruning_service = (
+            GraphPruningService(
+                repo_path=self.repo_path,
+                project_name=self.project_name,
+                ingestor=self.ingestor,
+                prepare_file_update=self.parse_preparation_service.prepare_file_update,
+            )
+            if isinstance(self.ingestor, QueryProtocol)
+            else None
+        )
+
         self.declarative_enabled = config.declarative_enabled
         self.declarative_parser = (
             DeclarativeParser(QueryEngine()) if self.declarative_enabled else None
@@ -191,6 +213,10 @@ class GraphUpdater:
         logger.info(ls.PASS_1_STRUCTURE)
         self.factory.structure_processor.identify_structure()
 
+        if self.pruning_service is not None:
+            self._progress("ingest_stage", {"stage": "prune"})
+            self.pruning_service.reconcile_startup()
+
         if self.pre_scan_enabled:
             self._progress("ingest_stage", {"stage": "pre_scan"})
             self.pre_scan_index = PreScanService(
@@ -221,17 +247,7 @@ class GraphUpdater:
             )
         else:
             git_delta_no_changes = False
-        parse_service = ParsePreparationService(
-            repo_path=self.repo_path,
-            project_name=self.project_name,
-            ingestor=self.ingestor,
-            factory=self.factory,
-            queries=self.queries,
-            incremental_cache_enabled=self.incremental_cache_enabled,
-            incremental_cache=self.incremental_cache,
-            remove_file_from_state=self.state_service.remove_file_from_state,
-        )
-        FileProcessingService(self, parse_service).process_files()
+        FileProcessingService(self, self.parse_preparation_service).process_files()
 
         self._progress("ingest_stage", {"stage": "resolve"})
         resolver_service = ResolverPassService(

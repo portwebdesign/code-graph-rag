@@ -13,6 +13,8 @@ relationships within the codebase.
 
 from __future__ import annotations
 
+from typing import cast
+
 from loguru import logger
 from pydantic_ai import Tool
 from rich.console import Console
@@ -25,14 +27,18 @@ from codebase_rag.core.constants import (
     QUERY_SUMMARY_DB_ERROR,
     QUERY_SUMMARY_SUCCESS,
     QUERY_SUMMARY_TRANSLATION_FAILED,
+    QUERY_SUMMARY_TRUNCATED,
 )
 from codebase_rag.data_models.schemas import QueryGraphData
+from codebase_rag.data_models.types_defs import ResultRow
+from codebase_rag.utils.path_utils import add_absolute_path_aliases
 
 from ..core import logs as ls
 from ..infrastructure import exceptions as ex
 from ..services import QueryProtocol
 from ..services.llm import CypherGenerator
 from . import tool_descriptions as td
+from .query_result_truncation import truncate_query_results
 
 
 def create_query_tool(
@@ -77,7 +83,9 @@ def create_query_tool(
         try:
             cypher_query = await cypher_gen.generate(natural_language_query)
 
-            results = ingestor.fetch_all(cypher_query)
+            raw_results = ingestor.fetch_all(cypher_query)
+            results, total_results, truncated = truncate_query_results(raw_results)
+            results = cast(list[ResultRow], add_absolute_path_aliases(results))
 
             if results and render_output and console is not None:
                 table = Table(
@@ -90,7 +98,7 @@ def create_query_tool(
 
                 for row in results:
                     renderable_values = []
-                    for value in row.values():
+                    for value in cast(ResultRow, row).values():
                         if value is None:
                             renderable_values.append("")
                         elif isinstance(value, bool):
@@ -109,15 +117,27 @@ def create_query_tool(
                     )
                 )
 
-            summary = QUERY_SUMMARY_SUCCESS.format(count=len(results))
+            summary = (
+                QUERY_SUMMARY_TRUNCATED.format(
+                    returned=len(results), total=total_results
+                )
+                if truncated
+                else QUERY_SUMMARY_SUCCESS.format(count=len(results))
+            )
             return QueryGraphData(
-                query_used=cypher_query, results=results, summary=summary
+                query_used=cypher_query,
+                results=results,
+                summary=summary,
+                total_results=total_results,
+                truncated=truncated,
             )
         except ex.LLMGenerationError as e:
             return QueryGraphData(
                 query_used=QUERY_NOT_AVAILABLE,
                 results=[],
                 summary=QUERY_SUMMARY_TRANSLATION_FAILED.format(error=e),
+                total_results=0,
+                truncated=False,
             )
         except Exception as e:
             logger.exception(ls.TOOL_QUERY_ERROR.format(error=e))
@@ -125,6 +145,8 @@ def create_query_tool(
                 query_used=cypher_query,
                 results=[],
                 summary=QUERY_SUMMARY_DB_ERROR.format(error=e),
+                total_results=0,
+                truncated=False,
             )
 
     return Tool(

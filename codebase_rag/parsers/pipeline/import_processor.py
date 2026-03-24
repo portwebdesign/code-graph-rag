@@ -646,7 +646,7 @@ class ImportProcessor:
             self._parse_scala_imports(captures, module_qn)
         elif language == cs.SupportedLanguage.CSHARP:
             self._parse_csharp_imports(captures, module_qn)
-        elif language == cs.SupportedLanguage.CPP:
+        elif language in cs.C_FAMILY_LANGUAGES:
             self._parse_cpp_imports(captures, module_qn)
         elif language == cs.SupportedLanguage.PHP:
             self._parse_php_imports(captures, module_qn)

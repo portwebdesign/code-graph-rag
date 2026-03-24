@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TypedDict, Unpack
@@ -60,6 +61,24 @@ API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
         "name": "Cohere",
     },
 }
+
+
+def resolve_provider_api_key(
+    provider: str | None, explicit_api_key: str | None
+) -> str | None:
+    """Resolve the effective API key for a provider.
+
+    A role-specific key always wins. Provider-specific environment variables are
+    only considered when the role-specific key is unset.
+    """
+    if explicit_api_key is not None:
+        return explicit_api_key
+    if not provider:
+        return None
+    info = API_KEY_INFO.get(provider.lower())
+    if info is None:
+        return None
+    return os.environ.get(info["env_var"])
 
 
 def format_missing_api_key_errors(
@@ -391,10 +410,14 @@ class AppConfig(BaseSettings):
         model = getattr(self, f"{role_upper}_MODEL", None)
 
         if provider and model:
+            resolved_api_key = resolve_provider_api_key(
+                provider,
+                getattr(self, f"{role_upper}_API_KEY", None),
+            )
             return ModelConfig(
                 provider=provider.lower(),
                 model_id=model,
-                api_key=getattr(self, f"{role_upper}_API_KEY", None),
+                api_key=resolved_api_key,
                 endpoint=getattr(self, f"{role_upper}_ENDPOINT", None),
                 project_id=getattr(self, f"{role_upper}_PROJECT_ID", None),
                 region=getattr(self, f"{role_upper}_REGION", cs.DEFAULT_REGION),

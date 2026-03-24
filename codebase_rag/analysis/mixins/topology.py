@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from codebase_rag.core import constants as cs
+from codebase_rag.utils.path_utils import get_canonical_relative_path
 
 from ..protocols import AnalysisRunnerProtocol
 from ..types import NodeRecord, RelationshipRecord
@@ -48,7 +49,7 @@ class TopologyMixin:
             str(node.properties.get(cs.KEY_NAME) or "")
         ):
             return False
-        path = str(node.properties.get(cs.KEY_PATH) or "")
+        path = get_canonical_relative_path(node.properties) or ""
         if path and cls._is_non_production_path(path):
             return False
         return True
@@ -70,7 +71,7 @@ class TopologyMixin:
             label = node.labels[0] if node.labels else None
             payload: dict[str, object] = {
                 "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
-                "path": node.properties.get(cs.KEY_PATH),
+                "path": get_canonical_relative_path(node.properties),
                 "label": label,
                 "count": count,
             }
@@ -256,10 +257,10 @@ class TopologyMixin:
             if impact:
                 payload = {
                     "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
-                    "path": node.properties.get(cs.KEY_PATH),
+                    "path": self._canonical_relative_path(node.properties),
                     "impact": impact,
                 }
-                path = str(node.properties.get(cs.KEY_PATH) or "")
+                path = self._canonical_relative_path(node.properties)
                 if TopologyMixin._is_non_production_path(path):
                     ignored_results.append(payload)
                 else:
@@ -330,8 +331,8 @@ class TopologyMixin:
             target = module_nodes.get(rel.to_id)
             if not source or not target:
                 continue
-            src_path = str(source.properties.get(cs.KEY_PATH) or "")
-            tgt_path = str(target.properties.get(cs.KEY_PATH) or "")
+            src_path = self._canonical_relative_path(source.properties)
+            tgt_path = self._canonical_relative_path(target.properties)
             src_layer = layer_for(src_path)
             tgt_layer = layer_for(tgt_path)
             if (

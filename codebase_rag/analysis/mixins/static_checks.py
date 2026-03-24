@@ -241,7 +241,7 @@ class StaticChecksMixin:
                 and cs.NodeLabel.METHOD.value not in node.labels
             ):
                 continue
-            path = str(node.properties.get(cs.KEY_PATH) or "")
+            path = self._canonical_relative_path(node.properties)
             if not self._is_runtime_source_path(path):
                 continue
             start_line = int(str(node.properties.get(cs.KEY_START_LINE) or 0))

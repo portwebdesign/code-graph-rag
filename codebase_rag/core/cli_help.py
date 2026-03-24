@@ -21,6 +21,7 @@ class CLICommandName(StrEnum):
     START = "start"
     INDEX = "index"
     EXPORT = "export"
+    STATS = "stats"
     OPTIMIZE = "optimize"
     MCP_SERVER = "mcp-server"
     WATCH = "watch"
@@ -41,6 +42,7 @@ APP_DESCRIPTION = (
 CMD_START = "Start interactive chat session with your codebase"
 CMD_INDEX = "Index codebase to protobuf files for offline use"
 CMD_EXPORT = "Export knowledge graph from Memgraph to JSON file"
+CMD_STATS = "Show graph and dependency statistics from Memgraph"
 CMD_OPTIMIZE = "AI-guided codebase optimization session"
 CMD_MCP_SERVER = "Start the MCP server (stdio or HTTP transport)"
 CMD_WATCH = "Watch the repository and keep the graph fresh during live edits"
@@ -84,6 +86,7 @@ HELP_CLEAN_SCOPE = (
 )
 HELP_OUTPUT_GRAPH = "Export graph to JSON file after updating (requires --update-graph)"
 HELP_OUTPUT_PATH = "Output file path for the exported graph"
+HELP_INCLUDE_DEPENDENCIES = "Include dependency and import statistics in the report."
 HELP_OUTPUT_PROTO_DIR = (
     "Required. Path to the output directory for the protobuf index file(s)."
 )
@@ -122,6 +125,7 @@ CLI_COMMANDS: dict[CLICommandName, str] = {
     CLICommandName.START: CMD_START,
     CLICommandName.INDEX: CMD_INDEX,
     CLICommandName.EXPORT: CMD_EXPORT,
+    CLICommandName.STATS: CMD_STATS,
     CLICommandName.OPTIMIZE: CMD_OPTIMIZE,
     CLICommandName.MCP_SERVER: CMD_MCP_SERVER,
     CLICommandName.WATCH: CMD_WATCH,

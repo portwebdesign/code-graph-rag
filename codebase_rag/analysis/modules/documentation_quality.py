@@ -27,7 +27,7 @@ class DocumentationQualityModule(AnalysisModule):
                 )
             )
             and context.runner._is_runtime_source_path(
-                str(node.properties.get(cs.KEY_PATH) or "")
+                context.runner._canonical_relative_path(node.properties)
             )
         ]
         total = len(symbols)
@@ -39,7 +39,9 @@ class DocumentationQualityModule(AnalysisModule):
                 missing.append(
                     {
                         "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
-                        "path": node.properties.get(cs.KEY_PATH),
+                        "path": context.runner._canonical_relative_path(
+                            node.properties
+                        ),
                         "name": node.properties.get(cs.KEY_NAME),
                     }
                 )

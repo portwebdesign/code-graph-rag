@@ -11,6 +11,9 @@ from codebase_rag.core.event_flow_identity import (
     normalize_channel_name,
     normalize_event_name,
 )
+from codebase_rag.utils.path_utils import (
+    build_runtime_event_path_fields,
+)
 
 
 class RuntimeGraphIngestorProtocol(Protocol):
@@ -68,10 +71,13 @@ class RuntimeEvidenceIngestor:
 
         for runtime_file in runtime_files:
             artifact_qn = self._artifact_qn(runtime_file)
+            relative_path = runtime_file.relative_to(self.repo_path).as_posix()
             artifact_payload = {
                 cs.KEY_QUALIFIED_NAME: artifact_qn,
-                cs.KEY_NAME: runtime_file.relative_to(self.repo_path).as_posix(),
-                cs.KEY_PATH: runtime_file.relative_to(self.repo_path).as_posix(),
+                cs.KEY_NAME: relative_path,
+                cs.KEY_PATH: relative_path,
+                cs.KEY_REPO_REL_PATH: relative_path,
+                cs.KEY_ABS_PATH: runtime_file.resolve().as_posix(),
                 cs.KEY_PROJECT_NAME: self.project_name,
                 "kind": self._artifact_kind(runtime_file),
                 "source_parser": "runtime_evidence",
@@ -90,12 +96,20 @@ class RuntimeEvidenceIngestor:
             for event in self._extract_events(runtime_file):
                 event_count += 1
                 event_qn = f"{artifact_qn}.event.{event_count}"
+                event_payload_data = dict(event)
+                if not any(
+                    str(event_payload_data.get(key, "")).strip()
+                    for key in (cs.KEY_PATH, cs.KEY_REPO_REL_PATH, "file_path")
+                ):
+                    event_payload_data.update(
+                        build_runtime_event_path_fields(relative_path, self.repo_path)
+                    )
                 event_payload = {
                     cs.KEY_QUALIFIED_NAME: event_qn,
                     cs.KEY_NAME: str(event.get("kind", "runtime_event")),
                     cs.KEY_PROJECT_NAME: self.project_name,
                     "source_parser": "runtime_evidence",
-                    **event,
+                    **event_payload_data,
                 }
                 ingestor.ensure_node_batch(cs.NodeLabel.RUNTIME_EVENT, event_payload)
                 ingestor.ensure_relationship_batch(
@@ -111,7 +125,7 @@ class RuntimeEvidenceIngestor:
                         event_qn,
                     ),
                 )
-                self._link_runtime_event(event_qn, event)
+                self._link_runtime_event(event_qn, event_payload_data)
 
         if hasattr(ingestor, "flush_all"):
             ingestor.flush_all()
@@ -393,7 +407,9 @@ class RuntimeEvidenceIngestor:
         if graphql:
             normalized["operation"] = graphql[:240]
         if file_path:
-            normalized["file_path"] = file_path.replace("\\", "/")
+            normalized.update(
+                build_runtime_event_path_fields(file_path, self.repo_path)
+            )
         if event_name:
             normalized["event_name"] = event_name
             normalized["normalized_event_name"] = normalize_event_name(event_name)
@@ -432,9 +448,20 @@ class RuntimeEvidenceIngestor:
             return
         kind = str(event.get("kind", "")).strip().lower()
         self._link_runtime_event_semantics(event_qn, event)
+        canonical_file_path = str(event.get(cs.KEY_PATH) or "").strip()
+        if canonical_file_path:
+            ingestor.ensure_relationship_batch(
+                (
+                    cs.NodeLabel.RUNTIME_EVENT,
+                    cs.KEY_QUALIFIED_NAME,
+                    event_qn,
+                ),
+                cs.RelationshipType.OBSERVED_IN_RUNTIME,
+                (cs.NodeLabel.FILE, cs.KEY_PATH, canonical_file_path),
+                {"observation_kind": kind or "file"},
+            )
         if kind == "coverage":
-            file_path = str(event.get("file_path", "")).strip()
-            if file_path:
+            if canonical_file_path:
                 ingestor.ensure_relationship_batch(
                     (
                         cs.NodeLabel.RUNTIME_EVENT,
@@ -442,7 +469,7 @@ class RuntimeEvidenceIngestor:
                         event_qn,
                     ),
                     cs.RelationshipType.COVERS_MODULE,
-                    (cs.NodeLabel.FILE, cs.KEY_PATH, file_path),
+                    (cs.NodeLabel.FILE, cs.KEY_PATH, canonical_file_path),
                 )
             return
 

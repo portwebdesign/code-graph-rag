@@ -26,6 +26,10 @@ class TestGetHandler:
         handler = get_handler(SupportedLanguage.CPP)
         assert isinstance(handler, CppHandler)
 
+    def test_returns_cpp_handler_for_c(self) -> None:
+        handler = get_handler(SupportedLanguage.C)
+        assert isinstance(handler, CppHandler)
+
     def test_returns_rust_handler_for_rust(self) -> None:
         handler = get_handler(SupportedLanguage.RUST)
         assert isinstance(handler, RustHandler)
@@ -77,6 +81,7 @@ class TestHandlerProtocol:
         [
             SupportedLanguage.JS,
             SupportedLanguage.TS,
+            SupportedLanguage.C,
             SupportedLanguage.CPP,
             SupportedLanguage.RUST,
             SupportedLanguage.JAVA,
@@ -109,6 +114,7 @@ class TestHandlerProtocol:
         [
             SupportedLanguage.JS,
             SupportedLanguage.TS,
+            SupportedLanguage.C,
             SupportedLanguage.CPP,
             SupportedLanguage.RUST,
             SupportedLanguage.JAVA,

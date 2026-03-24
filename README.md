@@ -68,6 +68,7 @@ An accurate Retrieval-Augmented Generation (RAG) system that analyzes multi-lang
 | TypeScript | Fully Supported | .ts, .tsx | ✓ | ✓ | ✓ | - | Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules |
 | Vue | Fully Supported | .vue | - | - | ✓ | - | Single-file components, templates |
 | YAML | Fully Supported | .yaml, .yml | - | - | ✓ | - | Config structures, Kubernetes/Docker Compose |
+| C | In Development | .c | ✓ | ✓ | ✓ | - | Experimental spike: functions, structs, enums, include directives |
 <!-- /SECTION:supported_languages -->
 - **🌳 Tree-sitter Parsing**: Uses Tree-sitter for robust, language-agnostic AST parsing
 - **📊 Knowledge Graph Storage**: Uses Memgraph to store codebase structure as an interconnected graph
@@ -232,6 +233,37 @@ ollama pull llama3.2
 ```bash
 docker-compose up -d
 ```
+
+## Verify Installation
+
+Run these checks after setup to confirm the local environment is ready:
+
+1. Verify the package and CLI entrypoints import correctly:
+
+```bash
+python -c "import codebase_rag, cgr; print('package-ok')"
+cgr --help
+```
+
+2. Verify the database container is running:
+
+```bash
+docker-compose ps
+```
+
+3. Verify the project can bootstrap against a repository path:
+
+```bash
+cgr start --repo-path . --help
+```
+
+4. Optional: verify the realtime watcher entrypoint parses successfully:
+
+```bash
+python realtime_updater.py --help
+```
+
+If any command fails, check `.env`, confirm Docker is running, and make sure dependencies were installed with `uv sync`.
 
 ## 🛠️ Makefile Commands
 
@@ -734,13 +766,13 @@ The knowledge graph uses the following node types and relationships:
 | Label | Properties |
 |-----|----------|
 | Project | `{name: string, path: string, language: string}` |
-| Package | `{qualified_name: string, name: string, path: string}` |
-| Folder | `{path: string, name: string}` |
-| File | `{path: string, name: string, extension: string}` |
-| Module | `{qualified_name: string, name: string, path: string, pagerank: float, community_id: int, has_cycle: boolean}` |
-| Class | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
-| Function | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
-| Method | `{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
+| Package | `{qualified_name: string, name: string, path: string, abs_path: string}` |
+| Folder | `{path: string, name: string, abs_path: string}` |
+| File | `{path: string, name: string, extension: string, abs_path: string}` |
+| Module | `{qualified_name: string, name: string, path: string, abs_path: string, pagerank: float, community_id: int, has_cycle: boolean}` |
+| Class | `{qualified_name: string, name: string, path: string, abs_path: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
+| Function | `{qualified_name: string, name: string, path: string, abs_path: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
+| Method | `{qualified_name: string, name: string, path: string, abs_path: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}` |
 | Endpoint | `{qualified_name: string, name: string, framework: string, http_method: string, route_path: string, path: string}` |
 | Contract | `{qualified_name: string, name: string, path: string, symbol_qn: string, framework: string}` |
 | ContractField | `{qualified_name: string, name: string, contract_qn: string, path: string}` |
@@ -755,8 +787,8 @@ The knowledge graph uses the following node types and relationships:
 | DataStore | `{qualified_name: string, name: string, path: string, store_kind: string, table_name: string}` |
 | TransactionBoundary | `{qualified_name: string, name: string, symbol_qn: string, boundary_kind: string, mechanism: string, path: string}` |
 | SideEffect | `{qualified_name: string, name: string, symbol_qn: string, effect_kind: string, operation_name: string, order_index: int, path: string}` |
-| RuntimeArtifact | `{qualified_name: string, name: string, path: string, kind: string}` |
-| RuntimeEvent | `{qualified_name: string, name: string, kind: string, path: string, file_path: string, event_name: string, channel_name: string, stage: string}` |
+| RuntimeArtifact | `{qualified_name: string, name: string, path: string, abs_path: string, kind: string}` |
+| RuntimeEvent | `{qualified_name: string, name: string, kind: string, path: string, repo_rel_path: string, abs_path: string, file_path: string, event_name: string, channel_name: string, stage: string}` |
 | ClientOperation | `{qualified_name: string, name: string, path: string, http_method: string, route_path: string, client_kind: string, governance_kind: string, operation_id: string}` |
 | TestSuite | `{qualified_name: string, name: string, path: string, framework: string, suite_kind: string}` |
 | TestCase | `{qualified_name: string, name: string, path: string, framework: string, case_kind: string, suite_qn: string}` |
@@ -765,10 +797,10 @@ The knowledge graph uses the following node types and relationships:
 | SecretRef | `{qualified_name: string, name: string, path: string, source_kind: string, has_definition: bool, has_reader: bool, masked: bool}` |
 | Hook | `{qualified_name: string, name: string, hook_name: string}` |
 | Import | `{qualified_name: string, name: string, import_source: string, imported_symbol: string, local_name: string, module_qn: string}` |
-| Component | `{qualified_name: string, name: string, framework: string, path: string, module_qn: string}` |
+| Component | `{qualified_name: string, name: string, framework: string, path: string, abs_path: string, module_qn: string}` |
 | Parameter | `{qualified_name: string, name: string, path: string, component_qn: string, prop_path: string}` |
 | Interface | `{qualified_name: string, name: string}` |
-| Enum | `{qualified_name: string, name: string}` |
+| Enum | `{qualified_name: string, name: string, path: string, abs_path: string}` |
 | Type | `{qualified_name: string, name: string}` |
 | Union | `{qualified_name: string, name: string}` |
 | ModuleInterface | `{qualified_name: string, name: string, path: string}` |
@@ -801,6 +833,7 @@ The knowledge graph uses the following node types and relationships:
 - **Scala**: `class_definition`, `function_declaration`, `function_definition`, `object_definition`, `trait_definition`
 - **SQL**: `create_function`, `create_index`, `create_procedure`, `create_sequence`, `create_table`, `create_trigger`, `create_type`, `create_view`
 - **TypeScript**: `abstract_class_declaration`, `arrow_function`, `class`, `class_declaration`, `enum_declaration`, `function_declaration`, `function_expression`, `function_signature`, `generator_function_declaration`, `interface_declaration`, `internal_module`, `method_definition`, `type_alias_declaration`
+- **C**: `declaration`, `enum_specifier`, `function_definition`, `struct_specifier`, `union_specifier`
 <!-- /SECTION:language_mappings -->
 
 ### Relationships

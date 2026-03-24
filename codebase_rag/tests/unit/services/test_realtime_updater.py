@@ -28,13 +28,14 @@ def test_file_creation_flow(
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    mock_updater.pruning_service.prune_path.assert_called_once_with("new_file.py")
     mock_updater.factory.definition_processor.process_file.assert_called_once_with(
         test_file,
         "python",
         mock_updater.queries,
         mock_updater.factory.structure_processor.structural_elements,
     )
+    mock_updater.factory.call_processor.process_calls_in_file.assert_called_once()
     mock_updater.ingestor.flush_all.assert_called_once()
 
 
@@ -48,13 +49,14 @@ def test_file_modification_flow(
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    mock_updater.pruning_service.prune_path.assert_called_once_with("existing_file.py")
     mock_updater.factory.definition_processor.process_file.assert_called_once_with(
         test_file,
         "python",
         mock_updater.queries,
         mock_updater.factory.structure_processor.structural_elements,
     )
+    mock_updater.factory.call_processor.process_calls_in_file.assert_called_once()
     mock_updater.ingestor.flush_all.assert_called_once()
 
 
@@ -67,8 +69,9 @@ def test_file_deletion_flow(
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    mock_updater.pruning_service.prune_path.assert_called_once_with("deleted_file.py")
     mock_updater.factory.definition_processor.process_file.assert_not_called()
+    mock_updater.factory.call_processor.process_calls_in_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_called_once()
 
 
@@ -113,8 +116,9 @@ def test_unsupported_file_types_are_ignored(
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    mock_updater.pruning_service.prune_path.assert_called_once_with("document.md")
     mock_updater.factory.definition_processor.process_file.assert_not_called()
+    mock_updater.factory.call_processor.process_calls_in_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_called_once()
 
 
@@ -127,5 +131,31 @@ def test_debounce_skips_burst_updates(mock_updater: MagicMock, temp_repo: Path) 
     handler.dispatch(event)
     handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    assert mock_updater.pruning_service.prune_path.call_count == 1
     mock_updater.ingestor.flush_all.assert_called_once()
+
+
+def test_zero_debounce_allows_repeated_updates(
+    mock_updater: MagicMock, temp_repo: Path
+) -> None:
+    handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0.0)
+    test_file = temp_repo / "repeat.py"
+    test_file.write_text(encoding="utf-8", data="x = 1")
+    event = FileModifiedEvent(str(test_file))
+
+    handler.dispatch(event)
+    handler.dispatch(event)
+
+    assert mock_updater.pruning_service.prune_path.call_count == 2
+    assert mock_updater.ingestor.flush_all.call_count == 2
+
+
+def test_watcher_does_not_issue_global_delete_queries(
+    event_handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
+) -> None:
+    test_file = temp_repo / "changed.py"
+    test_file.write_text(encoding="utf-8", data="def handler(): pass")
+
+    event_handler.dispatch(FileModifiedEvent(str(test_file)))
+
+    mock_updater.ingestor.execute_write.assert_not_called()

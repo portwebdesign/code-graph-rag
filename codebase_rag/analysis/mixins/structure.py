@@ -25,7 +25,7 @@ class StructureMixin:
             function_qn = str(node.properties.get(cs.KEY_QUALIFIED_NAME) or "")
             function_name = str(node.properties.get(cs.KEY_NAME) or "")
             start_line = int(str(node.properties.get(cs.KEY_START_LINE) or 0))
-            path = str(node.properties.get(cs.KEY_PATH) or "")
+            path = self._canonical_relative_path(node.properties)
 
             for index, param in enumerate(parameters):
                 if isinstance(param, dict):
@@ -95,7 +95,7 @@ class StructureMixin:
 
         function_nodes.sort(
             key=lambda n: (
-                str(n.properties.get(cs.KEY_PATH) or ""),
+                self._canonical_relative_path(n.properties),
                 int(str(n.properties.get(cs.KEY_START_LINE) or 0)),
             )
         )

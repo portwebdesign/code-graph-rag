@@ -89,6 +89,7 @@ EXT_JS = ".js"
 EXT_JSX = ".jsx"
 EXT_TS = ".ts"
 EXT_TSX = ".tsx"
+EXT_C = ".c"
 EXT_RS = ".rs"
 EXT_GO = ".go"
 EXT_SCALA = ".scala"
@@ -132,6 +133,7 @@ EXT_DOCKERFILE = ".dockerfile"
 PY_EXTENSIONS = (EXT_PY,)
 JS_EXTENSIONS = (EXT_JS, EXT_JSX)
 TS_EXTENSIONS = (EXT_TS, EXT_TSX)
+C_EXTENSIONS = (EXT_C,)
 RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
@@ -336,6 +338,7 @@ CLI_ERR_CONFIG = "Configuration Error: {error}"
 CLI_ERR_INDEXING = "An error occurred during indexing: {error}"
 CLI_ERR_EXPORT_FAILED = "Failed to export graph: {error}"
 CLI_ERR_LOAD_GRAPH = "Failed to load graph: {error}"
+CLI_ERR_STATS = "Failed to read graph statistics: {error}"
 CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
@@ -808,6 +811,7 @@ class SupportedLanguage(StrEnum):
     PYTHON = "python"
     JS = "javascript"
     TS = "typescript"
+    C = "c"
     RUST = "rust"
     GO = "go"
     SCALA = "scala"
@@ -861,6 +865,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         LanguageStatus.FULL,
         "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
         "TypeScript",
+    ),
+    SupportedLanguage.C: LanguageMetadata(
+        LanguageStatus.DEV,
+        "Experimental spike: functions, structs, enums, include directives",
+        "C",
     ),
     SupportedLanguage.CPP: LanguageMetadata(
         LanguageStatus.FULL,
@@ -1023,6 +1032,7 @@ JS_TS_FUNCTION_NODES = (
 JS_TS_CLASS_NODES = ("class_declaration", "class")
 JS_TS_IMPORT_NODES = ("import_statement", "lexical_declaration", "export_statement")
 JS_TS_LANGUAGES = frozenset({SupportedLanguage.JS, SupportedLanguage.TS})
+C_FAMILY_LANGUAGES = frozenset({SupportedLanguage.C, SupportedLanguage.CPP})
 
 # (H) C++ import node types
 CPP_IMPORT_NODES = ("preproc_include", "template_function", "declaration")
@@ -1197,6 +1207,7 @@ class TreeSitterModule(StrEnum):
     PYTHON = "tree_sitter_python"
     JS = "tree_sitter_javascript"
     TS = "tree_sitter_typescript"
+    C = "tree_sitter_c"
     RUST = "tree_sitter_rust"
     GO = "tree_sitter_go"
     SCALA = "tree_sitter_scala"
@@ -1595,6 +1606,10 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
+QUERY_SUMMARY_TRUNCATED = (
+    "Successfully retrieved {returned} of {total} item(s) from the graph. "
+    "Results were truncated for context safety."
+)
 QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
@@ -3156,6 +3171,17 @@ FQN_JAVA_FUNCTION_TYPES = (
     TS_CONSTRUCTOR_DECLARATION,
 )
 
+# (H) FQN node type tuples for C
+FQN_C_SCOPE_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+    TS_CPP_TRANSLATION_UNIT,
+)
+FQN_C_FUNCTION_TYPES = (
+    TS_CPP_FUNCTION_DEFINITION,
+    TS_CPP_DECLARATION,
+)
+
 # (H) FQN node type tuples for C++
 FQN_CPP_SCOPE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,
@@ -3325,6 +3351,20 @@ SPEC_JAVA_CLASS_TYPES = (
 SPEC_JAVA_MODULE_TYPES = (TS_PROGRAM,)
 SPEC_JAVA_CALL_TYPES = (TS_JAVA_METHOD_INVOCATION,)
 SPEC_JAVA_IMPORT_TYPES = (TS_IMPORT_DECLARATION,)
+
+# (H) LANGUAGE_SPECS node type tuples for C
+SPEC_C_FUNCTION_TYPES = (
+    TS_CPP_FUNCTION_DEFINITION,
+    TS_CPP_DECLARATION,
+)
+SPEC_C_CLASS_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+SPEC_C_MODULE_TYPES = (TS_CPP_TRANSLATION_UNIT,)
+SPEC_C_CALL_TYPES = (TS_CALL_EXPRESSION,)
+SPEC_C_IMPORT_TYPES = (TS_PREPROC_INCLUDE,)
 
 # (H) LANGUAGE_SPECS node type tuples for C++
 SPEC_CPP_FUNCTION_TYPES = (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -226,6 +227,9 @@ class DeadCodeExportsMixin:
             "call_in_degree": call_in_degree,
             "dispatch_in_degree": dispatch_in_degree,
             "combined_in_degree": combined_in_degree,
+            "semantic_registration_links": self._safe_int(
+                item.get("semantic_registration_links") or 0
+            ),
             "import_in_degree": self._safe_int(item.get("config_reference_links") or 0),
             "decorator_links": self._safe_int(item.get("decorator_links") or 0),
             "registration_links": self._safe_int(item.get("registration_links") or 0),
@@ -244,6 +248,8 @@ class DeadCodeExportsMixin:
         if graph_confidence["decorator_links"] > 0:
             return True
         if graph_confidence["registration_links"] > 0:
+            return True
+        if graph_confidence["semantic_registration_links"] > 0:
             return True
         if graph_confidence["imported_by_cli_links"] > 0:
             return True
@@ -319,6 +325,8 @@ class DeadCodeExportsMixin:
             return True, "decorator"
         if graph_confidence["registration_links"] > 0:
             return True, "framework_registration"
+        if graph_confidence["semantic_registration_links"] > 0:
+            return True, "semantic_framework_registration"
         if graph_confidence["imported_by_cli_links"] > 0:
             return True, "cli_reference"
         if graph_confidence["config_reference_links"] > 0:
@@ -347,6 +355,7 @@ class DeadCodeExportsMixin:
         ):
             score += 10
         score -= min(60, graph_confidence["registration_links"] * 20)
+        score -= min(40, graph_confidence["semantic_registration_links"] * 20)
         score -= min(20, graph_confidence["imported_by_cli_links"] * 10)
         score -= min(20, graph_confidence["config_reference_links"] * 10)
         if is_reachable:
@@ -616,6 +625,8 @@ class DeadCodeExportsMixin:
                 reasons.append("sql_runtime_registration")
             if self._is_frontend_route_registration(path, name, source_text):
                 reasons.append("frontend_route_registration")
+            if self._is_python_delegating_wrapper(path, name, source_text):
+                reasons.append("python_delegating_wrapper")
             if self._is_source_exported_symbol(path, name, source_text):
                 reasons.append("source_exported_symbol")
             if self._has_local_symbol_references(path, name, source_text):
@@ -712,3 +723,71 @@ class DeadCodeExportsMixin:
             re.IGNORECASE,
         )
         return bool(pattern.search(source_text))
+
+    def _is_python_delegating_wrapper(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool:
+        if Path(path).suffix.lower() != ".py":
+            return False
+        try:
+            module = ast.parse(source_text)
+        except SyntaxError:
+            return False
+
+        imported_aliases: dict[str, str] = {}
+        for node in module.body:
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            for alias in node.names:
+                bound_name = alias.asname or alias.name
+                imported_aliases[bound_name] = alias.name
+
+        if not imported_aliases:
+            return False
+
+        for node in module.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            if node.name != name:
+                continue
+            body = list(node.body)
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)
+            ):
+                body = body[1:]
+            if len(body) != 1:
+                return False
+            delegated_call = self._extract_python_delegated_call_name(body[0])
+            if delegated_call is None:
+                return False
+            imported_original_name = imported_aliases.get(delegated_call)
+            if imported_original_name is None:
+                return False
+            if node.name.lstrip("_") != imported_original_name.lstrip("_"):
+                return False
+            return True
+        return False
+
+    @staticmethod
+    def _extract_python_delegated_call_name(statement: ast.stmt) -> str | None:
+        expression: ast.expr | None = None
+        if isinstance(statement, ast.Return):
+            expression = statement.value
+        elif isinstance(statement, ast.Expr):
+            expression = statement.value
+
+        if expression is None:
+            return None
+        if isinstance(expression, ast.Await):
+            expression = expression.value
+        if not isinstance(expression, ast.Call):
+            return None
+        if isinstance(expression.func, ast.Name):
+            return expression.func.id
+        return None

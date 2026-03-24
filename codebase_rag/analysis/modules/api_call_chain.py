@@ -5,6 +5,10 @@ from collections import defaultdict, deque
 from typing import Any, cast
 
 from codebase_rag.core import constants as cs
+from codebase_rag.utils.path_utils import (
+    get_canonical_relative_path,
+    resolve_repo_relative_path,
+)
 
 from .api_compliance import ApiComplianceModule
 from .base_module import AnalysisContext, AnalysisModule
@@ -302,15 +306,23 @@ class ApiCallChainModule(AnalysisModule):
             return deduped[:limit]
 
         endpoint_payload = cast(dict[str, object], entry.get("endpoint", {}))
-        endpoint_path = str(
-            endpoint_payload.get("file_path") or endpoint_payload.get("path") or ""
+        endpoint_path = resolve_repo_relative_path(
+            str(
+                endpoint_payload.get("path") or endpoint_payload.get("file_path") or ""
+            ),
+            context.runner.repo_path,
+        ) or str(
+            endpoint_payload.get("path") or endpoint_payload.get("file_path") or ""
         ).replace("\\", "/")
         if not endpoint_path:
             return []
         handler_name = str(endpoint_payload.get("handler_name") or "").strip()
         candidates = []
         for node in context.nodes:
-            node_path = str(node.properties.get(cs.KEY_PATH) or "").replace("\\", "/")
+            node_path = (
+                get_canonical_relative_path(node.properties, context.runner.repo_path)
+                or ""
+            ).replace("\\", "/")
             if node_path != endpoint_path:
                 continue
             if not context.runner._is_runtime_source_path(node_path):
@@ -338,7 +350,7 @@ class ApiCallChainModule(AnalysisModule):
         return {
             "qualified_name": props.get(cs.KEY_QUALIFIED_NAME),
             "name": props.get(cs.KEY_NAME),
-            "path": props.get(cs.KEY_PATH),
+            "path": get_canonical_relative_path(props) or props.get(cs.KEY_PATH),
             "framework": props.get(cs.KEY_FRAMEWORK),
             "method": props.get(cs.KEY_HTTP_METHOD),
             "route_path": props.get(cs.KEY_ROUTE_PATH),
@@ -499,7 +511,14 @@ class ApiCallChainModule(AnalysisModule):
     def _is_frontend_request_node(context: AnalysisContext, node: Any) -> bool:
         if cs.NodeLabel.COMPONENT.value in node.labels:
             return True
-        path = str(node.properties.get(cs.KEY_PATH) or "").replace("\\", "/").lower()
+        path = (
+            (
+                get_canonical_relative_path(node.properties, context.runner.repo_path)
+                or ""
+            )
+            .replace("\\", "/")
+            .lower()
+        )
         if not context.runner._is_runtime_source_path(path):
             return False
         if any(part in {"tests", "test", "__tests__"} for part in path.split("/")):
@@ -546,7 +565,13 @@ class ApiCallChainModule(AnalysisModule):
                 }
             )
             exposed_module_paths = {
-                str(context.node_by_id[rel.from_id].properties.get(cs.KEY_PATH) or "")
+                (
+                    get_canonical_relative_path(
+                        context.node_by_id[rel.from_id].properties,
+                        context.runner.repo_path,
+                    )
+                    or ""
+                )
                 .replace("\\", "/")
                 .strip()
                 for rel in rels_by_to.get(node.node_id, [])
@@ -554,7 +579,13 @@ class ApiCallChainModule(AnalysisModule):
                 and rel.from_id in context.node_by_id
             }
             prefix_module_paths = {
-                str(context.node_by_id[rel.from_id].properties.get(cs.KEY_PATH) or "")
+                (
+                    get_canonical_relative_path(
+                        context.node_by_id[rel.from_id].properties,
+                        context.runner.repo_path,
+                    )
+                    or ""
+                )
                 .replace("\\", "/")
                 .strip()
                 for rel in rels_by_to.get(node.node_id, [])
@@ -575,7 +606,13 @@ class ApiCallChainModule(AnalysisModule):
                     "local_route_path": str(
                         node.properties.get("local_route_path") or route_path
                     ).strip(),
-                    "file": str(node.properties.get(cs.KEY_PATH) or "")
+                    "file": (
+                        get_canonical_relative_path(
+                            node.properties,
+                            context.runner.repo_path,
+                        )
+                        or ""
+                    )
                     .replace("\\", "/")
                     .strip(),
                     "framework": str(
@@ -801,7 +838,9 @@ class ApiCallChainModule(AnalysisModule):
         rel_type: str,
         include_graphql: bool,
     ) -> bool:
-        path = str(node.properties.get(cs.KEY_PATH) or "")
+        path = (
+            get_canonical_relative_path(node.properties, context.runner.repo_path) or ""
+        )
         normalized = path.replace("\\", "/").lower()
         path_parts = [part for part in normalized.split("/") if part]
         qualified_name = str(node.properties.get(cs.KEY_QUALIFIED_NAME) or "").lower()

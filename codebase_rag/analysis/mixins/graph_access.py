@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from codebase_rag.core import constants as cs
@@ -10,6 +11,11 @@ from codebase_rag.graph_db.cypher_queries import (
     CYPHER_EXPORT_PROJECT_NODES_PAGED,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS,
     CYPHER_EXPORT_PROJECT_RELATIONSHIPS_PAGED,
+)
+from codebase_rag.utils.path_utils import (
+    get_canonical_absolute_path,
+    get_canonical_relative_path,
+    normalize_path_value,
 )
 
 from ...utils.git_delta import get_git_head
@@ -21,6 +27,27 @@ if TYPE_CHECKING:
 
 
 class AnalysisGraphAccessMixin:
+    def _canonical_relative_path(
+        self: AnalysisRunnerProtocol,
+        properties: Mapping[str, object],
+    ) -> str:
+        canonical_path = get_canonical_relative_path(properties, self.repo_path)
+        if isinstance(canonical_path, str) and canonical_path and canonical_path != ".":
+            return canonical_path
+        raw_path = properties.get(cs.KEY_PATH)
+        if isinstance(raw_path, str):
+            return normalize_path_value(raw_path)
+        return ""
+
+    def _canonical_absolute_path(
+        self: AnalysisRunnerProtocol,
+        properties: Mapping[str, object],
+    ) -> str:
+        absolute_path = get_canonical_absolute_path(properties, self.repo_path)
+        if isinstance(absolute_path, str) and absolute_path:
+            return absolute_path
+        return ""
+
     def _load_graph_data(
         self: AnalysisRunnerProtocol, ingestor: QueryProtocol
     ) -> tuple[list[NodeRecord], list[RelationshipRecord]]:
@@ -149,24 +176,27 @@ class AnalysisGraphAccessMixin:
         for node in nodes:
             if cs.NodeLabel.MODULE.value in node.labels:
                 qn = str(node.properties.get(cs.KEY_QUALIFIED_NAME) or "")
-                path = str(node.properties.get(cs.KEY_PATH) or "")
+                path = self._canonical_relative_path(node.properties)
                 if qn and path:
                     module_paths[qn] = path
         return module_paths
 
-    def _collect_file_paths(self, nodes: list[NodeRecord]) -> list[str]:
+    def _collect_file_paths(
+        self: AnalysisRunnerProtocol,
+        nodes: list[NodeRecord],
+    ) -> list[str]:
         file_paths = [
-            node.properties.get(cs.KEY_PATH)
+            get_canonical_relative_path(node.properties, self.repo_path)
             for node in nodes
             if cs.NodeLabel.FILE.value in node.labels
         ]
-        return [str(path) for path in file_paths if isinstance(path, str)]
+        return [str(path) for path in file_paths if isinstance(path, str) and path]
 
     def _resolve_node_path(
         self: AnalysisRunnerProtocol, node: NodeRecord, module_path_map: dict[str, str]
     ) -> str | None:
-        path = node.properties.get(cs.KEY_PATH)
-        if isinstance(path, str) and path:
+        path = self._canonical_relative_path(node.properties)
+        if path and path != ".":
             return path
         qn = str(node.properties.get(cs.KEY_QUALIFIED_NAME) or "")
         if not qn:

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-from codebase_rag.core import constants as cs
-
 from ...security.security_scanner import SecurityScanner
 from ..protocols import AnalysisRunnerProtocol
 from ..types import NodeRecord
@@ -13,12 +11,7 @@ class SecurityMixin:
     def _security_scan(
         self: AnalysisRunnerProtocol, nodes: list[NodeRecord]
     ) -> dict[str, int]:
-        file_paths = [
-            node.properties.get(cs.KEY_PATH)
-            for node in nodes
-            if cs.NodeLabel.FILE.value in node.labels
-        ]
-        file_paths = [str(path) for path in file_paths if isinstance(path, str)]
+        file_paths = self._collect_file_paths(nodes)
 
         scanner = SecurityScanner()
         findings = scanner.scan_files(self.repo_path / path for path in file_paths)

@@ -209,10 +209,15 @@ def execute_project_cypher(
     query: str,
     *,
     project_name: str,
+    parameters: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Runs a project-scoped Cypher query against the current Memgraph fixture graph."""
 
+    query_params = {cs.KEY_PROJECT_NAME: project_name}
+    if parameters:
+        query_params.update(parameters)
+
     return cast(
         "list[dict[str, object]]",
-        ingestor._execute_query(query, {"project_name": project_name}),
+        ingestor._execute_query(query, query_params),
     )

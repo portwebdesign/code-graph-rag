@@ -1,6 +1,6 @@
 [project]
 name = "code-graph-rag"
-version = "0.0.58"
+version = "0.0.159"
 description = "The ultimate RAG for your monorepo. Query, understand, and edit multi-language codebases with the power of AI and knowledge graphs"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -37,8 +37,9 @@ package = true
 environments = ["sys_platform == 'win32'"]
 default-groups = ["treesitter", "semantic"]
 
-[tool.setuptools]
-packages = ["codebase_rag", "codec"]
+[tool.setuptools.packages.find]
+include = ["codebase_rag*", "codec*", "cgr*"]
+exclude = ["codebase_rag.tests*", "codec.tests*", "cgr.tests*"]
 
 [project.optional-dependencies]
 test = [
@@ -53,6 +54,7 @@ treesitter-full = [
     "tree-sitter-python>=0.23.6",
     "tree-sitter-javascript>=0.23.1",
     "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-c>=0.24.0",
     "tree-sitter-rust>=0.24.0",
     "tree-sitter-go==0.25.0",
     "tree-sitter-scala>=0.24.0",
@@ -130,6 +132,7 @@ markers = [
 [dependency-groups]
 treesitter = [
     "tree-sitter-typescript>=0.23.2",
+    "tree-sitter-c>=0.24.0",
     "tree-sitter-rust>=0.24.0",
     "tree-sitter-go==0.25.0",
     "tree-sitter-scala>=0.24.0",

@@ -308,7 +308,7 @@ wheels = [
 
 [[package]]
 name = "code-graph-rag"
-version = "0.0.58"
+version = "0.0.159"
 source = { editable = "." }
 dependencies = [
     { name = "click", marker = "sys_platform == 'win32'" },
@@ -348,6 +348,7 @@ test = [
     { name = "testcontainers", marker = "sys_platform == 'win32'" },
 ]
 treesitter-full = [
+    { name = "tree-sitter-c", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-c-sharp", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-cpp", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-css", marker = "sys_platform == 'win32'" },
@@ -394,6 +395,7 @@ semantic = [
     { name = "transformers", marker = "sys_platform == 'win32'" },
 ]
 treesitter = [
+    { name = "tree-sitter-c", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-c-sharp", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-cpp", marker = "sys_platform == 'win32'" },
     { name = "tree-sitter-css", marker = "sys_platform == 'win32'" },
@@ -442,6 +444,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'semantic'", specifier = ">=2.6.0" },
     { name = "transformers", marker = "extra == 'semantic'", specifier = ">=4.0.0" },
     { name = "tree-sitter", specifier = "==0.25.0" },
+    { name = "tree-sitter-c", marker = "extra == 'treesitter-full'", specifier = ">=0.24.0" },
     { name = "tree-sitter-c-sharp", marker = "extra == 'treesitter-full'", specifier = ">=0.23.0" },
     { name = "tree-sitter-cpp", marker = "extra == 'treesitter-full'", specifier = "==0.23.4" },
     { name = "tree-sitter-css", marker = "extra == 'treesitter-full'", specifier = "==0.25.0" },
@@ -497,6 +500,7 @@ semantic = [
     { name = "transformers", specifier = ">=4.0.0" },
 ]
 treesitter = [
+    { name = "tree-sitter-c", specifier = ">=0.24.0" },
     { name = "tree-sitter-c-sharp", specifier = ">=0.23.0" },
     { name = "tree-sitter-cpp", specifier = "==0.23.4" },
     { name = "tree-sitter-css", specifier = "==0.25.0" },
@@ -2761,6 +2765,16 @@ sdist = { url = "https://files.pythonhosted.org/packages/98/21/e952c3180f0fd83d0
 wheels = [
     { url = "https://files.pythonhosted.org/packages/13/d3/5dff82a02646619545c4e7c9b9ec87bc126f1937760228fcf2e91f5079c7/tree_sitter-0.25.0-cp312-cp312-win_amd64.whl", hash = "sha256:1807bd1dae1f50721d65b270e6ffa85de84234ae39f98f4da702db56c2627e23", size = 126785, upload-time = "2025-07-20T13:17:38.488Z" },
     { url = "https://files.pythonhosted.org/packages/71/61/4fffd405569d9c1551906766825da75a2d8f1c075be8994542d5d7ba7768/tree_sitter-0.25.0-cp312-cp312-win_arm64.whl", hash = "sha256:7848be6aeab5c1d62d649506d80d0e463727cb1bb55f423e88bf317db0be8d67", size = 113615, upload-time = "2025-07-20T13:17:39.965Z" },
+]
+
+[[package]]
+name = "tree-sitter-c"
+version = "0.24.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/f5/ba8cd08d717277551ade8537d3aa2a94b907c6c6e0fbcf4e4d8b1c747fa3/tree_sitter_c-0.24.1.tar.gz", hash = "sha256:7d2d0cda0b8dda428c81440c1e94367f9f13548eedca3f49768bde66b1422ad6", size = 228014, upload-time = "2025-05-24T17:32:58.384Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/5a/6361df7f3fa2310c53a0d26b4702a261c332da16fa9d801e381e3a86e25f/tree_sitter_c-0.24.1-cp310-abi3-win_amd64.whl", hash = "sha256:290bff0f9c79c966496ebae45042f77543e6e4aea725f40587a8611d566231a8", size = 84703, upload-time = "2025-05-24T17:32:56.084Z" },
+    { url = "https://files.pythonhosted.org/packages/22/6a/210a302e8025ac492cbaea58d3720d66b7d8034c5d747ac5e4d2d235aa25/tree_sitter_c-0.24.1-cp310-abi3-win_arm64.whl", hash = "sha256:d46bbda06f838c2dcb91daf767813671fd366b49ad84ff37db702129267b46e1", size = 82715, upload-time = "2025-05-24T17:32:57.248Z" },
 ]
 
 [[package]]

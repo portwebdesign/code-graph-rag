@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from codebase_rag.utils.path_utils import add_absolute_path_aliases
+
 from ..protocols import AnalysisRunnerProtocol
 
 
@@ -17,7 +19,10 @@ class OutputUtilsMixin:
         self: AnalysisRunnerProtocol, filename: str, payload: Any
     ) -> Path:
         report_path = self._analysis_output_dir() / filename
-        report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        report_path.write_text(
+            json.dumps(add_absolute_path_aliases(payload, self.repo_path), indent=2),
+            encoding="utf-8",
+        )
         return report_path
 
     def _write_text_report(

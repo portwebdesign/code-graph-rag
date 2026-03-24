@@ -3,7 +3,11 @@ from unittest.mock import patch
 
 import pytest
 
-from codebase_rag.core.config import DEFAULT_ENV_FILE, AppConfig
+from codebase_rag.core.config import (
+    DEFAULT_ENV_FILE,
+    AppConfig,
+    resolve_provider_api_key,
+)
 
 
 class TestProviderConfiguration:
@@ -259,3 +263,40 @@ class TestProviderConfiguration:
             assert orch_config.model_id == "gpt-4o"
             assert orch_config.api_key == "sk-test-key"
             assert orch_config.endpoint == "https://api.custom-openai.com/v1"
+
+    def test_provider_specific_api_key_fallback_is_used_for_deepseek(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "ORCHESTRATOR_PROVIDER": "deepseek",
+                "ORCHESTRATOR_MODEL": "deepseek-chat",
+                "DEEPSEEK_API_KEY": "deepseek-key",
+            },
+            clear=True,
+        ):
+            config = AppConfig(_env_file=None)  # ty: ignore[unknown-argument]
+
+            orch_config = config.active_orchestrator_config
+            assert orch_config.provider == "deepseek"
+            assert orch_config.api_key == "deepseek-key"
+
+    def test_provider_specific_api_key_beats_unrelated_generic_key(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "openai-key",
+                "DEEPSEEK_API_KEY": "deepseek-key",
+            },
+            clear=True,
+        ):
+            assert resolve_provider_api_key("deepseek", None) == "deepseek-key"
+
+    def test_explicit_role_api_key_beats_provider_fallback(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "DEEPSEEK_API_KEY": "deepseek-key",
+            },
+            clear=True,
+        ):
+            assert resolve_provider_api_key("deepseek", "role-key") == "role-key"

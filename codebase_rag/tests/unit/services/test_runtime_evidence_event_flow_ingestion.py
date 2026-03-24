@@ -120,12 +120,24 @@ def test_runtime_evidence_reconciles_runtime_events_to_static_event_graph(
     ]
     assert len(runtime_artifacts) == 1
     assert runtime_artifacts[0]["path"] == "output/runtime/events.ndjson"
+    assert runtime_artifacts[0]["repo_rel_path"] == "output/runtime/events.ndjson"
+    assert (
+        runtime_artifacts[0]["abs_path"]
+        == (repo_path / "output" / "runtime" / "events.ndjson").resolve().as_posix()
+    )
 
     runtime_events = [
         props for label, props in ingestor.nodes if label == cs.NodeLabel.RUNTIME_EVENT
     ]
     assert len(runtime_events) == 1
     event_props = runtime_events[0]
+    assert event_props["path"] == "output/runtime/events.ndjson"
+    assert event_props["repo_rel_path"] == "output/runtime/events.ndjson"
+    assert event_props["file_path"] == "output/runtime/events.ndjson"
+    assert (
+        event_props["abs_path"]
+        == (repo_path / "output" / "runtime" / "events.ndjson").resolve().as_posix()
+    )
     assert event_props["normalized_event_name"] == "invoice.created"
     assert event_props["normalized_channel_name"] == "invoice-events"
     assert event_props["normalized_dlq_name"] == "invoice-events-dlq"
@@ -138,6 +150,10 @@ def test_runtime_evidence_reconciles_runtime_events_to_static_event_graph(
         if rel[1] == cs.RelationshipType.OBSERVED_IN_RUNTIME
     ]
     assert any(rel[2][0] == cs.NodeLabel.EVENT_FLOW for rel in observed_relationships)
+    assert any(
+        rel[2] == (cs.NodeLabel.FILE, cs.KEY_PATH, "output/runtime/events.ndjson")
+        for rel in observed_relationships
+    )
     assert any(
         rel[0][0] == cs.NodeLabel.EVENT_FLOW and rel[2][0] == cs.NodeLabel.RUNTIME_EVENT
         for rel in observed_relationships

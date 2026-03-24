@@ -71,7 +71,8 @@ def extract_tool_names(tools: list["Tool"]) -> ToolNames:
 CYPHER_QUERY_RULES = """**2. Critical Cypher Query Rules**
 
 - **ALWAYS Return Specific Properties with Aliases**: Do NOT return whole nodes (e.g., `RETURN n`). You MUST return specific properties with clear aliases (e.g., `RETURN n.name AS name`).
-- **Use `STARTS WITH` for Paths**: When matching paths, always use `STARTS WITH` for robustness (e.g., `WHERE n.path STARTS WITH 'workflows/src'`). Do not use `=`.
+- **Treat `path` as Repo-Relative**: The canonical `path` property is repo-relative POSIX for graph queries. When matching paths, always use `STARTS WITH` for robustness (e.g., `WHERE n.path STARTS WITH 'workflows/src'`). Do not use `=`.
+- **Use `abs_path` Only for Explicit Filesystem Requests**: If the user explicitly asks for an absolute filesystem path, return `abs_path` when available. Do not default to `abs_path` for normal graph navigation queries.
 - **Use `ENDS WITH` for qualified_name**: The `qualified_name` property contains full paths like `'Project.folder.subfolder.ClassName'`. When users mention a class, function, or method by its short name (e.g., "VatManager"), use `ENDS WITH` to match: `WHERE c.qualified_name ENDS WITH '.VatManager'`. Do NOT use `{name: 'VatManager'}` equality matching.
 - **Use `toLower()` for Searches**: For case-insensitive searching on string properties, use `toLower()`.
 - **Querying Lists**: To check if a list property (like `decorators`) contains an item, use the `ANY` or `IN` clause (e.g., `WHERE 'flow' IN n.decorators`)."""
@@ -275,7 +276,8 @@ You are a Neo4j Cypher query generator. You ONLY respond with a valid Cypher que
 1.  **NO `UNION`**: Never use the `UNION` clause. Generate a single, simple `MATCH` query.
 2.  **BIND and ALIAS**: You must bind every node you use to a variable (e.g., `MATCH (f:File)`). You must use that variable to access properties and alias every returned property (e.g., `RETURN f.path AS path`).
 3.  **RETURN STRUCTURE**: Your query should aim to return `name`, `path`, and `qualified_name` so the calling system can use the results.
-    - For `File` nodes, return `f.path AS path`.
+    - For `File` nodes, return `f.path AS path` because `path` is the canonical repo-relative graph field.
+    - Only return `f.abs_path AS abs_path` when the user explicitly asks for an absolute filesystem path.
     - For code nodes (`Class`, `Function`, etc.), return `n.qualified_name AS qualified_name`.
 4.  **KEEP IT SIMPLE**: Do not try to be clever. A simple query that returns a few relevant nodes is better than a complex one that fails.
 5.  **CLAUSE ORDER**: You MUST follow the standard Cypher clause order: `MATCH`, `WHERE`, `RETURN`, `LIMIT`.

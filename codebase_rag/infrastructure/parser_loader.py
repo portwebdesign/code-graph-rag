@@ -215,6 +215,12 @@ def _import_language_loaders() -> dict[cs.SupportedLanguage, LanguageLoader]:
             cs.SupportedLanguage.TS,
         ),
         LanguageImport(
+            cs.SupportedLanguage.C,
+            cs.TreeSitterModule.C,
+            cs.QUERY_LANGUAGE,
+            cs.SupportedLanguage.C,
+        ),
+        LanguageImport(
             cs.SupportedLanguage.RUST,
             cs.TreeSitterModule.RUST,
             cs.QUERY_LANGUAGE,

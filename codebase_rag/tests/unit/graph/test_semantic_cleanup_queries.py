@@ -1,6 +1,8 @@
 from codebase_rag.graph_db.cypher_queries import (
+    CYPHER_DELETE_CONTAINER_BY_PATH,
     CYPHER_DELETE_DYNAMIC_EDGES_BY_PATH,
     CYPHER_DELETE_MODULE_BY_PATH,
+    CYPHER_LIST_PROJECT_RECONCILE_PATHS,
 )
 
 
@@ -52,3 +54,19 @@ def test_dynamic_edge_delete_query_cleans_semantic_edges_and_orphans() -> None:
         in CYPHER_DELETE_DYNAMIC_EDGES_BY_PATH
     )
     assert "NOT (n)--()" in CYPHER_DELETE_DYNAMIC_EDGES_BY_PATH
+
+
+def test_startup_reconcile_query_is_project_scoped_and_typed() -> None:
+    assert "n.project_name = $project_name" in CYPHER_LIST_PROJECT_RECONCILE_PATHS
+    assert (
+        "n:File OR n:Module OR n:RuntimeArtifact" in CYPHER_LIST_PROJECT_RECONCILE_PATHS
+    )
+    assert "n:Folder OR n:Package" in CYPHER_LIST_PROJECT_RECONCILE_PATHS
+    assert "'file' AS kind" in CYPHER_LIST_PROJECT_RECONCILE_PATHS
+    assert "'directory' AS kind" in CYPHER_LIST_PROJECT_RECONCILE_PATHS
+
+
+def test_container_delete_query_is_project_scoped() -> None:
+    assert "n.project_name = $project_name" in CYPHER_DELETE_CONTAINER_BY_PATH
+    assert "n.path = $path" in CYPHER_DELETE_CONTAINER_BY_PATH
+    assert "n:Folder OR n:Package" in CYPHER_DELETE_CONTAINER_BY_PATH

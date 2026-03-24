@@ -222,6 +222,29 @@ WHERE (
 DETACH DELETE n
 """
 
+CYPHER_LIST_PROJECT_RECONCILE_PATHS = """
+MATCH (n)
+WHERE n.project_name = $project_name
+    AND n.path IS NOT NULL
+    AND (n:File OR n:Module OR n:RuntimeArtifact)
+RETURN DISTINCT $project_name AS project_name, n.path AS path, 'file' AS kind
+UNION
+MATCH (n)
+WHERE n.project_name = $project_name
+    AND n.path IS NOT NULL
+    AND (n:Folder OR n:Package)
+RETURN DISTINCT $project_name AS project_name, n.path AS path, 'directory' AS kind
+ORDER BY kind, path
+"""
+
+CYPHER_DELETE_CONTAINER_BY_PATH = """
+MATCH (n)
+WHERE n.project_name = $project_name
+    AND n.path = $path
+    AND (n:Folder OR n:Package)
+DETACH DELETE n
+"""
+
 
 CYPHER_EXAMPLE_DECORATED_FUNCTIONS = f"""MATCH (n:Function|Method)
 WHERE ANY(d IN n.decorators WHERE toLower(d) IN ['flow', 'task'])
@@ -990,27 +1013,32 @@ WITH f, path, count(DISTINCT decorator_src) AS decorator_links
 WHERE decorator_links = 0
 OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|REGISTERS_CALLBACK|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
 WITH f, path, decorator_links, count(DISTINCT registration_src) AS registration_links
-WHERE registration_links = 0
+OPTIONAL MATCH (semantic_owner)-[:USES_DEPENDENCY|SECURED_BY]->(semantic_src)-[:RESOLVES_TO]->(f)
+WHERE semantic_src:DependencyProvider OR semantic_src:AuthPolicy
+WITH f, path, decorator_links, registration_links,
+     count(DISTINCT semantic_owner) AS semantic_registration_links
+WHERE registration_links = 0 AND semantic_registration_links = 0
 OPTIONAL MATCH (caller)-[:CALLS]->(f)
-WITH f, path, decorator_links, registration_links, count(DISTINCT caller) AS call_in_degree
+WITH f, path, decorator_links, registration_links, semantic_registration_links,
+     count(DISTINCT caller) AS call_in_degree
 OPTIONAL MATCH (dispatch_src)-[:DISPATCHES_TO]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree,
      count(DISTINCT dispatch_src) AS dispatch_in_degree
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      call_in_degree + dispatch_in_degree AS combined_in_degree
 WHERE combined_in_degree = 0
 OPTIONAL MATCH (f)-[:CALLS]->(callee)
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      combined_in_degree, count(DISTINCT callee) AS out_call_count
 OPTIONAL MATCH (import_src)-[:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      combined_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
 OPTIONAL MATCH (config_src)-[:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      combined_in_degree, out_call_count,
      imported_by_cli_links, count(DISTINCT config_src) AS config_reference_links
 WITH f, path, call_in_degree, dispatch_in_degree, combined_in_degree, out_call_count,
-     decorator_links, registration_links,
+     decorator_links, registration_links, semantic_registration_links,
      imported_by_cli_links, config_reference_links,
      CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
      CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
@@ -1027,6 +1055,7 @@ RETURN DISTINCT f.qualified_name AS qualified_name,
                 has_entry_decorator,
                 decorator_links,
                 registration_links,
+                semantic_registration_links,
                 imported_by_cli_links,
                 config_reference_links,
                 coalesce(f.decorators, []) AS decorators,
@@ -1047,27 +1076,32 @@ WITH f, path, count(DISTINCT decorator_src) AS decorator_links
 WHERE decorator_links = 0
 OPTIONAL MATCH (registration_src)-[:HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|REGISTERS_CALLBACK|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE]->(f)
 WITH f, path, decorator_links, count(DISTINCT registration_src) AS registration_links
-WHERE registration_links = 0
+OPTIONAL MATCH (semantic_owner)-[:USES_DEPENDENCY|SECURED_BY]->(semantic_src)-[:RESOLVES_TO]->(f)
+WHERE semantic_src:DependencyProvider OR semantic_src:AuthPolicy
+WITH f, path, decorator_links, registration_links,
+     count(DISTINCT semantic_owner) AS semantic_registration_links
+WHERE registration_links = 0 AND semantic_registration_links = 0
 OPTIONAL MATCH (caller)-[:CALLS]->(f)
-WITH f, path, decorator_links, registration_links, count(DISTINCT caller) AS call_in_degree
+WITH f, path, decorator_links, registration_links, semantic_registration_links,
+     count(DISTINCT caller) AS call_in_degree
 OPTIONAL MATCH (dispatch_src)-[:DISPATCHES_TO]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree,
      count(DISTINCT dispatch_src) AS dispatch_in_degree
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      call_in_degree + dispatch_in_degree AS combined_in_degree
 WHERE combined_in_degree = 0
 OPTIONAL MATCH (f)-[:CALLS]->(callee)
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      combined_in_degree, count(DISTINCT callee) AS out_call_count
 OPTIONAL MATCH (import_src)-[:USES_HANDLER|USES_SERVICE|REQUESTS_ENDPOINT|ROUTES_TO_ACTION]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      combined_in_degree, out_call_count, count(DISTINCT import_src) AS imported_by_cli_links
 OPTIONAL MATCH (config_src)-[:IMPORTS|RESOLVES_IMPORT|USES_COMPONENT]->(f)
-WITH f, path, decorator_links, registration_links, call_in_degree, dispatch_in_degree,
+WITH f, path, decorator_links, registration_links, semantic_registration_links, call_in_degree, dispatch_in_degree,
      combined_in_degree, out_call_count,
      imported_by_cli_links, count(DISTINCT config_src) AS config_reference_links
 WITH f, path, call_in_degree, dispatch_in_degree, combined_in_degree, out_call_count,
-     decorator_links, registration_links,
+     decorator_links, registration_links, semantic_registration_links,
      imported_by_cli_links, config_reference_links,
      CASE WHEN f.name IN $entry_names THEN true ELSE false END AS is_entrypoint_name,
      CASE WHEN ANY(d IN coalesce(f.decorators, []) WHERE d IN $decorators) THEN true ELSE false END AS has_entry_decorator
@@ -1084,6 +1118,7 @@ RETURN DISTINCT f.qualified_name AS qualified_name,
                 has_entry_decorator,
                 decorator_links,
                 registration_links,
+                semantic_registration_links,
                 imported_by_cli_links,
                 config_reference_links,
                 coalesce(f.decorators, []) AS decorators,

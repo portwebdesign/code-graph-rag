@@ -175,6 +175,68 @@ class TestQueryResultFormatting:
         result = await tool.function(natural_language_query="Find all")
         assert "3" in result.summary
 
+    async def test_result_exposes_total_results_without_truncation(
+        self,
+        mock_ingestor: MagicMock,
+        mock_cypher_gen: MagicMock,
+        mock_console: Console,
+    ) -> None:
+        tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
+        result = await tool.function(natural_language_query="Find all functions")
+        assert result.total_results == 2
+        assert result.truncated is False
+
+    async def test_large_result_set_is_truncated_with_metadata(
+        self,
+        mock_ingestor: MagicMock,
+        mock_cypher_gen: MagicMock,
+        mock_console: Console,
+    ) -> None:
+        mock_ingestor.fetch_all.return_value = [
+            {"name": f"func{i}", "body": "x" * 500} for i in range(60)
+        ]
+        tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
+
+        result = await tool.function(natural_language_query="Find all functions")
+
+        assert result.truncated is True
+        assert result.total_results == 60
+        assert len(result.results) < 60
+        assert "truncated" in result.summary.lower()
+
+    async def test_large_string_values_are_clipped_for_safe_return_size(
+        self,
+        mock_ingestor: MagicMock,
+        mock_cypher_gen: MagicMock,
+        mock_console: Console,
+    ) -> None:
+        mock_ingestor.fetch_all.return_value = [
+            {"name": "func1", "body": "x" * 1200},
+        ]
+        tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
+
+        result = await tool.function(natural_language_query="Find all functions")
+
+        assert result.truncated is True
+        assert result.total_results == 1
+        assert "[truncated" in str(result.results[0]["body"])
+
+    async def test_results_expose_absolute_path_alias_when_abs_path_exists(
+        self,
+        mock_ingestor: MagicMock,
+        mock_cypher_gen: MagicMock,
+        mock_console: Console,
+    ) -> None:
+        mock_ingestor.fetch_all.return_value = [
+            {"name": "func1", "abs_path": "D:/repo/src/app.py"},
+        ]
+        tool = create_query_tool(mock_ingestor, mock_cypher_gen, console=mock_console)
+
+        result = await tool.function(natural_language_query="Find all functions")
+
+        assert result.results[0]["abs_path"] == "D:/repo/src/app.py"
+        assert result.results[0]["absolute_path"] == "D:/repo/src/app.py"
+
 
 class TestQueryWithVariousDataTypes:
     async def test_handles_none_values(

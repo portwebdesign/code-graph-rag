@@ -10,11 +10,8 @@ from watchdog.observers import Observer
 from codebase_rag.core import logs
 from codebase_rag.core.config import settings
 from codebase_rag.core.constants import (
-    CYPHER_DELETE_CALLS,
-    CYPHER_DELETE_MODULE,
     IGNORE_PATTERNS,
     IGNORE_SUFFIXES,
-    KEY_PATH,
     WATCHER_SLEEP_INTERVAL,
     EventType,
     SupportedLanguage,
@@ -74,10 +71,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
             logs.CHANGE_DETECTED.format(event_type=event.event_type, path=path)
         )
 
-        ingestor.execute_write(CYPHER_DELETE_MODULE, {KEY_PATH: relative_path_str})
-        logger.debug(logs.DELETION_QUERY.format(path=relative_path_str))
-
-        self.updater.remove_file_from_state(path)
+        pruning_service = self.updater.pruning_service
+        if pruning_service is None:
+            raise RuntimeError(
+                "Realtime watcher requires an initialized pruning service"
+            )
+        pruning_service.prune_path(relative_path_str)
 
         if event.event_type in (EventType.MODIFIED, EventType.CREATED):
             lang_config = get_language_spec(path.suffix)
@@ -94,10 +93,12 @@ class CodeChangeEventHandler(FileSystemEventHandler):
                 ):
                     root_node, language = result
                     self.updater.ast_cache[path] = (root_node, language)
-
-        logger.info(logs.RECALC_CALLS)
-        ingestor.execute_write(CYPHER_DELETE_CALLS)
-        self.updater._process_function_calls()
+                    self.updater.factory.call_processor.process_calls_in_file(
+                        path,
+                        root_node,
+                        language,
+                        self.updater.queries,
+                    )
 
         self.updater.ingestor.flush_all()
 

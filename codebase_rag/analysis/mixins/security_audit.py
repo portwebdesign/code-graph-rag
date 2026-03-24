@@ -133,8 +133,8 @@ class SecurityAuditMixin:
             target = module_nodes.get(rel.to_id)
             if not source or not target:
                 continue
-            src_path = str(source.properties.get(cs.KEY_PATH) or "")
-            tgt_path = str(target.properties.get(cs.KEY_PATH) or "")
+            src_path = self._canonical_relative_path(source.properties)
+            tgt_path = self._canonical_relative_path(target.properties)
             src_layer = layer_for(src_path)
             tgt_layer = layer_for(tgt_path)
             if (

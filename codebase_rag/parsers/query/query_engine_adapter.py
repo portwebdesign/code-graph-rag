@@ -55,6 +55,12 @@ _QUERY_NAME_MAP: dict[cs.SupportedLanguage, dict[str, str | list[str]]] = {
         "calls": ["call_expression", "method_call", "constructor_call"],
         "imports": ["import_statement", "named_import", "export_statement"],
     },
+    cs.SupportedLanguage.C: {
+        "functions": ["function_declarations", "function_definitions"],
+        "classes": ["struct_definitions", "union_definitions", "enum_definitions"],
+        "calls": ["function_calls"],
+        "imports": ["include_directives"],
+    },
     cs.SupportedLanguage.JAVA: {
         "functions": [
             "method_declarations",

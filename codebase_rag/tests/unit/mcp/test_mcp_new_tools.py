@@ -1523,7 +1523,11 @@ class TestMCPNewTools:
 
             ingestor = cast(MagicMock, mcp_registry.ingestor)
             ingestor.fetch_all.return_value = [
-                {"name": f"module_{idx}", "qualified_name": f"pkg.module_{idx}"}
+                {
+                    "name": f"module_{idx}",
+                    "qualified_name": f"pkg.module_{idx}",
+                    "abs_path": f"D:/repo/src/module_{idx}.py",
+                }
                 for idx in range(10)
             ]
 
@@ -1538,6 +1542,7 @@ class TestMCPNewTools:
             assert len(rows) == 3
             summary = str(result.get("summary", ""))
             assert "truncated" in summary.lower()
+            assert rows[0]["absolute_path"] == "D:/repo/src/module_0.py"
             chunk_state = mcp_registry._session_state.get("query_result_chunks", [])
             assert isinstance(chunk_state, list)
             assert len(chunk_state) >= 1

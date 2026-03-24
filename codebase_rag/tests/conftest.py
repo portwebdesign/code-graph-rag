@@ -173,7 +173,10 @@ def mock_updater(temp_repo: Path, mock_ingestor: MagicMock) -> MagicMock:
     mock.factory = MagicMock()
     mock.factory.definition_processor = MagicMock()
     mock.factory.structure_processor = MagicMock()
+    mock.factory.call_processor = MagicMock()
     mock.factory.structure_processor.structural_elements = {}
+    mock.parse_preparation_service = MagicMock()
+    mock.pruning_service = MagicMock()
 
     mock_root_node = MagicMock()
     mock.factory.definition_processor.process_file.return_value = (

@@ -100,7 +100,10 @@ class FastAPITruthfulnessAnalysisIngestor:
                 qualified_name,
                 registration_rel_types,
             )
-            if registration_links > 0:
+            semantic_registration_links = self._count_semantic_registration_links(
+                qualified_name
+            )
+            if registration_links > 0 or semantic_registration_links > 0:
                 continue
             combined_in_degree = call_in_degree + dispatch_in_degree
             if combined_in_degree > 0:
@@ -124,6 +127,7 @@ class FastAPITruthfulnessAnalysisIngestor:
                     "has_entry_decorator": False,
                     "decorator_links": 0,
                     "registration_links": registration_links,
+                    "semantic_registration_links": semantic_registration_links,
                     "imported_by_cli_links": 0,
                     "config_reference_links": 0,
                     "decorators": props.get(cs.KEY_DECORATORS) or [],
@@ -152,6 +156,27 @@ class FastAPITruthfulnessAnalysisIngestor:
             if recorded_rel_type in rel_types
             and from_spec[1] == cs.KEY_QUALIFIED_NAME
             and from_spec[2] == qualified_name
+        )
+
+    def _count_semantic_registration_links(self, qualified_name: str) -> int:
+        semantic_nodes = {
+            from_spec[2]
+            for from_spec, recorded_rel_type, to_spec, _ in self.relationships
+            if recorded_rel_type == cs.RelationshipType.RESOLVES_TO
+            and to_spec[1] == cs.KEY_QUALIFIED_NAME
+            and to_spec[2] == qualified_name
+            and from_spec[0]
+            in {cs.NodeLabel.DEPENDENCY_PROVIDER, cs.NodeLabel.AUTH_POLICY}
+        }
+        if not semantic_nodes:
+            return 0
+        return sum(
+            1
+            for _, recorded_rel_type, to_spec, _ in self.relationships
+            if recorded_rel_type
+            in {cs.RelationshipType.USES_DEPENDENCY, cs.RelationshipType.SECURED_BY}
+            and to_spec[1] == cs.KEY_QUALIFIED_NAME
+            and to_spec[2] in semantic_nodes
         )
 
 
@@ -223,6 +248,45 @@ app.include_router(router)
     )
     assert (
         "fastapi_dead_code_truthfulness.main._get_ai_graph_service"
+        not in reported_symbols
+    )
+    assert dead_code_result["dead_code_except_test"]["filtered_dead_symbols"] == 0
+
+
+def test_dead_code_pipeline_drops_cross_module_fastapi_dependency_false_positives(
+    temp_repo: Path,
+) -> None:
+    project = temp_repo / "fastapi_cross_module_dead_code_truthfulness"
+    project.mkdir()
+    (project / "helpers.py").write_text(
+        """from fastapi import Depends\n\n\ndef get_current_principal() -> str:\n    return "principal"\n\n\ndef require_authenticated_principal(\n    principal: str = Depends(get_current_principal),\n) -> str:\n    return principal\n""",
+        encoding="utf-8",
+    )
+    (project / "main.py").write_text(
+        """from fastapi import APIRouter, Depends\n\nfrom .helpers import require_authenticated_principal\n\nrouter = APIRouter()\n\n\n@router.get("/secure", dependencies=[Depends(require_authenticated_principal)])\nasync def secure_status() -> dict[str, str]:\n    return {"status": "ok"}\n""",
+        encoding="utf-8",
+    )
+
+    ingestor = FastAPITruthfulnessAnalysisIngestor()
+    run_updater(project, ingestor)
+
+    runner = AnalysisRunner(cast(IngestorProtocol, ingestor), project)
+    dead_code_result = runner._dead_code_report_db(module_paths=None)
+
+    report_path = project / "output" / "analysis" / "dead-code-except-test.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    reported_symbols = {
+        symbol["qualified_name"]
+        for file_entry in report["files"]
+        for symbol in file_entry["dead_symbols"]
+    }
+
+    assert (
+        "fastapi_cross_module_dead_code_truthfulness.helpers.get_current_principal"
+        not in reported_symbols
+    )
+    assert (
+        "fastapi_cross_module_dead_code_truthfulness.helpers.require_authenticated_principal"
         not in reported_symbols
     )
     assert dead_code_result["dead_code_except_test"]["filtered_dead_symbols"] == 0

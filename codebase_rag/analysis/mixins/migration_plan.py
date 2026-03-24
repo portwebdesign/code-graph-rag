@@ -49,7 +49,7 @@ class MigrationPlanMixin:
         module_scores: list[dict[str, object]] = []
         for node_id, node in module_nodes.items():
             qn = str(node.properties.get(cs.KEY_QUALIFIED_NAME) or "")
-            path = str(node.properties.get(cs.KEY_PATH) or "")
+            path = self._canonical_relative_path(node.properties)
             score = fan_in.get(node_id, 0) + fan_out.get(node_id, 0)
             if node_id in cyclic_nodes:
                 score += 5

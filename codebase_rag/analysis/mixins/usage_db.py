@@ -147,7 +147,7 @@ class UsageDbMixin:
             {
                 "qualified_name": row.get(cs.KEY_QUALIFIED_NAME),
                 "name": row.get(cs.KEY_NAME),
-                "path": row.get(cs.KEY_PATH),
+                "path": self._canonical_relative_path(row),
                 "start_line": row.get(cs.KEY_START_LINE),
                 "label": row.get("label") or cs.NodeLabel.FUNCTION,
                 "call_in_degree": int(cast(Any, row.get("call_in_degree")) or 0),
@@ -163,6 +163,9 @@ class UsageDbMixin:
                 "decorator_links": int(cast(Any, row.get("decorator_links")) or 0),
                 "registration_links": int(
                     cast(Any, row.get("registration_links")) or 0
+                ),
+                "semantic_registration_links": int(
+                    cast(Any, row.get("semantic_registration_links")) or 0
                 ),
                 "imported_by_cli_links": int(
                     cast(Any, row.get("imported_by_cli_links")) or 0
@@ -230,9 +233,9 @@ class UsageDbMixin:
                 "unused_imports": len(rows),
                 "files_with_unused": len(
                     {
-                        str(row.get(cs.KEY_PATH) or "")
+                        self._canonical_relative_path(row)
                         for row in rows
-                        if row.get(cs.KEY_PATH)
+                        if self._canonical_relative_path(row)
                     }
                 ),
                 "source": "db",
@@ -248,5 +251,11 @@ class UsageDbMixin:
         report_path.write_text(json.dumps(report_payload, indent=2), encoding="utf-8")
         return {
             "unused_imports": len(rows),
-            "files_with_unused": len({row.get(cs.KEY_PATH) for row in rows}),
+            "files_with_unused": len(
+                {
+                    self._canonical_relative_path(row)
+                    for row in rows
+                    if self._canonical_relative_path(row)
+                }
+            ),
         }

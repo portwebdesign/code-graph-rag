@@ -182,7 +182,7 @@ class UsageInMemoryMixin:
             {
                 "qualified_name": node.properties.get(cs.KEY_QUALIFIED_NAME),
                 "name": node.properties.get(cs.KEY_NAME),
-                "path": node.properties.get(cs.KEY_PATH),
+                "path": self._canonical_relative_path(node.properties),
                 "start_line": node.properties.get(cs.KEY_START_LINE),
                 "label": self._primary_label(node) or cs.NodeLabel.FUNCTION,
                 "call_in_degree": call_in_degree_map.get(node.node_id, 0),

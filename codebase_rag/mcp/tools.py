@@ -87,6 +87,7 @@ from codebase_rag.tools.semantic_search import (
     get_function_source_code,
     semantic_code_search,
 )
+from codebase_rag.utils.path_utils import add_absolute_path_aliases
 
 _CORE_MCP_TOOL_NAMES: frozenset[str] = frozenset(
     {
@@ -3964,6 +3965,13 @@ class MCPToolsRegistry:
         self,
         rows: list[dict[str, object]],
     ) -> tuple[list[dict[str, object]], bool, int]:
+        project_root = (
+            Path(self.project_root) if isinstance(self.project_root, str) else None
+        )
+        rows = cast(
+            list[dict[str, object]],
+            add_absolute_path_aliases(rows, project_root),
+        )
         max_rows = max(1, int(settings.MCP_QUERY_RESULT_MAX_ROWS))
         max_chars = max(2000, int(settings.MCP_QUERY_RESULT_MAX_CHARS))
         capped_by_rows = rows[:max_rows]
@@ -8941,7 +8949,13 @@ class MCPToolsRegistry:
                 success=True,
                 usefulness_score=1.0 if len(results) > 0 else 0.5,
             )
-            response_payload: dict[str, object] = {"status": "ok", "results": results}
+            project_root = (
+                Path(self.project_root) if isinstance(self.project_root, str) else None
+            )
+            response_payload: dict[str, object] = {
+                "status": "ok",
+                "results": add_absolute_path_aliases(results, project_root),
+            }
             response_payload["query_digest_id"] = query_digest_id
             if flow_advisory is not None:
                 response_payload["flow_advisory"] = flow_advisory

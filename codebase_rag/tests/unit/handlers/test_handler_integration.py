@@ -94,6 +94,32 @@ class TestHandlerDelegationInPipeline:
         function_nodes = get_nodes(mock_ingestor, "Function")
         assert len(function_nodes) >= 1
 
+    def test_c_handler_used_for_c_files(
+        self, temp_repo: Path, mock_ingestor: MagicMock
+    ) -> None:
+        project_path = temp_repo / "c_handler_test"
+        project_path.mkdir()
+        (project_path / "main.c").write_text(
+            encoding="utf-8",
+            data='#include "util.h"\nint add(int left, int right) { return left + right; }\n',
+        )
+        (project_path / "util.h").write_text(
+            encoding="utf-8",
+            data="int add(int left, int right);\n",
+        )
+
+        parsers, queries = load_parsers()
+        if cs.SupportedLanguage.C not in parsers:
+            pytest.skip("C parser not available")
+
+        handler = get_handler(cs.SupportedLanguage.C)
+        assert isinstance(handler, CppHandler)
+
+        run_updater(project_path, mock_ingestor, skip_if_missing=cs.SupportedLanguage.C)
+
+        function_nodes = get_nodes(mock_ingestor, "Function")
+        assert len(function_nodes) >= 1
+
     def test_rust_handler_used_for_rust_files(
         self, temp_repo: Path, mock_ingestor: MagicMock
     ) -> None:

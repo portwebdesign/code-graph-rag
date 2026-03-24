@@ -190,6 +190,33 @@ class TestOllamaProvider:
             provider.validate_config()
 
 
+class TestDeepSeekProvider:
+    def test_deepseek_uses_provider_specific_env_key(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENAI_API_KEY": "openai-key",
+                "DEEPSEEK_API_KEY": "deepseek-key",
+            },
+            clear=True,
+        ):
+            provider = get_provider(Provider.DEEPSEEK)
+
+        assert provider.api_key == "deepseek-key"
+
+    def test_deepseek_explicit_key_beats_env_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "DEEPSEEK_API_KEY": "deepseek-key",
+            },
+            clear=True,
+        ):
+            provider = get_provider(Provider.DEEPSEEK, api_key="explicit-key")
+
+        assert provider.api_key == "explicit-key"
+
+
 class TestModelCreation:
     @patch("codebase_rag.providers.base.PydanticGoogleProvider")
     @patch("codebase_rag.providers.base.GoogleModel")

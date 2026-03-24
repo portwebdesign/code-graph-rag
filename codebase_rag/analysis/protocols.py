@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -26,6 +27,10 @@ class AnalysisRunnerProtocol(Protocol):
     def _write_text_report(self, filename: str, content: str) -> Path: ...
 
     def _collect_file_paths(self, nodes: list[NodeRecord]) -> list[str]: ...
+
+    def _canonical_relative_path(self, properties: Mapping[str, object]) -> str: ...
+
+    def _canonical_absolute_path(self, properties: Mapping[str, object]) -> str: ...
 
     def _primary_label(self, node: NodeRecord) -> str: ...
 
@@ -174,6 +179,13 @@ class AnalysisRunnerProtocol(Protocol):
     ) -> bool: ...
 
     def _has_sql_runtime_registration(
+        self,
+        path: str,
+        name: str,
+        source_text: str,
+    ) -> bool: ...
+
+    def _is_python_delegating_wrapper(
         self,
         path: str,
         name: str,

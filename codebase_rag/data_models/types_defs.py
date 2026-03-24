@@ -585,27 +585,35 @@ class RelationshipSchema(NamedTuple):
 
 
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
+    # Path contract:
+    # - `path` is the canonical repo-relative POSIX path for filesystem-backed nodes.
+    # - `abs_path` is the canonical absolute POSIX path when the node is backed by a local filesystem entry.
+    # - `Project.path` remains the absolute repository root for backward compatibility.
     NodeSchema(NodeLabel.PROJECT, "{name: string, path: string, language: string}"),
     NodeSchema(
-        NodeLabel.PACKAGE, "{qualified_name: string, name: string, path: string}"
+        NodeLabel.PACKAGE,
+        "{qualified_name: string, name: string, path: string, abs_path: string}",
     ),
-    NodeSchema(NodeLabel.FOLDER, "{path: string, name: string}"),
-    NodeSchema(NodeLabel.FILE, "{path: string, name: string, extension: string}"),
+    NodeSchema(NodeLabel.FOLDER, "{path: string, name: string, abs_path: string}"),
+    NodeSchema(
+        NodeLabel.FILE,
+        "{path: string, name: string, extension: string, abs_path: string}",
+    ),
     NodeSchema(
         NodeLabel.MODULE,
-        "{qualified_name: string, name: string, path: string, pagerank: float, community_id: int, has_cycle: boolean}",
+        "{qualified_name: string, name: string, path: string, abs_path: string, pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
+        "{qualified_name: string, name: string, path: string, abs_path: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
+        "{qualified_name: string, name: string, path: string, abs_path: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
+        "{qualified_name: string, name: string, path: string, abs_path: string, decorators: list[string], pagerank: float, community_id: int, has_cycle: boolean}",
     ),
     NodeSchema(
         NodeLabel.ENDPOINT,
@@ -662,11 +670,11 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.RUNTIME_ARTIFACT,
-        "{qualified_name: string, name: string, path: string, kind: string}",
+        "{qualified_name: string, name: string, path: string, abs_path: string, kind: string}",
     ),
     NodeSchema(
         NodeLabel.RUNTIME_EVENT,
-        "{qualified_name: string, name: string, kind: string, path: string, file_path: string, event_name: string, channel_name: string, stage: string}",
+        "{qualified_name: string, name: string, kind: string, path: string, repo_rel_path: string, abs_path: string, file_path: string, event_name: string, channel_name: string, stage: string}",
     ),
     NodeSchema(
         NodeLabel.CLIENT_OPERATION,
@@ -701,14 +709,17 @@ NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     ),
     NodeSchema(
         NodeLabel.COMPONENT,
-        "{qualified_name: string, name: string, framework: string, path: string, module_qn: string}",
+        "{qualified_name: string, name: string, framework: string, path: string, abs_path: string, module_qn: string}",
     ),
     NodeSchema(
         NodeLabel.PARAMETER,
         "{qualified_name: string, name: string, path: string, component_qn: string, prop_path: string}",
     ),
     NodeSchema(NodeLabel.INTERFACE, "{qualified_name: string, name: string}"),
-    NodeSchema(NodeLabel.ENUM, "{qualified_name: string, name: string}"),
+    NodeSchema(
+        NodeLabel.ENUM,
+        "{qualified_name: string, name: string, path: string, abs_path: string}",
+    ),
     NodeSchema(NodeLabel.TYPE, "{qualified_name: string, name: string}"),
     NodeSchema(NodeLabel.UNION, "{qualified_name: string, name: string}"),
     NodeSchema(

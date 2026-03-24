@@ -263,7 +263,12 @@ class DeepSeekProvider(OpenAIProvider):
         **kwargs: str | int | None,
     ) -> None:
         resolved_endpoint = endpoint or cs.DEEPSEEK_DEFAULT_ENDPOINT
-        super().__init__(api_key=api_key, endpoint=resolved_endpoint, **kwargs)
+        resolved_api_key = api_key or os.environ.get(cs.ENV_DEEPSEEK_API_KEY)
+        super().__init__(
+            api_key=resolved_api_key,
+            endpoint=resolved_endpoint,
+            **kwargs,
+        )
 
     @property
     def provider_name(self) -> cs.Provider:

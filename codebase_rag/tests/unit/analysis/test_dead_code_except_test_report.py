@@ -323,6 +323,9 @@ def test_dead_code_report_db_query_excludes_decorated_entry_points(
     assert "coalesce(f.is_entry_point, false) = false" in ingestor.captured_query
     assert "[:DECORATES|ANNOTATES]" in ingestor.captured_query
     assert "[:DISPATCHES_TO]" in ingestor.captured_query
+    assert "[:USES_DEPENDENCY|SECURED_BY]" in ingestor.captured_query
+    assert "[:RESOLVES_TO]->(f)" in ingestor.captured_query
+    assert "semantic_registration_links" in ingestor.captured_query
     assert "combined_in_degree" in ingestor.captured_query
     assert (
         "HAS_ENDPOINT|ROUTES_TO_CONTROLLER|ROUTES_TO_ACTION|REQUESTS_ENDPOINT|REGISTERS_SERVICE|REGISTERS_CALLBACK|HOOKS|REGISTERS_BLOCK|USES_HANDLER|USES_SERVICE|PROVIDES_SERVICE"
@@ -459,6 +462,52 @@ async def run_cli(args):
     assert suppression_reason_counts["anonymous_callback"] >= 2
     assert suppression_reason_counts["non_runtime_source"] >= 1
     assert suppression_reason_counts["python_package_reexport"] >= 2
+
+
+def test_dead_code_report_payload_suppresses_python_delegating_wrappers(
+    tmp_path: Path,
+) -> None:
+    runner = AnalysisRunner(cast(IngestorProtocol, DummyIngestor()), tmp_path)
+
+    lifecycle_file = tmp_path / "src" / "api" / "lifecycle.py"
+    lifecycle_file.parent.mkdir(parents=True, exist_ok=True)
+    lifecycle_file.write_text(
+        """from src.api.lifecycle_schema_stream import (\n    schema_update_listener_task as run_schema_update_listener,\n)\n\n\nasync def schema_update_listener_task(app):\n    await run_schema_update_listener(app)\n""",
+        encoding="utf-8",
+    )
+
+    candidate_file = tmp_path / "src" / "domain" / "payment.py"
+    candidate_file.parent.mkdir(parents=True, exist_ok=True)
+    candidate_file.write_text(
+        """def reconcile():\n    return 42\n""",
+        encoding="utf-8",
+    )
+
+    report, filtered_dead_functions, suppression_reason_counts = (
+        runner._build_dead_code_report_payload(
+            total_functions=2,
+            dead_functions=[
+                {
+                    "qualified_name": "proj.src.api.lifecycle.schema_update_listener_task",
+                    "name": "schema_update_listener_task",
+                    "path": "src/api/lifecycle.py",
+                    "start_line": 5,
+                },
+                {
+                    "qualified_name": "proj.src.domain.payment.reconcile",
+                    "name": "reconcile",
+                    "path": "src/domain/payment.py",
+                    "start_line": 1,
+                },
+            ],
+        )
+    )
+
+    assert report["summary"]["reported_dead_functions"] == 1
+    assert [item["qualified_name"] for item in filtered_dead_functions] == [
+        "proj.src.domain.payment.reconcile"
+    ]
+    assert suppression_reason_counts["python_delegating_wrapper"] >= 1
 
 
 def test_dead_code_except_test_report_includes_guidance_summary(tmp_path: Path) -> None:

@@ -23,6 +23,7 @@ from codebase_rag.graph_db.graph_updater import GraphUpdater
 from codebase_rag.infrastructure.parser_loader import load_parsers
 from codebase_rag.services.cleanup_service import CleanupService
 from codebase_rag.services.protobuf_service import ProtobufFileIngestor
+from codebase_rag.tools.graph_stats import get_dependency_stats, get_graph_stats
 from codebase_rag.tools.health_checker import HealthChecker
 from codebase_rag.tools.language import cli as language_cli
 
@@ -106,6 +107,26 @@ def _info(msg: str) -> None:
     """
     if not settings.QUIET:
         app_context.console.print(msg)
+
+
+def _render_named_count_table(
+    title: str,
+    rows: list[dict[str, object]],
+    name_key: str,
+) -> None:
+    if not rows:
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column(name_key.replace("_", " ").title())
+    table.add_column("Count", justify="right")
+
+    for row in rows:
+        name = str(row.get(name_key, ""))
+        count = str(row.get("count", 0))
+        table.add_row(name, count)
+
+    app_context.console.print(Panel(table, title=title, expand=False))
 
 
 @app.command(help=ch.CMD_START)
@@ -399,6 +420,88 @@ def export(
         )
         logger.exception(ls.EXPORT_ERROR.format(error=e))
         raise typer.Exit(1) from e
+
+
+@app.command(name=ch.CLICommandName.STATS, help=ch.CMD_STATS)
+def stats(
+    batch_size: int | None = typer.Option(
+        None,
+        "--batch-size",
+        min=1,
+        help=ch.HELP_BATCH_SIZE,
+    ),
+    include_dependencies: bool = typer.Option(
+        True,
+        "--dependencies/--no-dependencies",
+        help=ch.HELP_INCLUDE_DEPENDENCIES,
+    ),
+) -> None:
+    """
+    Prints high-signal graph statistics from the current Memgraph dataset.
+
+    Args:
+        batch_size (int | None): Batch size for Memgraph connection setup.
+        include_dependencies (bool): Whether to include dependency/import stats.
+    """
+    effective_batch_size = settings.resolve_batch_size(batch_size)
+
+    try:
+        with connect_memgraph(effective_batch_size) as ingestor:
+            graph_stats = get_graph_stats(ingestor)
+            dependency_stats = (
+                get_dependency_stats(ingestor) if include_dependencies else None
+            )
+    except Exception as e:
+        typer.echo(cs.CLI_ERR_STATS.format(error=e), err=True)
+        raise typer.Exit(1) from e
+
+    summary_table = Table(show_header=False, box=None, padding=(0, 2))
+    summary_table.add_column(style="cyan")
+    summary_table.add_column(justify="right")
+    summary_table.add_row("Nodes", str(graph_stats.get("nodes", 0)))
+    summary_table.add_row("Relationships", str(graph_stats.get("relationships", 0)))
+
+    app_context.console.print(
+        Panel(summary_table, title="Graph Stats", border_style="dim", padding=(1, 2))
+    )
+    _render_named_count_table(
+        "Top Node Labels",
+        cast(list[dict[str, object]], graph_stats.get("labels", [])),
+        "label",
+    )
+    _render_named_count_table(
+        "Top Relationship Types",
+        cast(list[dict[str, object]], graph_stats.get("relationship_types", [])),
+        "type",
+    )
+
+    if dependency_stats is None:
+        return
+
+    dependency_summary = Table(show_header=False, box=None, padding=(0, 2))
+    dependency_summary.add_column(style="cyan")
+    dependency_summary.add_column(justify="right")
+    dependency_summary.add_row(
+        "Total Imports", str(dependency_stats.get("total_imports", 0))
+    )
+    app_context.console.print(
+        Panel(
+            dependency_summary,
+            title="Dependency Stats",
+            border_style="dim",
+            padding=(1, 2),
+        )
+    )
+    _render_named_count_table(
+        "Top Importers",
+        cast(list[dict[str, object]], dependency_stats.get("top_importers", [])),
+        "module",
+    )
+    _render_named_count_table(
+        "Top Dependents",
+        cast(list[dict[str, object]], dependency_stats.get("top_dependents", [])),
+        "target",
+    )
 
 
 @app.command(help=ch.CMD_OPTIMIZE)
