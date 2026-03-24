@@ -4535,8 +4535,11 @@ class MCPToolsRegistry:
             },
             "query_skeletons": {
                 "single_hop": (
-                    "MATCH (m:Module {project_name: $project_name})-[:CALLS]->(target) "
-                    "RETURN m.name AS source, target.name AS target LIMIT 50"
+                    "MATCH (src:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(caller) "
+                    "-[:CALLS]->(target) "
+                    "OPTIONAL MATCH (dst:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(target) "
+                    "RETURN src.path AS source_path, caller.qualified_name AS caller_qn, "
+                    "target.qualified_name AS target_qn, dst.path AS target_module_path LIMIT 50"
                 ),
                 "schema_map": (
                     "MATCH (c:Class {project_name: $project_name, path: $file_path}) "
@@ -8979,9 +8982,11 @@ class MCPToolsRegistry:
             for token in ("call", "caller", "callee", "hop", "chain", "dependency")
         ):
             templates.append(
-                "MATCH (m:Module {project_name: $project_name})-[:CALLS]->(target) "
-                "RETURN m.name AS source, m.path AS source_path, "
-                "target.name AS target, target.path AS target_path "
+                "MATCH (src:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(caller) "
+                "-[:CALLS]->(target) "
+                "OPTIONAL MATCH (dst:Module {project_name: $project_name})-[:DEFINES|DEFINES_METHOD*0..1]->(target) "
+                "RETURN src.path AS source_path, caller.qualified_name AS caller_qn, "
+                "target.qualified_name AS target_qn, dst.path AS target_module_path "
                 "LIMIT 80"
             )
 
