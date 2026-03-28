@@ -646,6 +646,8 @@ class ApiCallChainModule(AnalysisModule):
         }
         results: list[dict[str, object]] = []
         for endpoint in normalized:
+            if ApiComplianceModule._should_ignore_path(str(endpoint.get("file", ""))):
+                continue
             if not self._is_graph_analysis_endpoint(cast(dict[str, object], endpoint)):
                 continue
             key = (

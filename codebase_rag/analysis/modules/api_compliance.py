@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -63,6 +64,8 @@ class ApiComplianceModule(AnalysisModule):
             if self._should_ignore_path(file_path):
                 if file_path:
                     ignored_paths.add(file_path)
+                continue
+            if not self._is_graph_analysis_endpoint(endpoint):
                 continue
             endpoint_key = (
                 str(endpoint.get("method", "")).strip().upper(),
@@ -410,6 +413,13 @@ class ApiComplianceModule(AnalysisModule):
         return not cls._SKIP_DIRS.isdisjoint(
             parts
         ) or not cls._SKIP_PATH_MARKERS.isdisjoint(parts)
+
+    @staticmethod
+    def _is_graph_analysis_endpoint(endpoint: Mapping[str, object]) -> bool:
+        framework = str(endpoint.get("framework") or "").strip().lower()
+        if framework in {"http", "graphql"}:
+            return False
+        return True
 
     @staticmethod
     def _fetch_graph_endpoints(context: AnalysisContext) -> list[dict[str, str]]:

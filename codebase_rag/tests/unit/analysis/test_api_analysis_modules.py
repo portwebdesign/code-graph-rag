@@ -356,6 +356,63 @@ def test_api_compliance_prefers_relation_propagated_mounted_paths(
     assert endpoints[0]["canonical_route_layer"] == "relation_propagated"
 
 
+def test_api_compliance_ignores_http_requester_endpoints_from_frontend_files(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner(tmp_path)
+    runner.ingestor = _StaticQueryIngestor(
+        [
+            {
+                "qualified_name": "demo.endpoint.fastapi.POST:/api/v1/auth/session-cookie",
+                "method": "POST",
+                "path": "/api/v1/auth/session-cookie",
+                "local_route_path": "/session-cookie",
+                "file": "src/api/routes/v1/auth.py",
+                "framework": "fastapi",
+                "handler_qns": ["demo.src.api.routes.v1.auth.exchange_session_cookie"],
+                "exposed_module_paths": ["src/api/app_factory.py"],
+                "prefix_module_paths": ["src/api/routes/v1/__init__.py"],
+                "expose_count": 1,
+                "prefix_count": 1,
+            },
+            {
+                "qualified_name": "demo.endpoint.http.POST:/{param}/api/v1/auth/session-cookie",
+                "method": "POST",
+                "path": "/{param}/api/v1/auth/session-cookie",
+                "local_route_path": "",
+                "file": "frontend/e2e/live_contract_smoke.spec.ts",
+                "framework": "http",
+                "handler_qns": [],
+                "exposed_module_paths": [],
+                "prefix_module_paths": [],
+                "expose_count": 1,
+                "prefix_count": 0,
+            },
+        ]
+    )
+    context = AnalysisContext(
+        runner=cast(Any, runner),
+        nodes=[],
+        relationships=[],
+        module_path_map={},
+        node_by_id={},
+        module_paths=None,
+        incremental_paths=None,
+        use_db=False,
+        summary={},
+    )
+
+    ApiComplianceModule().run(context)
+
+    report = cast(dict[str, object], runner.reports["api_compliance_report.json"])
+    endpoints = cast(list[dict[str, object]], report["endpoints"])
+
+    assert len(endpoints) == 1
+    assert endpoints[0]["framework"] == "fastapi"
+    assert endpoints[0]["file"] == "src/api/routes/v1/auth.py"
+    assert endpoints[0]["path"] == "/api/v1/auth/session-cookie"
+
+
 def test_api_call_chain_prefers_canonical_endpoint_and_filters_graphql_noise(
     tmp_path: Path,
 ) -> None:
@@ -489,6 +546,83 @@ def test_api_call_chain_prefers_canonical_endpoint_and_filters_graphql_noise(
         == "demo.src.domain.documents.services.ArtifactService.list_artifacts"
         for item in call_chain
     )
+
+
+def test_api_call_chain_ignores_test_endpoint_nodes(tmp_path: Path) -> None:
+    runner = _FakeRunner(tmp_path)
+    leaked_test_endpoint = NodeRecord(
+        node_id=1,
+        labels=[cs.NodeLabel.ENDPOINT.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.endpoint.fastapi.GET:/query",
+            cs.KEY_NAME: "GET /query",
+            cs.KEY_PATH: "tests/unit/test_internal_core_routes.py",
+            cs.KEY_FRAMEWORK: "fastapi",
+            cs.KEY_HTTP_METHOD: "GET",
+            cs.KEY_ROUTE_PATH: "/query",
+        },
+    )
+    real_endpoint = NodeRecord(
+        node_id=2,
+        labels=[cs.NodeLabel.ENDPOINT.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.endpoint.fastapi.GET:/api/internal/graphql/query",
+            cs.KEY_NAME: "GET /api/internal/graphql/query",
+            cs.KEY_PATH: "src/api/routes/internal/graphql.py",
+            cs.KEY_FRAMEWORK: "fastapi",
+            cs.KEY_HTTP_METHOD: "GET",
+            cs.KEY_ROUTE_PATH: "/api/internal/graphql/query",
+        },
+    )
+    test_handler = NodeRecord(
+        node_id=3,
+        labels=[cs.NodeLabel.FUNCTION.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.tests.unit.test_internal_core_routes._graph_query",
+            cs.KEY_NAME: "_graph_query",
+            cs.KEY_PATH: "tests/unit/test_internal_core_routes.py",
+        },
+    )
+    real_handler = NodeRecord(
+        node_id=4,
+        labels=[cs.NodeLabel.FUNCTION.value],
+        properties={
+            cs.KEY_QUALIFIED_NAME: "demo.src.api.routes.internal.graphql.query",
+            cs.KEY_NAME: "query",
+            cs.KEY_PATH: "src/api/routes/internal/graphql.py",
+        },
+    )
+    relationships = [
+        RelationshipRecord(3, 1, cs.RelationshipType.HAS_ENDPOINT, {}),
+        RelationshipRecord(4, 2, cs.RelationshipType.HAS_ENDPOINT, {}),
+    ]
+    context = AnalysisContext(
+        runner=cast(Any, runner),
+        nodes=[leaked_test_endpoint, real_endpoint, test_handler, real_handler],
+        relationships=relationships,
+        module_path_map={},
+        node_by_id={
+            1: leaked_test_endpoint,
+            2: real_endpoint,
+            3: test_handler,
+            4: real_handler,
+        },
+        module_paths=None,
+        incremental_paths=None,
+        use_db=False,
+        summary={},
+    )
+
+    ApiCallChainModule().run(context)
+
+    report = cast(dict[str, object], runner.reports["api_call_chain_report.json"])
+    summary = cast(dict[str, object], report["summary"])
+    chains = cast(list[dict[str, object]], report["chains"])
+
+    assert summary["endpoints"] == 1
+    assert len(chains) == 1
+    assert chains[0]["endpoint"]["route_path"] == "/api/internal/graphql/query"
+    assert chains[0]["endpoint"]["path"] == "src/api/routes/internal/graphql.py"
 
 
 def test_api_call_chain_emits_frontend_requester_context(tmp_path: Path) -> None:
