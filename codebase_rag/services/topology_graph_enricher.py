@@ -23,6 +23,7 @@ from codebase_rag.parsers.pipeline.semantic_metadata import build_semantic_metad
 from codebase_rag.parsers.pipeline.semantic_pass_registry import (
     is_semantic_pass_enabled,
 )
+from codebase_rag.utils.path_utils import iter_repo_files
 
 
 class TopologyGraphIngestorProtocol(Protocol):
@@ -690,11 +691,9 @@ class TopologyGraphEnricher(ConfigParserMixin):
 
     def _iter_repo_files(self, *, limit: int) -> list[Path]:
         files: list[Path] = []
-        for path in self.repo_path.rglob("*"):
+        for path in iter_repo_files(self.repo_path):
             if len(files) >= limit:
                 break
-            if not path.is_file():
-                continue
             if any(part in self._SKIP_DIRS for part in path.parts):
                 continue
             files.append(path)

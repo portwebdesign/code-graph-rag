@@ -22,6 +22,8 @@ from codebase_rag.services import IngestorProtocol
 from codebase_rag.utils.path_utils import (
     compute_file_hash,
     is_test_path,
+    iter_repo_dirs,
+    safe_exists,
     should_skip_path,
     to_posix,
 )
@@ -95,8 +97,8 @@ class StructureProcessor:
         nodes and relationships in the graph.
         """
         directories = {self.repo_path}
-        for path in self.repo_path.rglob(cs.GLOB_ALL):
-            if path.is_dir() and not should_skip_path(
+        for path in iter_repo_dirs(self.repo_path, pattern=cs.GLOB_ALL):
+            if not should_skip_path(
                 path,
                 self.repo_path,
                 exclude_paths=self.exclude_paths,
@@ -118,7 +120,7 @@ class StructureProcessor:
                 package_indicators.update(lang_config.package_indicators)
 
             for indicator in package_indicators:
-                if (root / indicator).exists():
+                if safe_exists(root / indicator):
                     is_package = True
                     break
 

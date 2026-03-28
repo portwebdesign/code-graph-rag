@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from codebase_rag.core import constants as cs
+from codebase_rag.utils.path_utils import iter_repo_files
 
 from .detectors.csharp_framework_detector import CSharpFrameworkDetector
 from .detectors.go_framework_detector import GoFrameworkDetector
@@ -314,7 +315,7 @@ class FrameworkDetectorRegistry:
     def _detect_csharp_repo_metadata(self) -> dict[str, object]:
         if not self.repo_path:
             return {"detected": False, "frameworks": [], "files": [], "matches": []}
-        csproj_files = list(self.repo_path.rglob("*.csproj"))
+        csproj_files = list(iter_repo_files(self.repo_path, pattern="*.csproj"))
         if not csproj_files:
             return {"detected": False, "frameworks": [], "files": [], "matches": []}
 

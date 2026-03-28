@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from codebase_rag.core import constants as cs
 from codebase_rag.services.protocols import QueryProtocol
+from codebase_rag.utils.path_utils import iter_repo_files
 
 from .base_module import AnalysisContext, AnalysisModule
 
@@ -274,11 +275,9 @@ class ApiComplianceModule(AnalysisModule):
             *cs.RUBY_EXTENSIONS,
         }
         collected: list[Path] = []
-        for path in repo_path.rglob("*"):
+        for path in iter_repo_files(repo_path):
             if len(collected) >= 500:
                 break
-            if not path.is_file():
-                continue
             try:
                 relative = path.relative_to(repo_path).as_posix()
             except ValueError:

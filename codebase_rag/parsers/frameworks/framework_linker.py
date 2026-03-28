@@ -25,6 +25,7 @@ from codebase_rag.parsers.pipeline.semantic_metadata import (
     sanitize_semantic_identity,
 )
 from codebase_rag.services import IngestorProtocol
+from codebase_rag.utils.path_utils import iter_repo_files
 
 
 @dataclass
@@ -180,9 +181,7 @@ class FrameworkLinker:
         linking logic based on file extension and content.
         """
         self._link_tailwind_assets()
-        for file_path in self.repo_path.rglob("*"):
-            if not file_path.is_file():
-                continue
+        for file_path in iter_repo_files(self.repo_path):
             if self._should_skip_framework_file(file_path):
                 continue
             if file_path.suffix.lower() not in {
@@ -2737,7 +2736,7 @@ class FrameworkLinker:
         if self._asset_index is None:
             self._asset_index = {}
             for ext in (cs.EXT_JS, cs.EXT_JSX, cs.EXT_TS, cs.EXT_TSX):
-                for file_path in self.repo_path.rglob(f"*{ext}"):
+                for file_path in iter_repo_files(self.repo_path, pattern=f"*{ext}"):
                     try:
                         rel = str(file_path.relative_to(self.repo_path)).replace(
                             "\\", "/"

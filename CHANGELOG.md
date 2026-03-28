@@ -39,6 +39,7 @@
 
 ### Changed
 
+- Updated repository traversal to skip inaccessible directories during project detection, parsing, framework linking, topology enrichment, runtime evidence ingest, and API compliance scans so `cgr start --update-graph --clean` can continue on Windows repos with protected backup artifacts.
 - Aligned `pyproject.toml` package version to upstream `0.0.159` after the selective upstream-adoption closure work; this is a release-metadata sync, not a parity claim.
 - Updated `duplicate_code_report.json` to separate actionable cross-file duplicates from ignored same-file, synthetic, and low-value utility noise.
 - Updated `fan_report.json` to keep raw `CALLS` hotspots while adding production-only and semantic hotspot views.

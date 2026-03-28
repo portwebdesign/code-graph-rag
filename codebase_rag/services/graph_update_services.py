@@ -45,7 +45,7 @@ from codebase_rag.parsers.core.utils import (
 
 from ..parsers.languages.cpp import utils as cpp_utils
 from ..utils.git_delta import filter_existing, get_git_delta, get_git_head
-from ..utils.path_utils import should_skip_path, to_posix
+from ..utils.path_utils import iter_repo_files, should_skip_path, to_posix
 
 
 class GitDeltaService:
@@ -410,8 +410,8 @@ class FileProcessingService:
                 logger.info("Git delta: no changed files to process")
                 return
 
-        for filepath in ctx.repo_path.rglob("*"):
-            if filepath.is_file() and not should_skip_path(
+        for filepath in iter_repo_files(ctx.repo_path):
+            if not should_skip_path(
                 filepath,
                 ctx.repo_path,
                 exclude_paths=ctx.exclude_paths,

@@ -8,7 +8,7 @@ from loguru import logger
 
 from codebase_rag.core import constants as cs
 from codebase_rag.infrastructure.language_spec import get_language_spec_for_path
-from codebase_rag.utils.path_utils import should_skip_path
+from codebase_rag.utils.path_utils import iter_repo_files, should_skip_path
 
 
 @dataclass
@@ -92,9 +92,7 @@ class PreScanner:
         """
         index = PreScanIndex()
 
-        for file_path in self.repo_path.rglob("*"):
-            if not file_path.is_file():
-                continue
+        for file_path in iter_repo_files(self.repo_path):
             if should_skip_path(
                 file_path,
                 self.repo_path,

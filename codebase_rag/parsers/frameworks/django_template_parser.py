@@ -9,6 +9,7 @@ from loguru import logger
 
 from codebase_rag.core import constants as cs
 from codebase_rag.services import IngestorProtocol
+from codebase_rag.utils.path_utils import iter_repo_files
 
 
 @dataclass
@@ -69,9 +70,9 @@ class DjangoTemplateParser:
             dict[str, str]: A dictionary mapping template names/paths to their repo-relative paths.
         """
         index: dict[str, str] = {}
-        for file_path in repo_path.rglob("*.htm"):
+        for file_path in iter_repo_files(repo_path, pattern="*.htm"):
             DjangoTemplateParser._add_template_index_keys(index, repo_path, file_path)
-        for file_path in repo_path.rglob("*.html"):
+        for file_path in iter_repo_files(repo_path, pattern="*.html"):
             DjangoTemplateParser._add_template_index_keys(index, repo_path, file_path)
         return index
 

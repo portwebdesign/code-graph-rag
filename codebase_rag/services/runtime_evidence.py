@@ -13,6 +13,7 @@ from codebase_rag.core.event_flow_identity import (
 )
 from codebase_rag.utils.path_utils import (
     build_runtime_event_path_fields,
+    iter_repo_files,
 )
 
 
@@ -142,11 +143,10 @@ class RuntimeEvidenceIngestor:
             root = self.repo_path / relative_dir
             if not root.exists():
                 continue
-            for path in root.rglob("*"):
+            for path in iter_repo_files(root):
                 if len(files) >= self._MAX_FILES:
                     return files
-                if path.is_file():
-                    files.append(path)
+                files.append(path)
         return files
 
     def _extract_events(self, runtime_file: Path) -> list[dict[str, object]]:

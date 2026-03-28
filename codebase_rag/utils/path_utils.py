@@ -1,8 +1,11 @@
 import hashlib
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from ..core import constants as cs
 
@@ -174,6 +177,93 @@ def compute_file_hash(file_path: Path) -> str:
         return ""
 
 
+def safe_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def safe_is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def safe_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
+
+
+def _matches_repo_pattern(path: Path, repo_path: Path, pattern: str) -> bool:
+    if pattern in {"*", "**/*"}:
+        return True
+    try:
+        relative_path = path.relative_to(repo_path)
+    except ValueError:
+        return False
+    return relative_path.match(pattern)
+
+
+def _log_walk_error(error: OSError) -> None:
+    path_text = getattr(error, "filename", None) or str(error)
+    logger.warning("Skipping inaccessible repository path {}: {}", path_text, error)
+
+
+def iter_repo_paths(
+    repo_path: Path,
+    *,
+    pattern: str = "*",
+    include_files: bool = True,
+    include_dirs: bool = True,
+):
+    for current_root, dirs, files in os.walk(
+        repo_path, topdown=True, onerror=_log_walk_error
+    ):
+        current_root_path = Path(current_root)
+
+        accessible_dirs: list[str] = []
+        for dir_name in sorted(dirs):
+            candidate = current_root_path / dir_name
+            if not safe_is_dir(candidate):
+                continue
+            accessible_dirs.append(dir_name)
+            if include_dirs and _matches_repo_pattern(candidate, repo_path, pattern):
+                yield candidate
+        dirs[:] = accessible_dirs
+
+        if not include_files:
+            continue
+
+        for file_name in sorted(files):
+            candidate = current_root_path / file_name
+            if not safe_is_file(candidate):
+                continue
+            if _matches_repo_pattern(candidate, repo_path, pattern):
+                yield candidate
+
+
+def iter_repo_files(repo_path: Path, *, pattern: str = "*"):
+    yield from iter_repo_paths(
+        repo_path,
+        pattern=pattern,
+        include_files=True,
+        include_dirs=False,
+    )
+
+
+def iter_repo_dirs(repo_path: Path, *, pattern: str = "*"):
+    yield from iter_repo_paths(
+        repo_path,
+        pattern=pattern,
+        include_files=False,
+        include_dirs=True,
+    )
+
+
 def is_test_path(path: Path | str) -> bool:
     path_obj = Path(path)
     parts = [part.lower() for part in path_obj.parts]
@@ -194,11 +284,12 @@ def should_skip_path(
     exclude_paths: frozenset[str] | None = None,
     unignore_paths: frozenset[str] | None = None,
 ) -> bool:
-    if path.is_file() and path.suffix in cs.IGNORE_SUFFIXES:
+    is_file = safe_is_file(path)
+    if is_file and path.suffix in cs.IGNORE_SUFFIXES:
         return True
     rel_path = path.relative_to(repo_path)
     rel_path_str = rel_path.as_posix()
-    dir_parts = rel_path.parent.parts if path.is_file() else rel_path.parts
+    dir_parts = rel_path.parent.parts if is_file else rel_path.parts
     if exclude_paths and (
         not exclude_paths.isdisjoint(dir_parts)
         or rel_path_str in exclude_paths

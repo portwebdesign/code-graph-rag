@@ -8,7 +8,7 @@ from codebase_rag.core.main import (
     detect_excludable_directories,
     prompt_for_unignored_directories,
 )
-from codebase_rag.utils.path_utils import should_skip_path
+from codebase_rag.utils.path_utils import iter_repo_paths, should_skip_path
 
 
 class TestDetectExcludableDirectories:
@@ -646,3 +646,35 @@ class TestDirectoryVsFileBehavior:
         file_path.touch()
 
         assert not should_skip_path(file_path, tmp_path)
+
+
+class TestPermissionSafeRepoIteration:
+    def test_iter_repo_paths_skips_inaccessible_directories(
+        self, tmp_path: Path
+    ) -> None:
+        src_dir = tmp_path / "src"
+        app_file = src_dir / "app.py"
+        blocked_dir = tmp_path / "blocked"
+
+        def fake_walk(_repo_path: Path, topdown: bool, onerror):
+            del topdown
+            onerror(PermissionError(13, "Access denied", str(blocked_dir)))
+            yield str(tmp_path), ["blocked", "src"], []
+            yield str(src_dir), [], ["app.py"]
+
+        with (
+            patch("codebase_rag.utils.path_utils.os.walk", side_effect=fake_walk),
+            patch(
+                "codebase_rag.utils.path_utils.safe_is_dir",
+                side_effect=lambda path: path != blocked_dir,
+            ),
+            patch(
+                "codebase_rag.utils.path_utils.safe_is_file",
+                side_effect=lambda path: path == app_file,
+            ),
+        ):
+            yielded = list(iter_repo_paths(tmp_path))
+
+        assert blocked_dir not in yielded
+        assert src_dir in yielded
+        assert app_file in yielded

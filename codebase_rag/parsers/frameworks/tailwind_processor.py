@@ -13,6 +13,7 @@ from codebase_rag.core import constants as cs
 from codebase_rag.data_models.types_defs import LanguageQueries
 from codebase_rag.parsers.core.utils import normalize_query_captures
 from codebase_rag.services import IngestorProtocol
+from codebase_rag.utils.path_utils import iter_repo_files
 
 _SCM_LANGUAGE_ALIAS: dict[cs.SupportedLanguage, str] = {
     cs.SupportedLanguage.TS: "javascript",
@@ -259,7 +260,9 @@ class TailwindUsageProcessor:
         """
         Ingest metadata from tailwind.config.* files and inline config.
         """
-        config_paths = list(self.repo_path.rglob("tailwind.config.*"))
+        config_paths = list(
+            iter_repo_files(self.repo_path, pattern="tailwind.config.*")
+        )
         if not config_paths and not self._source_inline:
             return
 
