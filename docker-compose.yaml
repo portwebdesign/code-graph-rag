@@ -9,7 +9,7 @@ services:
       - memgraph_data:/var/lib/memgraph
       - memgraph_logs:/var/log/memgraph
   lab:
-    image: memgraph/lab:3.8.0
+    image: memgraph/lab:3.9.0
     ports:
       - "${LAB_PORT:-3000}:3000"
     environment:
